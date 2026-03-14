@@ -1,0 +1,42 @@
+# Cursor / IDE
+.cursorrules
+.cursor/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Rust / Cargo
+/target/
+**/target/
+Cargo.lock
+*.rs.bk
+*.pdb
+
+# Soroban / Stellar
+.soroban/
+*.wasm
+!contracts/**/tests/fixtures/*.wasm
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build and coverage
+coverage/
+*.profraw
+*.profdata
+tarpaulin-report.html
+
+# Debug and logs
+*.log
+debug/

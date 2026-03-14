@@ -1,0 +1,6 @@
+# Work around Windows SSL revocation check failures (CRYPT_E_REVOCATION_OFFLINE)
+# when the revocation server is unreachable. Only affects HTTPS to crates.io.
+[http]
+check-revoke = false
+# Give downloads more time on slow/unreliable networks
+timeout = 120

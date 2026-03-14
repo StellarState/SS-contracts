@@ -1,0 +1,11 @@
+[package]
+name = "invoice-token"
+version = "0.1.0"
+edition = "2021"
+description = "StellarSettle invoice tokenization (SEP-41) contract"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
