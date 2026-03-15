@@ -16,7 +16,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
           components: rustfmt, clippy
 
       - name: Cache Cargo registry and build
@@ -24,8 +23,8 @@ jobs:
         with:
           key: soroban-contracts
 
-      - name: Build contracts (WASM)
-        run: cargo build --target wasm32-unknown-unknown --release
+      - name: Build
+        run: cargo build
 
       - name: Run tests
         run: cargo test

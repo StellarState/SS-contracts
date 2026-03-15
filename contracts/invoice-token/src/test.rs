@@ -3,7 +3,7 @@
 use super::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, String as SorobanString, Symbol};
 
-fn setup_token(env: &Env) -> (InvoiceTokenClient, Address, Address) {
+fn setup_token(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address) {
     let contract_id = env.register(InvoiceToken, ());
     let client = InvoiceTokenClient::new(&env, &contract_id);
     let admin = Address::generate(env);
