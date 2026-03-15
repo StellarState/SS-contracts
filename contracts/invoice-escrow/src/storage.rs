@@ -16,9 +16,7 @@ pub fn set_config(env: &soroban_sdk::Env, config: &Config) {
 
 /// Load escrow data for an invoice from persistent storage.
 pub fn get_escrow(env: &soroban_sdk::Env, inv_id: Symbol) -> Option<EscrowData> {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::Escrow(inv_id))
+    env.storage().persistent().get(&StorageKey::Escrow(inv_id))
 }
 
 /// Save escrow data for an invoice to persistent storage.
@@ -30,7 +28,5 @@ pub fn set_escrow(env: &soroban_sdk::Env, inv_id: Symbol, data: &EscrowData) {
 
 /// Check if an escrow exists for the given invoice.
 pub fn has_escrow(env: &soroban_sdk::Env, inv_id: Symbol) -> bool {
-    env.storage()
-        .persistent()
-        .has(&StorageKey::Escrow(inv_id))
+    env.storage().persistent().has(&StorageKey::Escrow(inv_id))
 }

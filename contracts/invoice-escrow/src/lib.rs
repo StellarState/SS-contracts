@@ -8,9 +8,7 @@ mod events;
 mod storage;
 mod types;
 
-use soroban_sdk::{
-    contract, contractimpl, token, Address, Env, Symbol,
-};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
 
 use errors::Error;
 use types::{Config, EscrowData, EscrowStatus};
@@ -72,7 +70,8 @@ impl InvoiceEscrow {
     /// Fund the escrow (investor buys the invoice). Transfers `amount` from buyer to this contract.
     pub fn fund_escrow(env: Env, invoice_id: Symbol, buyer: Address) -> Result<(), Error> {
         buyer.require_auth();
-        let mut data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.status != EscrowStatus::Created {
             return Err(Error::EscrowFunded);
         }
@@ -99,7 +98,8 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
-        let mut data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.status != EscrowStatus::Funded {
             return Err(Error::AlreadySettled);
         }
@@ -126,7 +126,8 @@ impl InvoiceEscrow {
 
     /// Refund the investor if the invoice was not paid by due date. Anyone may call.
     pub fn refund(env: Env, invoice_id: Symbol) -> Result<(), Error> {
-        let mut data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.status != EscrowStatus::Funded {
             return Err(Error::RefundNotAllowed);
         }
