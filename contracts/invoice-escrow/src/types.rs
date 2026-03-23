@@ -52,6 +52,8 @@ pub struct EscrowData {
     pub due_dt: u64,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
+    /// Invoice token contract address (ownership/claim).
+    pub inv_token: soroban_sdk::Address,
     /// Investor who funded the escrow (None until funded).
     pub funder: Option<soroban_sdk::Address>,
     /// Current status.

@@ -8,7 +8,7 @@ mod events;
 mod storage;
 mod types;
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, IntoVal, Symbol};
 
 use errors::Error;
 use types::{Config, EscrowData, EscrowStatus};
@@ -44,6 +44,7 @@ impl InvoiceEscrow {
         amount: i128,
         due_date: u64,
         payment_token: Address,
+        invoice_token: Address,
     ) -> Result<(), Error> {
         seller.require_auth();
         if amount <= 0 {
@@ -59,11 +60,20 @@ impl InvoiceEscrow {
             amount,
             due_dt: due_date,
             token: payment_token.clone(),
+            inv_token: invoice_token.clone(),
             funder: None,
             status: EscrowStatus::Created,
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
-        events::escrow_created(&env, invoice_id, &seller, amount, due_date, &payment_token);
+        events::escrow_created(
+            &env,
+            invoice_id,
+            &seller,
+            amount,
+            due_date,
+            &payment_token,
+            &invoice_token,
+        );
         Ok(())
     }
 
@@ -79,6 +89,19 @@ impl InvoiceEscrow {
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
         token.transfer(&buyer, &contract, &amount);
+
+        // Mint invoice tokens to the buyer to represent ownership
+        env.invoke_contract::<()>(
+            &data.inv_token,
+            &Symbol::new(&env, "mint"),
+            soroban_sdk::vec![
+                &env,
+                buyer.to_val(),
+                amount.into_val(&env),
+                contract.to_val()
+            ],
+        );
+
         data.funder = Some(buyer.clone());
         data.status = EscrowStatus::Funded;
         storage::set_escrow(&env, invoice_id.clone(), &data);
@@ -175,3 +198,6 @@ impl InvoiceEscrow {
         Ok(data.status)
     }
 }
+
+#[cfg(test)]
+mod test;

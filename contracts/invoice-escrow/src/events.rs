@@ -10,10 +10,11 @@ pub fn escrow_created(
     amount: i128,
     due_dt: u64,
     token: &Address,
+    inv_token: &Address,
 ) {
     env.events().publish(
         (Symbol::new(env, "escrow_created"),),
-        (inv_id.clone(), seller, amount, due_dt, token),
+        (inv_id.clone(), seller, amount, due_dt, token, inv_token),
     );
 }
 
