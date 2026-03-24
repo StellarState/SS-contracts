@@ -204,4 +204,6 @@ impl InvoiceEscrow {
 }
 
 #[cfg(test)]
+mod integration_test;
+#[cfg(test)]
 mod test;
