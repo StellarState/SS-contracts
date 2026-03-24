@@ -8,4 +8,7 @@ description = "StellarSettle invoice escrow contract"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[dev-dependencies]
+invoice-token = { path = "../invoice-token" }
