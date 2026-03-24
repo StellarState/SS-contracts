@@ -139,6 +139,10 @@ impl InvoiceEscrow {
         let investor_amount = amount.checked_sub(platform_fee).ok_or(Error::Overflow)?;
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
+
+        // Transfer funds from payer to escrow contract before distributing
+        token.transfer(&payer, &contract, &amount);
+
         token.transfer(&contract, funder, &investor_amount);
         token.transfer(&contract, &config.admin, &platform_fee);
         data.status = EscrowStatus::Settled;
