@@ -596,7 +596,7 @@ fn test_transfer_from_expiration_at_current_ledger() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -623,7 +623,7 @@ fn test_transfer_from_expiration_one_below_current() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -655,7 +655,7 @@ fn test_transfer_from_expiration_above_current() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
