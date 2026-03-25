@@ -18,10 +18,23 @@ This document describes the intended end-to-end lifecycle of an invoice and how 
 - **Actor:** Payer
 - **Action:** The payer settles the invoice by sending the `amount` in `payment_token` to the escrow contract. The expected `platform_fee` is distributed to the admin, and the rest is distributed to the investor.
 - **State Changes:** Escrow status becomes `Settled`.
-- **Tokenization:** Invoice tokens remain in the investor's wallet but the escrow contract marks the invoice as fully settled. Transferability of these tokens remains locked by default (as per token initialization) unless global transfer policies are updated by the platform admin.
+- **Tokenization:** After distributing funds, the escrow contract calls `set_transfer_locked(false)` on the `invoice-token` contract (using its minter authority). Invoice tokens held by the investor are now freely transferable, enabling secondary market activity or use as proof of participation.
 
 ## 4. Refund (`refund`)
 - **Actor:** Anyone (typically Investor or Admin)
 - **Action:** Triggered if a funded invoice is past its `due_dt` and was not paid. The initial funded amount is refunded to the investor.
 - **State Changes:** Escrow status becomes `Refunded`.
-- **Tokenization:** Invoice tokens remain linked to the user account as a claim record, but the escrow contract will no longer accept payer funds for this invoice.
+- **Tokenization:** After returning funds to the investor, the escrow contract calls `set_transfer_locked(false)` on the `invoice-token` contract. Invoice tokens are unlocked so the investor can freely transfer or dispose of them as a historical claim record.
+
+## Transfer Lock Policy
+
+The `invoice-token` transfer lock follows the escrow lifecycle:
+
+| Escrow State | `transfer_locked` | Who Can Transfer |
+|---|---|---|
+| `Created` | `true` | Admin only |
+| `Funded` | `true` | Admin only |
+| `Settled` | `false` | All holders |
+| `Refunded` | `false` | All holders |
+
+**Access control:** Only the token `admin` or the designated `minter` (the escrow contract address) may call `set_transfer_locked`. This ensures only the escrow lifecycle — not arbitrary parties — can change the lock state after initialization.

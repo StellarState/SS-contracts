@@ -138,6 +138,7 @@
     [],
     [],
     [],
+    [],
     []
   ],
   "ledger": {
@@ -586,7 +587,7 @@
                                 "symbol": "transfer_locked"
                               },
                               "val": {
-                                "bool": true
+                                "bool": false
                               }
                             }
                           ]

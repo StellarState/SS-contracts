@@ -130,7 +130,7 @@ fn test_transfer_from_locked_admin_succeeds() {
 fn test_transfer_unlocked_all_succeed() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, minter) = setup_token(&env);
+    let (client, admin, minter) = setup_token(&env);
 
     // Mint tokens to users
     let user1 = Address::generate(&env);
@@ -138,8 +138,8 @@ fn test_transfer_unlocked_all_succeed() {
     client.mint(&user1, &1000, &minter);
     client.mint(&user2, &1000, &minter);
 
-    // Unlock transfers
-    client.set_transfer_locked(&false);
+    // Unlock transfers (admin as caller)
+    client.set_transfer_locked(&admin, &false);
     assert!(!client.transfer_locked());
 
     // Non-admin transfer should now succeed
@@ -164,7 +164,7 @@ fn test_transfer_unlocked_all_succeed() {
 fn test_set_transfer_locked_toggle() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, minter) = setup_token(&env);
+    let (client, admin, minter) = setup_token(&env);
 
     // Mint tokens to a non-admin user
     let user = Address::generate(&env);
@@ -176,18 +176,51 @@ fn test_set_transfer_locked_toggle() {
     let result = client.try_transfer(&user, &recipient, &100);
     assert_eq!(result, Err(Ok(crate::errors::Error::TransferLocked)));
 
-    // Unlock transfers
-    client.set_transfer_locked(&false);
+    // Unlock transfers (admin as caller)
+    client.set_transfer_locked(&admin, &false);
     assert!(!client.transfer_locked());
     client.transfer(&user, &recipient, &100);
     assert_eq!(client.balance(&user), 900);
     assert_eq!(client.balance(&recipient), 100);
 
-    // Lock again
-    client.set_transfer_locked(&true);
+    // Lock again (admin as caller)
+    client.set_transfer_locked(&admin, &true);
     assert!(client.transfer_locked());
     let result = client.try_transfer(&user, &recipient, &100);
     assert_eq!(result, Err(Ok(crate::errors::Error::TransferLocked)));
+}
+
+#[test]
+fn test_set_transfer_locked_by_minter() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    let user = Address::generate(&env);
+    client.mint(&user, &1000, &minter);
+
+    // Minter can unlock transfers
+    assert!(client.transfer_locked());
+    client.set_transfer_locked(&minter, &false);
+    assert!(!client.transfer_locked());
+
+    // Minter can also re-lock
+    client.set_transfer_locked(&minter, &true);
+    assert!(client.transfer_locked());
+}
+
+#[test]
+fn test_set_transfer_locked_unauthorized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _minter) = setup_token(&env);
+
+    let stranger = Address::generate(&env);
+    let result = client.try_set_transfer_locked(&stranger, &false);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Unauthorized)));
+
+    // Lock state should be unchanged
+    assert!(client.transfer_locked());
 }
 
 #[test]
@@ -222,7 +255,7 @@ fn test_transfer_event_emission() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers for this test
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let recipient = Address::generate(&env);
     client.transfer(&admin, &recipient, &250);
@@ -339,7 +372,7 @@ fn test_transfer_from_event_emission() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     // Admin approves spender
     let spender = Address::generate(&env);
@@ -441,10 +474,10 @@ fn test_no_transfer_event_on_locked_failure() {
 fn test_multiple_events_in_sequence() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, minter) = setup_token(&env);
+    let (client, admin, minter) = setup_token(&env);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
@@ -563,7 +596,7 @@ fn test_transfer_from_expiration_at_current_ledger() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -590,7 +623,7 @@ fn test_transfer_from_expiration_one_below_current() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -622,7 +655,7 @@ fn test_transfer_from_expiration_above_current() {
     client.mint(&admin, &1000, &minter);
 
     // Unlock transfers
-    client.set_transfer_locked(&false);
+    client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);

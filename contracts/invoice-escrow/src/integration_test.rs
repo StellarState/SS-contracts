@@ -72,6 +72,9 @@ fn test_integration_escrow_lifecycle_happy_path() {
     assert_eq!(payment_token_client.balance(&buyer), 0);
     assert_eq!(payment_token_client.balance(&escrow_id), amount);
 
+    // Verify invoice token is locked while escrow is active
+    assert!(inv_token_client.transfer_locked());
+
     // 9. Record Payment (Payer settles the invoice)
     escrow_client.record_payment(&invoice_id, &payer, &amount);
 
@@ -88,6 +91,15 @@ fn test_integration_escrow_lifecycle_happy_path() {
         escrow_client.get_escrow_status(&invoice_id),
         EscrowStatus::Settled
     );
+
+    // Invoice token transfers must be unlocked after settlement
+    assert!(!inv_token_client.transfer_locked());
+
+    // Buyer can now transfer their invoice tokens freely
+    let recipient = Address::generate(&env);
+    inv_token_client.transfer(&buyer, &recipient, &amount);
+    assert_eq!(inv_token_client.balance(&buyer), 0);
+    assert_eq!(inv_token_client.balance(&recipient), amount);
 }
 
 #[test]
@@ -155,4 +167,74 @@ fn test_integration_refund_lifecycle() {
         escrow_client.get_escrow_status(&invoice_id),
         EscrowStatus::Refunded
     );
+
+    // Invoice token transfers must be unlocked after refund
+    assert!(!inv_token_client.transfer_locked());
+}
+
+#[test]
+fn test_integration_token_locked_during_active_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let inv_token_id = env.register_contract(None, InvoiceToken);
+    let inv_token_client = InvoiceTokenClient::new(&env, &inv_token_id);
+
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let payment_token_asset = AssetClient::new(&env, &payment_token_id.address());
+
+    let invoice_id = Symbol::new(&env, "INVLOCK");
+    inv_token_client.initialize(
+        &admin,
+        &SorobanString::from_str(&env, "Lock Test Invoice"),
+        &SorobanString::from_str(&env, "INVLCK"),
+        &18,
+        &invoice_id,
+        &escrow_id,
+    );
+
+    escrow_client.initialize(&admin, &300);
+
+    let amount = 500i128;
+    payment_token_asset.mint(&buyer, &amount);
+
+    let due_date = 20000u64;
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &amount,
+        &due_date,
+        &payment_token_id.address(),
+        &inv_token_id,
+    );
+
+    // Token is locked even before funding (initialized locked)
+    assert!(inv_token_client.transfer_locked());
+
+    escrow_client.fund_escrow(&invoice_id, &buyer);
+
+    // Token is still locked after funding — transfers are blocked while invoice is active
+    assert!(inv_token_client.transfer_locked());
+    let other = Address::generate(&env);
+    let result = inv_token_client.try_transfer(&buyer, &other, &100);
+    assert!(result.is_err());
+
+    // After settlement, token unlocks
+    let payer = Address::generate(&env);
+    payment_token_asset.mint(&payer, &amount);
+    escrow_client.record_payment(&invoice_id, &payer, &amount);
+
+    assert!(!inv_token_client.transfer_locked());
+    // Buyer can now freely transfer invoice tokens
+    inv_token_client.transfer(&buyer, &other, &100);
+    assert_eq!(inv_token_client.balance(&buyer), amount - 100);
+    assert_eq!(inv_token_client.balance(&other), 100);
 }

@@ -16,6 +16,9 @@
               "function_name": "set_transfer_locked",
               "args": [
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
                   "bool": false
                 }
               ]

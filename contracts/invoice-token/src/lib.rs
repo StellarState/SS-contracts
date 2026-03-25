@@ -243,10 +243,14 @@ impl InvoiceToken {
         Ok(())
     }
 
-    /// Set transfer lock (admin only). When true, only admin can transfer.
-    pub fn set_transfer_locked(env: Env, locked: bool) -> Result<(), Error> {
+    /// Set transfer lock. Callable by admin or minter (escrow contract).
+    /// When true, only admin can transfer; when false, all holders can transfer.
+    pub fn set_transfer_locked(env: Env, caller: Address, locked: bool) -> Result<(), Error> {
+        caller.require_auth();
         let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
-        meta.admin.require_auth();
+        if caller != meta.admin && caller != meta.minter {
+            return Err(Error::Unauthorized);
+        }
         meta.transfer_locked = locked;
         storage::set_metadata(&env, &meta);
         Ok(())
