@@ -16,15 +16,20 @@ This document describes the intended end-to-end lifecycle of an invoice and how 
 
 ## 3. Settlement (`record_payment`)
 - **Actor:** Payer
-- **Action:** The payer settles the invoice by sending the `amount` in `payment_token` to the escrow contract. The expected `platform_fee` is distributed to the admin, and the rest is distributed to the investor.
-- **State Changes:** Escrow status becomes `Settled`.
-- **Tokenization:** After distributing funds, the escrow contract calls `set_transfer_locked(false)` on the `invoice-token` contract (using its minter authority). Invoice tokens held by the investor are now freely transferable, enabling secondary market activity or use as proof of participation.
+- **Action:** The payer settles the invoice by sending an `amount` in `payment_token` to the escrow contract.
+- **Distribution:**
+    - The expected `platform_fee` (based on `amount`) is distributed to the admin.
+    - The rest of the `amount` is distributed to the investor.
+    - **Proportional Release:** An amount equal to the payer's `amount` is released from the contract's initial funding balance (investor's collateral) to the **Seller**.
+- **State Changes:** Escrow status becomes `Settled` only if the total amount paid matches the original `data.amount`. Otherwise, status remains `Funded` to allow for further payments.
+- **Tokenization:** After **complete** settlement, the escrow contract calls `set_transfer_locked(false)` on the `invoice-token` contract.
 
 ## 4. Refund (`refund`)
 - **Actor:** Anyone (typically Investor or Admin)
-- **Action:** Triggered if a funded invoice is past its `due_dt` and was not paid. The initial funded amount is refunded to the investor.
+- **Action:** Triggered if a funded invoice is past its `due_dt` and was not fully paid.
+- **Action:** The **remaining** initial funded amount (collateral not yet released to the seller) is refunded to the investor.
 - **State Changes:** Escrow status becomes `Refunded`.
-- **Tokenization:** After returning funds to the investor, the escrow contract calls `set_transfer_locked(false)` on the `invoice-token` contract. Invoice tokens are unlocked so the investor can freely transfer or dispose of them as a historical claim record.
+- **Tokenization:** After returning remaining funds to the investor, the escrow contract calls `set_transfer_locked(false)` on the `invoice-token` contract.
 
 ## Transfer Lock Policy
 
