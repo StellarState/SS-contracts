@@ -132,14 +132,14 @@ fn test_record_payment() {
     // Payer should have spent 1000
     assert_eq!(payment_token.balance(&payer), 0);
 
-    // contract receives 1000 from payer. Then distributes to funder (970) and admin (30).
-    // Initial contract balance (from fund_escrow): 1000.
-    // + 1000 from record_payment = 2000.
-    // - 1000 distributed = 1000.
-    assert_eq!(payment_token.balance(&escrow_id), 1000); // 1000 remains (the investor's initial funding)
+    // contract receives 1000 from payer and distributes 1000 (970 to buyer, 30 to admin).
+    // AND it releases the 1000 initial funding to the seller.
+    // Initial: 1000. + 1000 (payer) - 1000 (distribute) - 1000 (release) = 0.
+    assert_eq!(payment_token.balance(&escrow_id), 0);
 
     assert_eq!(payment_token.balance(&buyer), 970);
     assert_eq!(payment_token.balance(&admin), 30);
+    assert_eq!(payment_token.balance(&seller), 1000);
 }
 
 #[test]
@@ -1293,4 +1293,192 @@ fn test_update_fee_not_initialized() {
     // Try to update fee without initialization
     let result = escrow_client.try_update_platform_fee_bps(&500);
     assert_eq!(result, Err(Ok(Error::NotInit)));
+}
+
+#[test]
+fn test_partial_payment_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let payment_token = TokenClient::new(&env, &payment_token_id.address());
+    let payment_token_asset = AssetClient::new(&env, &payment_token_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300); // 3% fee
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_PARTIAL");
+    let amount = 1000;
+
+    payment_token_asset.mint(&buyer, &1000);
+    payment_token_asset.mint(&payer, &1000);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &amount,
+        &1000000,
+        &payment_token.address,
+        &inv_token_id,
+    );
+
+    escrow_client.fund_escrow(&invoice_id, &buyer);
+
+    // First payment: 400
+    escrow_client.record_payment(&invoice_id, &payer, &400);
+
+    // Status must still be Funded
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Funded
+    );
+
+    // Check balances after 400 payment:
+    // Payer spent 400, remains 600
+    assert_eq!(payment_token.balance(&payer), 600);
+    // Admin got 3% of 400 = 12
+    assert_eq!(payment_token.balance(&admin), 12);
+    // Buyer (funder) got 400 - 12 = 388
+    assert_eq!(payment_token.balance(&buyer), 388);
+    // Seller got 400 released
+    assert_eq!(payment_token.balance(&seller), 400);
+    // Contract had 1000. + 400 (payer) - 400 (distribute) - 400 (release) = 600.
+    assert_eq!(payment_token.balance(&escrow_id), 600);
+
+    // Second payment: 600 (completes the 1000)
+    escrow_client.record_payment(&invoice_id, &payer, &600);
+
+    // Status must be Settled
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Settled
+    );
+
+    // Balances after full settlement:
+    assert_eq!(payment_token.balance(&payer), 0);
+    // Admin gets 3% of 600 = 18. Total = 12 + 18 = 30.
+    assert_eq!(payment_token.balance(&admin), 30);
+    // Buyer gets 600 - 18 = 582. Total = 388 + 582 = 970.
+    assert_eq!(payment_token.balance(&buyer), 970);
+    // Seller gets another 600 released. Total = 400 + 600 = 1000.
+    assert_eq!(payment_token.balance(&seller), 1000);
+    // Contract balance should be 0.
+    assert_eq!(payment_token.balance(&escrow_id), 0);
+}
+
+#[test]
+fn test_refund_after_partial_payment() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let payment_token = TokenClient::new(&env, &payment_token_id.address());
+    let payment_token_asset = AssetClient::new(&env, &payment_token_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_REF_PART");
+    let amount = 1000;
+    let due_date = 1000;
+
+    payment_token_asset.mint(&buyer, &1000);
+    payment_token_asset.mint(&payer, &1000);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &amount,
+        &due_date,
+        &payment_token.address,
+        &inv_token_id,
+    );
+
+    escrow_client.fund_escrow(&invoice_id, &buyer);
+
+    // Partial payment: 300
+    escrow_client.record_payment(&invoice_id, &payer, &300);
+
+    // Balances now: Contract 700, Seller 300, Buyer 291, Admin 9.
+    assert_eq!(payment_token.balance(&escrow_id), 700);
+
+    // Advance time
+    env.ledger().with_mut(|li| li.timestamp = due_date + 1);
+
+    // Refund
+    escrow_client.refund(&invoice_id);
+
+    // Status is Refunded
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Refunded
+    );
+
+    // Contract should be 0
+    assert_eq!(payment_token.balance(&escrow_id), 0);
+
+    // Buyer gets the remaining 700 back. Total = 291 + 700 = 991.
+    assert_eq!(payment_token.balance(&buyer), 991);
+    // Seller keeps the 300 already released
+    assert_eq!(payment_token.balance(&seller), 300);
+}
+
+#[test]
+fn test_record_payment_removes_initial_fund_even_on_full_payment() {
+    // This is essentially test_record_payment but emphasizing that stranded funds are gone
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let payment_token = TokenClient::new(&env, &pt_id.address());
+    let payment_token_asset = AssetClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &0); // 0% fee to simplify math
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_FULL");
+    let amount = 5000;
+
+    payment_token_asset.mint(&buyer, &5000);
+    payment_token_asset.mint(&payer, &5000);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &amount,
+        &100,
+        &pt_id.address(),
+        &inv_token_id,
+    );
+    escrow_client.fund_escrow(&invoice_id, &buyer);
+
+    assert_eq!(payment_token.balance(&escrow_id), 5000);
+
+    escrow_client.record_payment(&invoice_id, &payer, &5000);
+
+    assert_eq!(payment_token.balance(&escrow_id), 0);
+    assert_eq!(payment_token.balance(&seller), 5000);
+    assert_eq!(payment_token.balance(&buyer), 5000);
 }

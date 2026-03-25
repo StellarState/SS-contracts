@@ -27,4 +27,10 @@ Returns the current administrative address of the contract.
 ### `create_escrow(invoice_id: Symbol, seller: Address, amount: i128, due_date: u64, payment_token: Address, invoice_token: Address)`
 ### `fund_escrow(invoice_id: Symbol, buyer: Address)`
 ### `record_payment(invoice_id: Symbol, payer: Address, amount: i128)`
+Records a full or partial payment for a funded invoice.
+- **amount**: Must be $> 0$ and $\le$ (initial amount - total already paid).
+- Partial payments distribute the platform fee to the admin, the remainder to the investor, and release a proportional amount of the investor's initial funding to the seller.
+- The invoice status transitions to `Settled` only when the total paid matches the invoice amount.
+
 ### `refund(invoice_id: Symbol)`
+Returns the remaining (un-released) investor funding if the invoice is not paid by its due date.

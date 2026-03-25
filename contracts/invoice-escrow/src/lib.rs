@@ -62,6 +62,7 @@ impl InvoiceEscrow {
             token: payment_token.clone(),
             inv_token: invoice_token.clone(),
             funder: None,
+            paid_amt: 0,
             status: EscrowStatus::Created,
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
@@ -123,12 +124,19 @@ impl InvoiceEscrow {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+
         if data.status != EscrowStatus::Funded {
             return Err(Error::AlreadySettled);
         }
-        if amount > data.amount {
+
+        let remaining = data
+            .amount
+            .checked_sub(data.paid_amt)
+            .ok_or(Error::Overflow)?;
+        if amount > remaining {
             return Err(Error::InvalidAmount);
         }
+
         let funder = data.funder.as_ref().ok_or(Error::EscrowNotFunded)?;
         let fee_bps = i128::from(config.fee_bps);
         let platform_fee = amount
@@ -137,24 +145,33 @@ impl InvoiceEscrow {
             .checked_div(i128::from(MAX_BPS))
             .ok_or(Error::Overflow)?;
         let investor_amount = amount.checked_sub(platform_fee).ok_or(Error::Overflow)?;
+
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
 
-        // Transfer funds from payer to escrow contract before distributing
+        // 1. Transfer payer funds into escrow
         token.transfer(&payer, &contract, &amount);
 
+        // 2. Distribute payer's funds out (investor + platform fee)
         token.transfer(&contract, funder, &investor_amount);
         token.transfer(&contract, &config.admin, &platform_fee);
-        data.status = EscrowStatus::Settled;
+
+        // 3. Release corresponding funding from initial buy-in back to the seller
+        token.transfer(&contract, &data.seller, &amount);
+
+        data.paid_amt = data.paid_amt.checked_add(amount).ok_or(Error::Overflow)?;
+
+        if data.paid_amt == data.amount {
+            data.status = EscrowStatus::Settled;
+            // Unlock invoice token transfers only when the invoice is completely settled
+            env.invoke_contract::<()>(
+                &data.inv_token,
+                &Symbol::new(&env, "set_transfer_locked"),
+                soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+            );
+        }
+
         storage::set_escrow(&env, invoice_id.clone(), &data);
-
-        // Unlock invoice token transfers now that the invoice is settled
-        env.invoke_contract::<()>(
-            &data.inv_token,
-            &Symbol::new(&env, "set_transfer_locked"),
-            soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
-        );
-
         events::payment_settled(&env, invoice_id, amount, platform_fee, investor_amount);
         Ok(())
     }
@@ -171,10 +188,20 @@ impl InvoiceEscrow {
             return Err(Error::RefundNotAllowed);
         }
         let funder = data.funder.as_ref().ok_or(Error::EscrowNotFunded)?;
-        let amount = data.amount;
+
+        // Refund the remaining collateral (initial buy-in minus already released partial payments)
+        let amount_to_refund = data
+            .amount
+            .checked_sub(data.paid_amt)
+            .ok_or(Error::Overflow)?;
+
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
-        token.transfer(&contract, funder, &amount);
+
+        if amount_to_refund > 0 {
+            token.transfer(&contract, funder, &amount_to_refund);
+        }
+
         data.status = EscrowStatus::Refunded;
         storage::set_escrow(&env, invoice_id.clone(), &data);
 
@@ -185,7 +212,7 @@ impl InvoiceEscrow {
             soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
         );
 
-        events::escrow_refunded(&env, invoice_id, funder, amount);
+        events::escrow_refunded(&env, invoice_id, funder, amount_to_refund);
         Ok(())
     }
 

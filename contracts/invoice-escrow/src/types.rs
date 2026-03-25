@@ -56,6 +56,8 @@ pub struct EscrowData {
     pub inv_token: soroban_sdk::Address,
     /// Investor who funded the escrow (None until funded).
     pub funder: Option<soroban_sdk::Address>,
+    /// Amount already paid by payer.
+    pub paid_amt: i128,
     /// Current status.
     pub status: EscrowStatus,
 }

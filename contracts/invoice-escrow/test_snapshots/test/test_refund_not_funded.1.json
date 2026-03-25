@@ -135,6 +135,17 @@
                     },
                     {
                       "key": {
+                        "symbol": "paid_amt"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 0
+                        }
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "seller"
                       },
                       "val": {
