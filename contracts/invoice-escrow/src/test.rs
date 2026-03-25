@@ -16,6 +16,10 @@ impl MockInvoiceToken {
         // Just mock the mint call
         env.storage().instance().set(&to, &amount);
     }
+
+    pub fn set_transfer_locked(_env: Env, _caller: Address, _locked: bool) {
+        // Mock the set_transfer_locked call — no-op for unit tests
+    }
 }
 
 #[test]
