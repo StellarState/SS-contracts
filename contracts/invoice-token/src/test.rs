@@ -1,7 +1,7 @@
 //! Unit tests for the invoice token contract.
 
 use super::{InvoiceToken, InvoiceTokenClient};
-use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{Address, Env, IntoVal, String as SorobanString, Symbol, TryIntoVal};
 
 fn setup_token(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address) {
@@ -493,4 +493,326 @@ fn test_multiple_events_in_sequence() {
         // If we have fewer events, just verify they exist in order
         assert!(event_count > 0, "Expected at least one event");
     }
+}
+
+// ========== Allowance Expiration Boundary Tests ==========
+
+#[test]
+fn test_approve_expiration_at_current_ledger() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Approve with expiration exactly at current ledger should succeed
+    client.approve(&admin, &spender, &500, &current_ledger);
+
+    // Verify allowance was set
+    assert_eq!(client.allowance(&admin, &spender), 500);
+}
+
+#[test]
+fn test_approve_expiration_below_current_ledger() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+
+    // Advance ledger to ensure we can test below current
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    let current_ledger = env.ledger().sequence();
+
+    // Approve with expiration below current ledger should fail
+    let result = client.try_approve(&admin, &spender, &500, &(current_ledger - 1));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_approve_expiration_zero_amount_allows_past() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+
+    // Advance ledger to ensure we can test past expiration
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    let current_ledger = env.ledger().sequence();
+
+    // First set an allowance
+    client.approve(&admin, &spender, &500, &(current_ledger + 100));
+    assert_eq!(client.allowance(&admin, &spender), 500);
+
+    // Approve with amount=0 and past expiration should succeed (revoke allowance)
+    client.approve(&admin, &spender, &0, &(current_ledger - 5));
+
+    // Allowance should be revoked
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
+#[test]
+fn test_transfer_from_expiration_at_current_ledger() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+
+    // Unlock transfers
+    client.set_transfer_locked(&false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Approve with expiration at current ledger
+    client.approve(&admin, &spender, &500, &current_ledger);
+
+    // transfer_from should succeed when expiration == current ledger
+    client.transfer_from(&spender, &admin, &recipient, &200);
+
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.balance(&recipient), 200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+}
+
+#[test]
+fn test_transfer_from_expiration_one_below_current() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+
+    // Unlock transfers
+    client.set_transfer_locked(&false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // Approve with expiration at initial ledger
+    client.approve(&admin, &spender, &500, &initial_ledger);
+
+    // Advance ledger by 1
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 1);
+
+    // transfer_from should fail when expiration < current ledger
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &200);
+    assert!(result.is_err());
+
+    // Balances should remain unchanged
+    assert_eq!(client.balance(&admin), 1000);
+    assert_eq!(client.balance(&recipient), 0);
+}
+
+#[test]
+fn test_transfer_from_expiration_above_current() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+
+    // Unlock transfers
+    client.set_transfer_locked(&false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Approve with expiration above current ledger
+    client.approve(&admin, &spender, &500, &(current_ledger + 100));
+
+    // transfer_from should succeed when expiration > current ledger
+    client.transfer_from(&spender, &admin, &recipient, &200);
+
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.balance(&recipient), 200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+}
+
+#[test]
+fn test_burn_from_expiration_at_current_ledger() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+
+    let spender = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Approve with expiration at current ledger
+    client.approve(&admin, &spender, &500, &current_ledger);
+
+    // burn_from should succeed when expiration == current ledger
+    client.burn_from(&spender, &admin, &200);
+
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.total_supply(), 800);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+}
+
+#[test]
+fn test_burn_from_expiration_one_below_current() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+
+    let spender = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // Approve with expiration at initial ledger
+    client.approve(&admin, &spender, &500, &initial_ledger);
+
+    // Advance ledger by 1
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 1);
+
+    // burn_from should fail when expiration < current ledger
+    let result = client.try_burn_from(&spender, &admin, &200);
+    assert!(result.is_err());
+
+    // Balance and supply should remain unchanged
+    assert_eq!(client.balance(&admin), 1000);
+    assert_eq!(client.total_supply(), 1000);
+}
+
+#[test]
+fn test_burn_from_expiration_above_current() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+
+    let spender = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Approve with expiration above current ledger
+    client.approve(&admin, &spender, &500, &(current_ledger + 100));
+
+    // burn_from should succeed when expiration > current ledger
+    client.burn_from(&spender, &admin, &200);
+
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.total_supply(), 800);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+}
+
+#[test]
+fn test_allowance_returns_zero_when_expired() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // Approve with expiration at initial ledger
+    client.approve(&admin, &spender, &500, &initial_ledger);
+
+    // At current ledger, allowance should be visible
+    assert_eq!(client.allowance(&admin, &spender), 500);
+
+    // Advance ledger by 1
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 1);
+
+    // After expiration, allowance should return 0
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
+#[test]
+fn test_allowance_boundary_multiple_ledgers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    let expiration = initial_ledger + 5;
+
+    // Approve with expiration 5 ledgers in the future
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // Check allowance at various ledger sequences
+    for i in 0..=5 {
+        env.ledger()
+            .with_mut(|li| li.sequence_number = initial_ledger + i);
+        let expected = if i <= 5 { 500 } else { 0 };
+        assert_eq!(client.allowance(&admin, &spender), expected);
+    }
+
+    // At expiration + 1, should be 0
+    env.ledger()
+        .with_mut(|li| li.sequence_number = expiration + 1);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
+#[test]
+fn test_approve_update_expiration_extends() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // First approval with short expiration
+    client.approve(&admin, &spender, &500, &(initial_ledger + 2));
+
+    // Advance ledger by 1
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 1);
+
+    // Update approval with extended expiration
+    client.approve(&admin, &spender, &600, &(initial_ledger + 10));
+
+    // Advance to where old expiration would have expired
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 3);
+
+    // Allowance should still be valid with new expiration
+    assert_eq!(client.allowance(&admin, &spender), 600);
+}
+
+#[test]
+fn test_approve_update_expiration_shortens() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // First approval with long expiration
+    client.approve(&admin, &spender, &500, &(initial_ledger + 100));
+
+    // Update approval with shorter expiration
+    let new_expiration = initial_ledger + 2;
+    client.approve(&admin, &spender, &600, &new_expiration);
+
+    // Advance to new expiration
+    env.ledger()
+        .with_mut(|li| li.sequence_number = new_expiration);
+    assert_eq!(client.allowance(&admin, &spender), 600);
+
+    // Advance past new expiration
+    env.ledger()
+        .with_mut(|li| li.sequence_number = new_expiration + 1);
+    assert_eq!(client.allowance(&admin, &spender), 0);
 }
