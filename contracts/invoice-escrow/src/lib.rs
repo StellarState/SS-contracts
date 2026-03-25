@@ -147,6 +147,14 @@ impl InvoiceEscrow {
         token.transfer(&contract, &config.admin, &platform_fee);
         data.status = EscrowStatus::Settled;
         storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        // Unlock invoice token transfers now that the invoice is settled
+        env.invoke_contract::<()>(
+            &data.inv_token,
+            &Symbol::new(&env, "set_transfer_locked"),
+            soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+        );
+
         events::payment_settled(&env, invoice_id, amount, platform_fee, investor_amount);
         Ok(())
     }
@@ -169,6 +177,14 @@ impl InvoiceEscrow {
         token.transfer(&contract, funder, &amount);
         data.status = EscrowStatus::Refunded;
         storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        // Unlock invoice token transfers now that the invoice is refunded
+        env.invoke_contract::<()>(
+            &data.inv_token,
+            &Symbol::new(&env, "set_transfer_locked"),
+            soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+        );
+
         events::escrow_refunded(&env, invoice_id, funder, amount);
         Ok(())
     }
