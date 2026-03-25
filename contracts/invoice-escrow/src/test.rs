@@ -1331,13 +1331,16 @@ fn test_partial_payment_lifecycle() {
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer);
-    
+
     // First payment: 400
     escrow_client.record_payment(&invoice_id, &payer, &400);
 
     // Status must still be Funded
-    assert_eq!(escrow_client.get_escrow_status(&invoice_id), EscrowStatus::Funded);
-    
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Funded
+    );
+
     // Check balances after 400 payment:
     // Payer spent 400, remains 600
     assert_eq!(payment_token.balance(&payer), 600);
@@ -1354,7 +1357,10 @@ fn test_partial_payment_lifecycle() {
     escrow_client.record_payment(&invoice_id, &payer, &600);
 
     // Status must be Settled
-    assert_eq!(escrow_client.get_escrow_status(&invoice_id), EscrowStatus::Settled);
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Settled
+    );
 
     // Balances after full settlement:
     assert_eq!(payment_token.balance(&payer), 0);
@@ -1405,7 +1411,7 @@ fn test_refund_after_partial_payment() {
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer);
-    
+
     // Partial payment: 300
     escrow_client.record_payment(&invoice_id, &payer, &300);
 
@@ -1419,11 +1425,14 @@ fn test_refund_after_partial_payment() {
     escrow_client.refund(&invoice_id);
 
     // Status is Refunded
-    assert_eq!(escrow_client.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Refunded
+    );
 
     // Contract should be 0
     assert_eq!(payment_token.balance(&escrow_id), 0);
-    
+
     // Buyer gets the remaining 700 back. Total = 291 + 700 = 991.
     assert_eq!(payment_token.balance(&buyer), 991);
     // Seller keeps the 300 already released
@@ -1455,13 +1464,20 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
     payment_token_asset.mint(&buyer, &5000);
     payment_token_asset.mint(&payer, &5000);
 
-    escrow_client.create_escrow(&invoice_id, &seller, &amount, &100, &pt_id.address(), &inv_token_id);
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &amount,
+        &100,
+        &pt_id.address(),
+        &inv_token_id,
+    );
     escrow_client.fund_escrow(&invoice_id, &buyer);
-    
+
     assert_eq!(payment_token.balance(&escrow_id), 5000);
-    
+
     escrow_client.record_payment(&invoice_id, &payer, &5000);
-    
+
     assert_eq!(payment_token.balance(&escrow_id), 0);
     assert_eq!(payment_token.balance(&seller), 5000);
     assert_eq!(payment_token.balance(&buyer), 5000);

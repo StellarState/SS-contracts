@@ -159,10 +159,7 @@ impl InvoiceEscrow {
         // 3. Release corresponding funding from initial buy-in back to the seller
         token.transfer(&contract, &data.seller, &amount);
 
-        data.paid_amt = data
-            .paid_amt
-            .checked_add(amount)
-            .ok_or(Error::Overflow)?;
+        data.paid_amt = data.paid_amt.checked_add(amount).ok_or(Error::Overflow)?;
 
         if data.paid_amt == data.amount {
             data.status = EscrowStatus::Settled;
