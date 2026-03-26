@@ -6,7 +6,7 @@ use soroban_sdk::{Address, Env, IntoVal, String as SorobanString, Symbol, TryInt
 
 fn setup_token(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address) {
     let contract_id = env.register(InvoiceToken, ());
-    let client = InvoiceTokenClient::new(&env, &contract_id);
+    let client = InvoiceTokenClient::new(env, &contract_id);
     let admin = Address::generate(env);
     let minter = Address::generate(env);
     let name = SorobanString::from_str(env, "Invoice INV-001");
@@ -246,6 +246,25 @@ fn test_transfer_locked_with_sufficient_balance() {
 }
 
 #[test]
+fn test_transfer_insufficient_balance_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Unlock transfers so we can isolate the balance failure path.
+    client.set_transfer_locked(&admin, &false);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.mint(&sender, &50, &minter);
+
+    let result = client.try_transfer(&sender, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InsufficientBalance)));
+    assert_eq!(client.balance(&sender), 50);
+    assert_eq!(client.balance(&recipient), 0);
+}
+
+#[test]
 fn test_transfer_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
@@ -335,6 +354,36 @@ fn test_mint_event_emission() {
 }
 
 #[test]
+fn test_mint_authorization_and_invalid_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    let recipient = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    // Admin can mint.
+    client.mint(&recipient, &100, &admin);
+    assert_eq!(client.balance(&recipient), 100);
+    assert_eq!(client.total_supply(), 100);
+
+    // Minter can also mint.
+    client.mint(&recipient, &50, &minter);
+    assert_eq!(client.balance(&recipient), 150);
+    assert_eq!(client.total_supply(), 150);
+
+    // Unauthorized caller is rejected.
+    let unauthorized = client.try_mint(&recipient, &25, &stranger);
+    assert_eq!(unauthorized, Err(Ok(crate::errors::Error::Unauthorized)));
+
+    // Zero amount is rejected even for an authorized caller.
+    let invalid_amount = client.try_mint(&recipient, &0, &minter);
+    assert_eq!(invalid_amount, Err(Ok(crate::errors::Error::InvalidAmount)));
+    assert_eq!(client.balance(&recipient), 150);
+    assert_eq!(client.total_supply(), 150);
+}
+
+#[test]
 fn test_burn_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
@@ -360,6 +409,20 @@ fn test_burn_event_emission() {
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
     assert_eq!(emitted_amount, burn_amount);
+}
+
+#[test]
+fn test_burn_insufficient_balance_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &100, &minter);
+
+    let result = client.try_burn(&admin, &200);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InsufficientBalance)));
+    assert_eq!(client.balance(&admin), 100);
+    assert_eq!(client.total_supply(), 100);
 }
 
 #[test]
@@ -434,6 +497,68 @@ fn test_burn_from_event_emission() {
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
     assert_eq!(emitted_amount, burn_amount);
+}
+
+#[test]
+fn test_burn_updates_balance_and_total_supply() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+
+    client.burn(&admin, &300);
+    assert_eq!(client.balance(&admin), 700);
+    assert_eq!(client.total_supply(), 700);
+}
+
+#[test]
+fn test_burn_from_updates_balance_allowance_and_total_supply() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    client.approve(&admin, &spender, &500, &expiration);
+
+    client.burn_from(&spender, &admin, &150);
+    assert_eq!(client.balance(&admin), 850);
+    assert_eq!(client.total_supply(), 850);
+    assert_eq!(client.allowance(&admin, &spender), 350);
+}
+
+#[test]
+fn test_burn_from_allowance_and_balance_checks() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &100, &minter);
+
+    let spender = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Insufficient allowance.
+    client.approve(&admin, &spender, &50, &(current_ledger + 100));
+    let allowance_fail = client.try_burn_from(&spender, &admin, &60);
+    assert_eq!(
+        allowance_fail,
+        Err(Ok(crate::errors::Error::InsufficientAllowance))
+    );
+
+    // Sufficient allowance but insufficient balance.
+    client.approve(&admin, &spender, &200, &(current_ledger + 100));
+    let balance_fail = client.try_burn_from(&spender, &admin, &150);
+    assert_eq!(
+        balance_fail,
+        Err(Ok(crate::errors::Error::InsufficientBalance))
+    );
+    assert_eq!(client.balance(&admin), 100);
+    assert_eq!(client.total_supply(), 100);
+    assert_eq!(client.allowance(&admin, &spender), 200);
 }
 
 #[test]
@@ -670,6 +795,27 @@ fn test_transfer_from_expiration_above_current() {
     assert_eq!(client.balance(&admin), 800);
     assert_eq!(client.balance(&recipient), 200);
     assert_eq!(client.allowance(&admin, &spender), 300);
+}
+
+#[test]
+fn test_transfer_from_insufficient_allowance_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    client.approve(&admin, &spender, &50, &expiration);
+
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InsufficientAllowance)));
+    assert_eq!(client.balance(&admin), 1000);
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(client.allowance(&admin, &spender), 50);
 }
 
 #[test]

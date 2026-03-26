@@ -1,4 +1,3 @@
-#![cfg(test)]
 #![allow(deprecated)]
 
 use super::*;
@@ -397,7 +396,7 @@ fn test_no_settlement_event_on_invalid_state() {
         let (_addr, topics, _data) = event;
         // Check if this is a payment_settled event
         let topic_vec: soroban_sdk::Vec<soroban_sdk::Val> = topics.clone();
-        if topic_vec.len() > 0 {
+        if !topic_vec.is_empty() {
             if let Ok(symbol) = topic_vec.get(0).unwrap().try_into_val(&env) {
                 let sym: Symbol = symbol;
                 // Assert that no payment_settled event exists
@@ -451,7 +450,7 @@ fn test_no_refund_event_on_invalid_state() {
         let (_addr, topics, _data) = event;
         // Check if this is an escrow_refunded event
         let topic_vec: soroban_sdk::Vec<soroban_sdk::Val> = topics.clone();
-        if topic_vec.len() > 0 {
+        if !topic_vec.is_empty() {
             if let Ok(symbol) = topic_vec.get(0).unwrap().try_into_val(&env) {
                 let sym: Symbol = symbol;
                 // Assert that no escrow_refunded event exists
