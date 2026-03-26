@@ -1,10 +1,9 @@
 {
   "generators": {
-    "address": 2,
+    "address": 4,
     "nonce": 0
   },
   "auth": [
-    [],
     [],
     [],
     [
@@ -14,10 +13,10 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "update_platform_fee_bps",
+              "function_name": "set_minter",
               "args": [
                 {
-                  "u32": 500
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 }
               ]
             }
@@ -64,7 +63,7 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "Config"
+                              "symbol": "Metadata"
                             }
                           ]
                         },
@@ -80,13 +79,68 @@
                             },
                             {
                               "key": {
-                                "symbol": "fee_bps"
+                                "symbol": "decimals"
                               },
                               "val": {
-                                "u32": 500
+                                "u32": 7
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "invoice_id"
+                              },
+                              "val": {
+                                "symbol": "inv_001"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "minter"
+                              },
+                              "val": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "name"
+                              },
+                              "val": {
+                                "string": "Invoice INV-001"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "symbol"
+                              },
+                              "val": {
+                                "string": "INV001"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "transfer_locked"
+                              },
+                              "val": {
+                                "bool": true
                               }
                             }
                           ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "TotalSupply"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
                         }
                       }
                     ]
@@ -165,16 +219,16 @@
           "v0": {
             "topics": [
               {
-                "symbol": "platform_fee_updated"
+                "symbol": "minter_updated"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "u32": 300
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
-                  "u32": 500
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 }
               ]
             }

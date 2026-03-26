@@ -6,7 +6,7 @@ use soroban_sdk::{Address, Env, IntoVal, String as SorobanString, Symbol, TryInt
 
 fn setup_token(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address) {
     let contract_id = env.register(InvoiceToken, ());
-    let client = InvoiceTokenClient::new(&env, &contract_id);
+    let client = InvoiceTokenClient::new(env, &contract_id);
     let admin = Address::generate(env);
     let minter = Address::generate(env);
     let name = SorobanString::from_str(env, "Invoice INV-001");
@@ -191,6 +191,27 @@ fn test_set_transfer_locked_toggle() {
 }
 
 #[test]
+fn test_set_transfer_locked_event_emission() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Admin unlocks transfers and emits the old/new lock state.
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let events = env.events().all();
+    let event = events.last().unwrap();
+    let (_contract_addr, topics, data) = event;
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "transfer_locked_updated"),).into_val(&env)
+    );
+    let event_data: (bool, bool) = data.try_into_val(&env).unwrap();
+    assert_eq!(event_data, (true, false));
+}
+
+#[test]
 fn test_set_transfer_locked_by_minter() {
     let env = Env::default();
     env.mock_all_auths();
@@ -207,6 +228,27 @@ fn test_set_transfer_locked_by_minter() {
     // Minter can also re-lock
     client.set_transfer_locked(&minter, &true);
     assert!(client.transfer_locked());
+}
+
+#[test]
+fn test_set_minter_event_emission() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, old_minter) = setup_token(&env);
+
+    let new_minter = Address::generate(&env);
+    client.set_minter(&new_minter);
+
+    let events = env.events().all();
+    let event = events.last().unwrap();
+    let (_contract_addr, topics, data) = event;
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "minter_updated"),).into_val(&env)
+    );
+    let event_data: (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(event_data.0, old_minter);
+    assert_eq!(event_data.1, new_minter);
 }
 
 #[test]

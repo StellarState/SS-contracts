@@ -224,8 +224,10 @@ impl InvoiceEscrow {
         if new_fee_bps > MAX_BPS {
             return Err(Error::InvalidFeeBps);
         }
+        let old_fee_bps = config.fee_bps;
         config.fee_bps = new_fee_bps;
         storage::set_config(&env, &config);
+        events::platform_fee_updated(&env, old_fee_bps, new_fee_bps);
         Ok(())
     }
 

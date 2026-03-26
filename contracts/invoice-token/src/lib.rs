@@ -251,17 +251,21 @@ impl InvoiceToken {
         if caller != meta.admin && caller != meta.minter {
             return Err(Error::Unauthorized);
         }
+        let old_locked = meta.transfer_locked;
         meta.transfer_locked = locked;
         storage::set_metadata(&env, &meta);
+        events::transfer_locked_updated_event(&env, old_locked, locked);
         Ok(())
     }
 
     /// Set minter address (admin only).
     pub fn set_minter(env: Env, new_minter: Address) -> Result<(), Error> {
         let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        let old_minter = meta.minter.clone();
         meta.admin.require_auth();
         meta.minter = new_minter;
         storage::set_metadata(&env, &meta);
+        events::minter_updated_event(&env, &old_minter, &meta.minter);
         Ok(())
     }
 
