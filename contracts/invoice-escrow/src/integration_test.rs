@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::*;
 use invoice_token::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as AssetClient};
@@ -20,11 +18,11 @@ fn test_integration_escrow_lifecycle_happy_path() {
     let payer = Address::generate(&env);
 
     // 2. Register Escrow Contract
-    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_id = env.register(InvoiceEscrow, ());
     let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
 
     // 3. Register Token Contract
-    let inv_token_id = env.register_contract(None, InvoiceToken);
+    let inv_token_id = env.register(InvoiceToken, ());
     let inv_token_client = InvoiceTokenClient::new(&env, &inv_token_id);
 
     // 4. Register Payment Token (Stellar Asset)
@@ -111,10 +109,10 @@ fn test_integration_refund_lifecycle() {
     let seller = Address::generate(&env);
     let buyer = Address::generate(&env);
 
-    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_id = env.register(InvoiceEscrow, ());
     let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
 
-    let inv_token_id = env.register_contract(None, InvoiceToken);
+    let inv_token_id = env.register(InvoiceToken, ());
     let inv_token_client = InvoiceTokenClient::new(&env, &inv_token_id);
 
     let payment_token_admin = Address::generate(&env);
@@ -181,10 +179,10 @@ fn test_integration_token_locked_during_active_escrow() {
     let seller = Address::generate(&env);
     let buyer = Address::generate(&env);
 
-    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_id = env.register(InvoiceEscrow, ());
     let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
 
-    let inv_token_id = env.register_contract(None, InvoiceToken);
+    let inv_token_id = env.register(InvoiceToken, ());
     let inv_token_client = InvoiceTokenClient::new(&env, &inv_token_id);
 
     let payment_token_admin = Address::generate(&env);
