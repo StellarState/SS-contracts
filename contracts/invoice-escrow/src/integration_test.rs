@@ -56,7 +56,7 @@ fn test_integration_escrow_lifecycle_happy_path() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &due_date,
@@ -182,6 +182,7 @@ fn test_integration_token_locked_during_active_escrow() {
     let admin = Address::generate(&env);
     let seller = Address::generate(&env);
     let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
 
     let escrow_id = env.register(InvoiceEscrow, ());
     let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
@@ -212,7 +213,7 @@ fn test_integration_token_locked_during_active_escrow() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &due_date,
@@ -232,7 +233,6 @@ fn test_integration_token_locked_during_active_escrow() {
     assert!(result.is_err());
 
     // After settlement, token unlocks
-    let payer = Address::generate(&env);
     payment_token_asset.mint(&payer, &amount);
     escrow_client.record_payment(&invoice_id, &payer, &amount);
 

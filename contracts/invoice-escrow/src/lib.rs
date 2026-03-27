@@ -10,8 +10,10 @@ mod types;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, IntoVal, Symbol};
 
+pub use types::EscrowStatus;
+
 use errors::Error;
-use types::{Config, EscrowData, EscrowStatus};
+use types::{Config, EscrowData};
 
 const MAX_BPS: u32 = 10_000;
 

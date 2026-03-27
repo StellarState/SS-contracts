@@ -68,8 +68,8 @@ fn test_integration_settle_then_distribute() {
 
     // Escrow lifecycle
     let due_date = 99_999u64;
-    escrow.create_escrow(&invoice_id, &seller, &amount, &due_date, &pt_id.address(), &inv_token_id);
-    escrow.fund_escrow(&invoice_id, &buyer);
+    escrow.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &due_date, &pt_id.address(), &inv_token_id);
+    escrow.fund_escrow(&invoice_id, &buyer, &amount);
 
     assert_eq!(pt_client.balance(&escrow_id), amount);
 
@@ -128,8 +128,8 @@ fn test_integration_distribute_while_escrow_funded_not_settled() {
 
     let amount = 500i128;
     pt_asset.mint(&buyer, &amount);
-    escrow.create_escrow(&invoice_id, &seller, &amount, &99_999u64, &pt_id.address(), &inv_token_id);
-    escrow.fund_escrow(&invoice_id, &buyer);
+    escrow.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &99_999u64, &pt_id.address(), &inv_token_id);
+    escrow.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Escrow is Funded (not Settled). The distributor has no funds yet.
     // Attempting to distribute 0 tokens should fail with InvalidAmount.
@@ -231,8 +231,8 @@ fn test_integration_refund_does_not_affect_distributor() {
     pt_asset.mint(&buyer, &amount);
 
     env.ledger().set_timestamp(5_000);
-    escrow.create_escrow(&invoice_id, &seller, &amount, &due_date, &pt_id.address(), &inv_token_id);
-    escrow.fund_escrow(&invoice_id, &buyer);
+    escrow.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &due_date, &pt_id.address(), &inv_token_id);
+    escrow.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Advance past due date and refund
     env.ledger().set_timestamp(10_001);

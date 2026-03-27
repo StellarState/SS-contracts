@@ -111,7 +111,7 @@ fn test_record_payment() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &1000000,
@@ -244,10 +244,12 @@ fn test_escrow_funded_event() {
 
     assert_eq!(topics, (Symbol::new(&env, "escrow_funded"),).into_val(&env));
 
-    let event_data: (Symbol, Address, i128) = data.try_into_val(&env).unwrap();
+    let event_data: (Symbol, Address, i128, i128, i128) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
     assert_eq!(event_data.1, buyer);
     assert_eq!(event_data.2, amount);
+    assert_eq!(event_data.3, amount); // funded_amt
+    assert_eq!(event_data.4, amount); // purchase_price
 }
 
 #[test]
@@ -278,7 +280,7 @@ fn test_payment_settled_event() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &1000000,
@@ -360,10 +362,9 @@ fn test_escrow_refunded_event() {
         (Symbol::new(&env, "escrow_refunded"),).into_val(&env)
     );
 
-    let event_data: (Symbol, Address, i128) = data.try_into_val(&env).unwrap();
+    let event_data: (Symbol, i128) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
-    assert_eq!(event_data.1, buyer);
-    assert_eq!(event_data.2, amount);
+    assert_eq!(event_data.1, amount);
 }
 
 #[test]
@@ -392,7 +393,7 @@ fn test_no_settlement_event_on_invalid_state() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &1000000,
@@ -776,7 +777,7 @@ fn test_record_payment_not_funded() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &1000,
         &1000,
         &1000000,
@@ -816,7 +817,7 @@ fn test_record_payment_already_settled() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &1000,
         &1000,
         &1000000,
@@ -859,7 +860,7 @@ fn test_record_payment_amount_exceeds_escrow() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &1000,
         &1000,
         &1000000,
@@ -1085,7 +1086,7 @@ fn test_refund_already_settled() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &1000,
         &1000,
         &due_date,
@@ -1135,7 +1136,7 @@ fn test_fee_calculation_zero_fee() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &1000,
         &1000,
         &1000000,
@@ -1180,7 +1181,7 @@ fn test_fee_calculation_max_fee() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &1000,
         &1000,
         &1000000,
@@ -1385,7 +1386,7 @@ fn test_partial_payment_lifecycle() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &1000000,
@@ -1467,7 +1468,7 @@ fn test_refund_after_partial_payment() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &due_date,
@@ -1532,7 +1533,7 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
-        &seller,
+        &payer,
         &amount,
         &amount,
         &100,
