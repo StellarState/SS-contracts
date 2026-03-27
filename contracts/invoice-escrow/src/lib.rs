@@ -3,6 +3,8 @@
 //! Handles escrow creation, funding by investors, payment settlement,
 //! and refunds when invoices are not paid by due date.
 
+#![allow(clippy::too_many_arguments)]
+
 mod errors;
 mod events;
 mod storage;

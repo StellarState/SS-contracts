@@ -9,7 +9,14 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn setup(env: &Env) -> (Address, PaymentDistributorClient<'_>, Address, TokenClient<'_>) {
+fn setup(
+    env: &Env,
+) -> (
+    Address,
+    PaymentDistributorClient<'_>,
+    Address,
+    TokenClient<'_>,
+) {
     let distributor_id = env.register_contract(None, PaymentDistributor);
     let client = PaymentDistributorClient::new(env, &distributor_id);
     let admin = Address::generate(env);
