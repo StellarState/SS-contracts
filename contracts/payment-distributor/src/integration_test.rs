@@ -189,11 +189,11 @@ fn test_integration_distribute_unauthorized_caller() {
     let distributor_id2 = env2.register(PaymentDistributor, ());
     let distributor2 = PaymentDistributorClient::new(&env2, &distributor_id2);
     let admin2 = Address::generate(&env2);
-    
+
     // Initialize with mock auth
     env2.mock_all_auths();
     distributor2.initialize(&admin2);
-    
+
     let pt_id2 = env2.register_stellar_asset_contract_v2(Address::generate(&env2));
     AssetClient::new(&env2, &pt_id2.address()).mint(&distributor_id2, &1000i128);
     let pt_client2 = TokenClient::new(&env2, &pt_id2.address());

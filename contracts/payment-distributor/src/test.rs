@@ -20,6 +20,9 @@ fn setup(
     let distributor_id = env.register_contract(None, PaymentDistributor);
     let client = PaymentDistributorClient::new(env, &distributor_id);
     let admin = Address::generate(env);
+
+    // Initialize with mock auth
+    env.mock_all_auths();
     client.initialize(&admin);
 
     let token_admin = Address::generate(env);
@@ -109,7 +112,7 @@ fn test_distribute_unauthorized_non_admin_fails() {
     let distributor_id = env.register_contract(None, PaymentDistributor);
     let client = PaymentDistributorClient::new(&env, &distributor_id);
     let admin = Address::generate(&env);
-    
+
     // Initialize with mock auth
     env.mock_all_auths();
     client.initialize(&admin);
@@ -127,11 +130,11 @@ fn test_distribute_unauthorized_non_admin_fails() {
     let distributor_id2 = env2.register_contract(None, PaymentDistributor);
     let client2 = PaymentDistributorClient::new(&env2, &distributor_id2);
     let admin2 = Address::generate(&env2);
-    
+
     // Initialize with mock auth
     env2.mock_all_auths();
     client2.initialize(&admin2);
-    
+
     let token_id2 = env2.register_stellar_asset_contract_v2(Address::generate(&env2));
     let token_asset2 = AssetClient::new(&env2, &token_id2.address());
     token_asset2.mint(&distributor_id2, &1000i128);
