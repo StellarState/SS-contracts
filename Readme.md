@@ -52,22 +52,10 @@ soroban contract build
 ```
 
 ### Deployment
-```bash
-# Deploy to testnet
-soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/invoice_escrow.wasm \
-  --source YOUR_SECRET_KEY \
-  --network testnet
 
-# Initialize contract
-soroban contract invoke \
-  --id CONTRACT_ID \
-  --source YOUR_SECRET_KEY \
-  --network testnet \
-  -- initialize \
-  --admin YOUR_PUBLIC_KEY \
-  --platform_fee_bps 300
-```
+Repeatable deployment scripts live in [`scripts/`](scripts/). See the [**How to run scripts**](#-how-to-run-scripts) section below for full instructions.
+
+The scripts deploy and initialise all three contracts in the correct order using environment variables. No manual copy-paste of WASM paths or contract IDs required.
 
 ## 📚 Contract Documentation
 
@@ -101,6 +89,63 @@ pub fn record_payment(
 
 Full API documentation: [docs/API.md](docs/API.md)
 
+## 📜 How to run scripts
+
+### 1. Prerequisites
+
+- Soroban CLI installed (`cargo install --locked soroban-cli --features opt`)
+- Contracts compiled: `soroban contract build`
+
+### 2. Configure environment variables
+
+```bash
+# Copy the template and fill in your values
+cp .env.example .env
+$EDITOR .env   # set STELLAR_SECRET_KEY, ADMIN_PUBLIC_KEY, STELLAR_NETWORK, etc.
+```
+
+See [`.env.example`](.env.example) for the full list of variables and their descriptions.
+
+> ⚠️ **Never commit `.env` to version control.** It is already listed in `.gitignore`.
+
+### 3a. Bash (macOS / Linux)
+
+```bash
+# Run from the repo root
+bash scripts/deploy.sh
+```
+
+The script:
+1. Loads `.env` automatically
+2. Validates all required variables and WASM paths
+3. Deploys **invoice-token**, **invoice-escrow**, and **payment-distributor** in order
+4. Calls `initialize` on each contract with the configured arguments
+5. Prints a summary of deployed contract IDs
+
+### 3b. PowerShell (Windows)
+
+```powershell
+# Allow script execution for this session (if not already set)
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Run from the repo root
+.\scripts\deploy.ps1
+```
+
+The PowerShell script is functionally equivalent to the Bash script above.
+
+### Re-using existing contract IDs
+
+If a contract is already deployed and only needs re-initialisation, set its ID in `.env`:
+
+```dotenv
+INVOICE_ESCROW_CONTRACT_ID=C...
+INVOICE_TOKEN_CONTRACT_ID=C...
+PAYMENT_DISTRIBUTOR_CONTRACT_ID=C...
+```
+
+The deploy step is skipped for any contract whose ID is pre-filled; `initialize` is still called.
+
 ## 🧪 Testing
 ```bash
 # Run all tests
@@ -123,6 +168,9 @@ cargo tarpaulin --out Html
 - Bug bounty program: [Link] (coming soon)
 
 ## 📊 Contract Addresses
+
+> Contract IDs are printed at the end of each `deploy.sh` / `deploy.ps1` run.
+> Update the values below after deploying.
 
 ### Testnet
 - Invoice Escrow: `CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX`

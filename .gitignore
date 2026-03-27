@@ -42,4 +42,4 @@ tarpaulin-report.html
 debug/
 
 # Maintainer-only GitHub issue tooling (not published)
-/scripts/
+# NOTE: /scripts/ is intentionally NOT ignored – deployment scripts are public.
