@@ -33,4 +33,6 @@ pub enum Error {
     TransferFailed = 12,
     /// Arithmetic overflow or invalid operation.
     Overflow = 13,
+    /// Escrow has been cancelled by the seller.
+    EscrowCancelled = 14,
 }

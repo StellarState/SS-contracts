@@ -1,0 +1,41 @@
+name: Testnet Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Stellar network to target"
+        required: false
+        default: "testnet"
+        type: choice
+        options: [testnet, futurenet]
+
+jobs:
+  smoke-test:
+    name: Escrow lifecycle smoke test (${{ inputs.network }})
+    runs-on: ubuntu-latest
+    environment: testnet-smoke   # store secrets in this GitHub environment
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked stellar-cli --features opt
+
+      - name: Run smoke test
+        env:
+          STELLAR_NETWORK: ${{ inputs.network }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          SELLER_SECRET: ${{ secrets.SELLER_SECRET }}
+          BUYER_SECRET: ${{ secrets.BUYER_SECRET }}
+          PAYER_SECRET: ${{ secrets.PAYER_SECRET }}
+          USDC_TOKEN_ADDRESS: ${{ secrets.USDC_TOKEN_ADDRESS }}
+        run: |
+          chmod +x scripts/smoke-test.sh
+          ./scripts/smoke-test.sh
