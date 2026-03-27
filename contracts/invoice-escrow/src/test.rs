@@ -55,6 +55,8 @@ fn test_create_and_fund() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &amount,
         &amount,
         &1000000,
         &payment_token.address,
@@ -62,7 +64,7 @@ fn test_create_and_fund() {
     );
 
     // Fund escrow
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Check status
     let status = escrow_client.get_escrow_status(&invoice_id);
@@ -109,13 +111,15 @@ fn test_record_payment() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &1000000,
         &payment_token.address,
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
     assert_eq!(payment_token.balance(&buyer), 0);
 
     // The contract holds the buyer's 1000
@@ -164,6 +168,8 @@ fn test_escrow_created_event() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &amount,
         &amount,
         &due_date,
         &payment_token_id.address(),
@@ -182,14 +188,16 @@ fn test_escrow_created_event() {
         (Symbol::new(&env, "escrow_created"),).into_val(&env)
     );
 
-    let event_data: (Symbol, Address, i128, u64, Address, Address) =
+    let event_data: (Symbol, Address, Address, i128, i128, u64, Address, Address) =
         data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
     assert_eq!(event_data.1, seller);
-    assert_eq!(event_data.2, amount);
-    assert_eq!(event_data.3, due_date);
-    assert_eq!(event_data.4, payment_token_id.address());
-    assert_eq!(event_data.5, inv_token_id);
+    assert_eq!(event_data.2, seller);
+    assert_eq!(event_data.3, amount);
+    assert_eq!(event_data.4, amount);
+    assert_eq!(event_data.5, due_date);
+    assert_eq!(event_data.6, payment_token_id.address());
+    assert_eq!(event_data.7, inv_token_id);
 }
 
 #[test]
@@ -218,13 +226,15 @@ fn test_escrow_funded_event() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &amount,
         &amount,
         &1000000,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Find escrow_funded event (should be the last event)
     let events = env.events().all();
@@ -234,10 +244,12 @@ fn test_escrow_funded_event() {
 
     assert_eq!(topics, (Symbol::new(&env, "escrow_funded"),).into_val(&env));
 
-    let event_data: (Symbol, Address, i128) = data.try_into_val(&env).unwrap();
+    let event_data: (Symbol, Address, i128, i128, i128) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
     assert_eq!(event_data.1, buyer);
     assert_eq!(event_data.2, amount);
+    assert_eq!(event_data.3, amount); // funded_amt
+    assert_eq!(event_data.4, amount); // purchase_price
 }
 
 #[test]
@@ -268,13 +280,15 @@ fn test_payment_settled_event() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &1000000,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
     escrow_client.record_payment(&invoice_id, &payer, &amount);
 
     // Find payment_settled event (should be the last event)
@@ -322,13 +336,15 @@ fn test_escrow_refunded_event() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &amount,
         &amount,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Set ledger timestamp past due date to allow refund
     env.ledger().with_mut(|li| li.timestamp = due_date + 1);
@@ -346,10 +362,9 @@ fn test_escrow_refunded_event() {
         (Symbol::new(&env, "escrow_refunded"),).into_val(&env)
     );
 
-    let event_data: (Symbol, Address, i128) = data.try_into_val(&env).unwrap();
+    let event_data: (Symbol, i128) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
-    assert_eq!(event_data.1, buyer);
-    assert_eq!(event_data.2, amount);
+    assert_eq!(event_data.1, amount);
 }
 
 #[test]
@@ -378,6 +393,8 @@ fn test_no_settlement_event_on_invalid_state() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &1000000,
         &payment_token_id.address(),
@@ -429,6 +446,8 @@ fn test_no_refund_event_on_invalid_state() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &amount,
         &amount,
         &due_date,
         &payment_token_id.address(),
@@ -498,6 +517,8 @@ fn test_create_escrow_requires_seller_auth() {
     let result = escrow_client.try_create_escrow(
         &Symbol::new(&env, "INV001"),
         &seller,
+        &seller,
+        &1000,
         &1000,
         &1000000,
         &payment_token,
@@ -557,6 +578,8 @@ fn test_create_escrow_zero_amount() {
     let result = escrow_client.try_create_escrow(
         &Symbol::new(&env, "INV001"),
         &seller,
+        &seller,
+        &0,
         &0,
         &1000000,
         &payment_token,
@@ -584,6 +607,8 @@ fn test_create_escrow_negative_amount() {
     let result = escrow_client.try_create_escrow(
         &Symbol::new(&env, "INV001"),
         &seller,
+        &seller,
+        &-100,
         &-100,
         &1000000,
         &payment_token,
@@ -612,6 +637,8 @@ fn test_create_escrow_duplicate_invoice_id() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000,
         &1000,
         &1000000,
         &payment_token,
@@ -622,6 +649,8 @@ fn test_create_escrow_duplicate_invoice_id() {
     let result = escrow_client.try_create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &2000,
         &2000,
         &2000000,
         &payment_token,
@@ -681,7 +710,7 @@ fn test_fund_escrow_not_found() {
     escrow_client.initialize(&admin, &300);
 
     // Try to fund non-existent escrow
-    let result = escrow_client.try_fund_escrow(&Symbol::new(&env, "NONEXISTENT"), &buyer);
+    let result = escrow_client.try_fund_escrow(&Symbol::new(&env, "NONEXISTENT"), &buyer, &1000);
     assert_eq!(result, Err(Ok(Error::EscrowNotFound)));
 }
 
@@ -712,6 +741,8 @@ fn test_fund_escrow_already_funded() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000,
         &1000,
         &1000000,
         &payment_token_id.address(),
@@ -719,10 +750,10 @@ fn test_fund_escrow_already_funded() {
     );
 
     // First funding should succeed
-    escrow_client.fund_escrow(&invoice_id, &buyer1);
+    escrow_client.fund_escrow(&invoice_id, &buyer1, &1000);
 
     // Second funding should fail
-    let result = escrow_client.try_fund_escrow(&invoice_id, &buyer2);
+    let result = escrow_client.try_fund_escrow(&invoice_id, &buyer2, &1000);
     assert_eq!(result, Err(Ok(Error::EscrowFunded)));
 }
 
@@ -746,6 +777,8 @@ fn test_record_payment_not_funded() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &1000,
         &1000,
         &1000000,
         &payment_token,
@@ -784,13 +817,15 @@ fn test_record_payment_already_settled() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &1000,
         &1000,
         &1000000,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // Try to record payment again
@@ -825,13 +860,15 @@ fn test_record_payment_amount_exceeds_escrow() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &1000,
         &1000,
         &1000000,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
 
     // Try to record payment with amount > escrow amount
     let result = escrow_client.try_record_payment(&invoice_id, &payer, &1500);
@@ -857,6 +894,8 @@ fn test_refund_not_funded() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000,
         &1000,
         &1000,
         &payment_token,
@@ -899,13 +938,15 @@ fn test_refund_before_due_date() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000,
         &1000,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
 
     // Set time before due date
     env.ledger().with_mut(|li| li.timestamp = due_date - 1);
@@ -942,13 +983,15 @@ fn test_refund_at_due_date() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000,
         &1000,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
 
     // Set time exactly at due date
     env.ledger().with_mut(|li| li.timestamp = due_date);
@@ -991,13 +1034,15 @@ fn test_refund_after_due_date() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000,
         &1000,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
 
     // Set time after due date
     env.ledger().with_mut(|li| li.timestamp = due_date + 5000);
@@ -1041,13 +1086,15 @@ fn test_refund_already_settled() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &1000,
         &1000,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // Set time after due date
@@ -1089,13 +1136,15 @@ fn test_fee_calculation_zero_fee() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &1000,
         &1000,
         &1000000,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // With 0% fee, buyer should get full amount
@@ -1132,13 +1181,15 @@ fn test_fee_calculation_max_fee() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &1000,
         &1000,
         &1000000,
         &payment_token_id.address(),
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // With 100% fee, admin gets all, buyer gets nothing
@@ -1244,6 +1295,8 @@ fn test_get_escrow_data() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &amount,
         &amount,
         &due_date,
         &payment_token,
@@ -1254,12 +1307,13 @@ fn test_get_escrow_data() {
     let data = escrow_client.get_escrow(&invoice_id);
     assert_eq!(data.inv_id, invoice_id);
     assert_eq!(data.seller, seller);
-    assert_eq!(data.amount, amount);
+    assert_eq!(data.debtor, seller);
+    assert_eq!(data.face_value, amount);
+    assert_eq!(data.purchase_price, amount);
     assert_eq!(data.due_dt, due_date);
     assert_eq!(data.token, payment_token);
     assert_eq!(data.inv_token, inv_token);
     assert_eq!(data.status, EscrowStatus::Created);
-    assert_eq!(data.funder, None);
 }
 
 // ========== Operations Before Initialization Tests ==========
@@ -1280,6 +1334,8 @@ fn test_create_escrow_not_initialized() {
     let result = escrow_client.try_create_escrow(
         &Symbol::new(&env, "INV001"),
         &seller,
+        &seller,
+        &1000,
         &1000,
         &1000000,
         &payment_token,
@@ -1330,13 +1386,15 @@ fn test_partial_payment_lifecycle() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &1000000,
         &payment_token.address,
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // First payment: 400
     escrow_client.record_payment(&invoice_id, &payer, &400);
@@ -1410,13 +1468,15 @@ fn test_refund_after_partial_payment() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &due_date,
         &payment_token.address,
         &inv_token_id,
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Partial payment: 300
     escrow_client.record_payment(&invoice_id, &payer, &300);
@@ -1473,12 +1533,14 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &100,
         &pt_id.address(),
         &inv_token_id,
     );
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     assert_eq!(payment_token.balance(&escrow_id), 5000);
 
@@ -1488,7 +1550,6 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
     assert_eq!(payment_token.balance(&seller), 5000);
     assert_eq!(payment_token.balance(&buyer), 5000);
 }
-
 
 // ── Issue #41: cancel_escrow ─────────────────────────────────────────────────
 
@@ -1510,6 +1571,8 @@ fn setup_escrow_created(env: &Env) -> (Address, InvoiceEscrowClient<'_>, Address
     client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000i128,
         &1000i128,
         &9_999_999u64,
         &pt_id.address(),
@@ -1528,7 +1591,10 @@ fn test_cancel_escrow_happy_path() {
 
     client.cancel_escrow(&invoice_id, &seller);
 
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Cancelled);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Cancelled
+    );
 }
 
 #[test]
@@ -1582,12 +1648,14 @@ fn test_cancel_escrow_already_funded_rejected() {
     client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &1000i128,
         &1000i128,
         &9_999_999u64,
         &pt_id.address(),
         &inv_token_id,
     );
-    client.fund_escrow(&invoice_id, &buyer);
+    client.fund_escrow(&invoice_id, &buyer, &1000);
 
     // Cannot cancel once funded
     let res = client.try_cancel_escrow(&invoice_id, &seller);
@@ -1605,6 +1673,6 @@ fn test_fund_cancelled_escrow_rejected() {
     client.cancel_escrow(&invoice_id, &seller);
 
     let buyer = Address::generate(&env);
-    let res = client.try_fund_escrow(&invoice_id, &buyer);
+    let res = client.try_fund_escrow(&invoice_id, &buyer, &1000);
     assert_eq!(res, Err(Ok(Error::EscrowCancelled)));
 }

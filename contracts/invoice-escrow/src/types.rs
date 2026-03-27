@@ -11,6 +11,8 @@ pub enum StorageKey {
     Config,
     /// Persistent: escrow data by invoice id.
     Escrow(soroban_sdk::Symbol),
+    /// Persistent: funder amounts by (invoice_id, funder_address).
+    FunderAmount(soroban_sdk::Symbol, soroban_sdk::Address),
 }
 
 /// Global contract configuration.
@@ -48,16 +50,22 @@ pub struct EscrowData {
     pub inv_id: soroban_sdk::Symbol,
     /// Seller (invoice owner).
     pub seller: soroban_sdk::Address,
-    /// Invoice amount in payment token's smallest unit.
-    pub amount: i128,
+    /// Debtor (authorized payer of the invoice).
+    pub debtor: soroban_sdk::Address,
+    /// Face value: what the debtor owes (amount to be paid at settlement).
+    pub face_value: i128,
+    /// Purchase price: total amount to be funded by all investors (discount applied here).
+    pub purchase_price: i128,
+    /// Total amount funded so far by all investors.
+    pub funded_amt: i128,
+    /// Primary funder address (MVP: single funder for now).
+    pub funder: Option<soroban_sdk::Address>,
     /// Due date (ledger timestamp).
     pub due_dt: u64,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
     /// Invoice token contract address (ownership/claim).
     pub inv_token: soroban_sdk::Address,
-    /// Investor who funded the escrow (None until funded).
-    pub funder: Option<soroban_sdk::Address>,
     /// Amount already paid by payer.
     pub paid_amt: i128,
     /// Current status.

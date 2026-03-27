@@ -22,6 +22,15 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 1000
+                  }
+                },
+                {
                   "i128": {
                     "hi": 0,
                     "lo": 1000
@@ -94,7 +103,23 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "amount"
+                        "symbol": "debtor"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "due_dt"
+                      },
+                      "val": {
+                        "u64": 1000000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "face_value"
                       },
                       "val": {
                         "i128": {
@@ -105,10 +130,13 @@
                     },
                     {
                       "key": {
-                        "symbol": "due_dt"
+                        "symbol": "funded_amt"
                       },
                       "val": {
-                        "u64": 1000000
+                        "i128": {
+                          "hi": 0,
+                          "lo": 0
+                        }
                       }
                     },
                     {
@@ -141,6 +169,17 @@
                         "i128": {
                           "hi": 0,
                           "lo": 0
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "purchase_price"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000
                         }
                       }
                     },

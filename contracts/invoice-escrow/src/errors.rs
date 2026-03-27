@@ -35,4 +35,6 @@ pub enum Error {
     Overflow = 13,
     /// Escrow has been cancelled by the seller.
     EscrowCancelled = 14,
+    /// Payer is not the authorized debtor for this invoice.
+    InvalidPayer = 15,
 }
