@@ -30,3 +30,33 @@ pub fn set_escrow(env: &soroban_sdk::Env, inv_id: Symbol, data: &EscrowData) {
 pub fn has_escrow(env: &soroban_sdk::Env, inv_id: Symbol) -> bool {
     env.storage().persistent().has(&StorageKey::Escrow(inv_id))
 }
+
+/// Get the amount funded by a specific funder for an invoice.
+pub fn get_funder_amount(
+    env: &soroban_sdk::Env,
+    inv_id: Symbol,
+    funder: &soroban_sdk::Address,
+) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::FunderAmount(inv_id, funder.clone()))
+        .unwrap_or(0)
+}
+
+/// Set the amount funded by a specific funder for an invoice.
+pub fn set_funder_amount(
+    env: &soroban_sdk::Env,
+    inv_id: Symbol,
+    funder: &soroban_sdk::Address,
+    amount: i128,
+) {
+    if amount == 0 {
+        env.storage()
+            .persistent()
+            .remove(&StorageKey::FunderAmount(inv_id, funder.clone()));
+    } else {
+        env.storage()
+            .persistent()
+            .set(&StorageKey::FunderAmount(inv_id, funder.clone()), &amount);
+    }
+}

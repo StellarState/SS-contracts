@@ -181,7 +181,10 @@ impl InvoiceToken {
             return Err(Error::InsufficientBalance);
         }
         storage::set_balance(&env, &from, balance - amount);
-        storage::set_total_supply(&env, storage::get_total_supply(&env) - amount);
+        let new_supply = storage::get_total_supply(&env)
+            .checked_sub(amount)
+            .ok_or(Error::Overflow)?;
+        storage::set_total_supply(&env, new_supply);
         events::burn_event(&env, &from, amount);
         Ok(())
     }
@@ -213,7 +216,10 @@ impl InvoiceToken {
             allow.expiration_ledger,
         );
         storage::set_balance(&env, &from, balance - amount);
-        storage::set_total_supply(&env, storage::get_total_supply(&env) - amount);
+        let new_supply = storage::get_total_supply(&env)
+            .checked_sub(amount)
+            .ok_or(Error::Overflow)?;
+        storage::set_total_supply(&env, new_supply);
         events::burn_event(&env, &from, amount);
         Ok(())
     }
