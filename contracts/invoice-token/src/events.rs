@@ -32,3 +32,19 @@ pub fn burn_event(env: &Env, from: &Address, amount: i128) {
     env.events()
         .publish((Symbol::new(env, "burn"), from), amount);
 }
+
+/// Emit transfer_locked update event with previous and new values.
+pub fn transfer_locked_updated_event(env: &Env, old_value: bool, new_value: bool) {
+    env.events().publish(
+        (Symbol::new(env, "transfer_locked_updated"),),
+        (old_value, new_value),
+    );
+}
+
+/// Emit minter update event with previous and new minter addresses.
+pub fn minter_updated_event(env: &Env, old_minter: &Address, new_minter: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "minter_updated"),),
+        (old_minter, new_minter),
+    );
+}

@@ -19,6 +19,12 @@ Distributes a specified amount of a token to a recipient address. This function 
 ### `get_admin() -> Address`
 Returns the current administrative address of the contract.
 
+## Invoice Token Contract
+
+### Events
+- `transfer_locked_updated(old_locked: bool, new_locked: bool)`
+- `minter_updated(old_minter: Address, new_minter: Address)`
+
 ## Invoice Escrow Contract
 
 (Legacy documentation for reference)
@@ -34,3 +40,6 @@ Records a full or partial payment for a funded invoice.
 
 ### `refund(invoice_id: Symbol)`
 Returns the remaining (un-released) investor funding if the invoice is not paid by its due date.
+
+### Events
+- `platform_fee_updated(old_fee_bps: u32, new_fee_bps: u32)`

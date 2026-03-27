@@ -47,3 +47,11 @@ pub fn escrow_refunded(env: &Env, inv_id: Symbol, funder: &Address, amount: i128
         (inv_id, funder, amount),
     );
 }
+
+/// Publish platform fee update event with old and new basis points.
+pub fn platform_fee_updated(env: &Env, old_fee_bps: u32, new_fee_bps: u32) {
+    env.events().publish(
+        (Symbol::new(env, "platform_fee_updated"),),
+        (old_fee_bps, new_fee_bps),
+    );
+}

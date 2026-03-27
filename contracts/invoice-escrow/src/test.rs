@@ -1165,9 +1165,16 @@ fn test_update_platform_fee() {
     // Update fee
     escrow_client.update_platform_fee_bps(&500);
 
-    // Verify updated fee
-    let config = escrow_client.get_config();
-    assert_eq!(config.fee_bps, 500);
+    // The update should emit a platform_fee_updated event with old/new values.
+    let events = env.events().all();
+    let event = events.last().unwrap();
+    let (_contract_addr, topics, data) = event;
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "platform_fee_updated"),).into_val(&env)
+    );
+    let event_data: (u32, u32) = data.try_into_val(&env).unwrap();
+    assert_eq!(event_data, (300, 500));
 }
 
 // ========== View Function Tests ==========
