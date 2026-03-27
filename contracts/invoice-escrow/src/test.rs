@@ -1488,3 +1488,123 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
     assert_eq!(payment_token.balance(&seller), 5000);
     assert_eq!(payment_token.balance(&buyer), 5000);
 }
+
+
+// ── Issue #41: cancel_escrow ─────────────────────────────────────────────────
+
+fn setup_escrow_created(env: &Env) -> (Address, InvoiceEscrowClient<'_>, Address, Address, Symbol) {
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(env, &escrow_id);
+    let admin = Address::generate(env);
+    let inv_token_id = env.register_contract(None, MockInvoiceToken);
+
+    let pt_admin = Address::generate(env);
+    let pt_id = env.register_stellar_asset_contract_v2(pt_admin.clone());
+    let pt_asset = AssetClient::new(env, &pt_id.address());
+
+    client.initialize(&admin, &300);
+
+    let seller = Address::generate(env);
+    let invoice_id = Symbol::new(env, "INV_CANC");
+
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &1000i128,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+    );
+
+    let _ = (pt_asset,);
+    (escrow_id, client, seller, admin, invoice_id)
+}
+
+#[test]
+fn test_cancel_escrow_happy_path() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, seller, _admin, invoice_id) = setup_escrow_created(&env);
+
+    client.cancel_escrow(&invoice_id, &seller);
+
+    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Cancelled);
+}
+
+#[test]
+fn test_cancel_escrow_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, seller, _admin, invoice_id) = setup_escrow_created(&env);
+
+    client.cancel_escrow(&invoice_id, &seller);
+
+    let events = env.events().all();
+    let last = events.last().expect("expected event");
+    let topic: Symbol = last.1.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "escrow_cancelled"));
+}
+
+#[test]
+fn test_cancel_escrow_non_seller_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, invoice_id) = setup_escrow_created(&env);
+
+    let impostor = Address::generate(&env);
+    let res = client.try_cancel_escrow(&invoice_id, &impostor);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_cancel_escrow_already_funded_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let inv_token_id = env.register_contract(None, MockInvoiceToken);
+
+    let pt_admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(pt_admin.clone());
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let pt_client = TokenClient::new(&env, &pt_id.address());
+
+    client.initialize(&admin, &0);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_CFUND");
+
+    pt_asset.mint(&buyer, &1000);
+
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &1000i128,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+    );
+    client.fund_escrow(&invoice_id, &buyer);
+
+    // Cannot cancel once funded
+    let res = client.try_cancel_escrow(&invoice_id, &seller);
+    assert_eq!(res, Err(Ok(Error::EscrowFunded)));
+
+    let _ = pt_client;
+}
+
+#[test]
+fn test_fund_cancelled_escrow_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_id, client, seller, _admin, invoice_id) = setup_escrow_created(&env);
+    client.cancel_escrow(&invoice_id, &seller);
+
+    let buyer = Address::generate(&env);
+    let res = client.try_fund_escrow(&invoice_id, &buyer);
+    assert_eq!(res, Err(Ok(Error::EscrowCancelled)));
+}

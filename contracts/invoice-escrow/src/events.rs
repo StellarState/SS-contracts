@@ -48,6 +48,14 @@ pub fn escrow_refunded(env: &Env, inv_id: Symbol, funder: &Address, amount: i128
     );
 }
 
+/// Publish escrow_cancelled event (invoice_id, seller).
+pub fn escrow_cancelled(env: &Env, inv_id: Symbol, seller: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_cancelled"),),
+        (inv_id, seller),
+    );
+}
+
 /// Publish platform fee update event with old and new basis points.
 pub fn platform_fee_updated(env: &Env, old_fee_bps: u32, new_fee_bps: u32) {
     env.events().publish(

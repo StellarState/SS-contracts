@@ -36,6 +36,8 @@ pub enum EscrowStatus {
     Settled = 2,
     /// Refunded to investor after due date.
     Refunded = 3,
+    /// Cancelled by seller while still in Created state (never funded).
+    Cancelled = 4,
 }
 
 /// Per-invoice escrow data stored in persistent storage.

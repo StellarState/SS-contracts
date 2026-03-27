@@ -78,11 +78,33 @@ impl InvoiceEscrow {
         Ok(())
     }
 
+    /// Cancel an unfunded escrow. Only the seller may cancel, and only while status is Created.
+    ///
+    /// Emits `escrow_cancelled` with `(invoice_id, seller)`.
+    pub fn cancel_escrow(env: Env, invoice_id: Symbol, seller: Address) -> Result<(), Error> {
+        seller.require_auth();
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if data.seller != seller {
+            return Err(Error::Unauthorized);
+        }
+        if data.status != EscrowStatus::Created {
+            return Err(Error::EscrowFunded);
+        }
+        data.status = EscrowStatus::Cancelled;
+        storage::set_escrow(&env, invoice_id.clone(), &data);
+        events::escrow_cancelled(&env, invoice_id, &seller);
+        Ok(())
+    }
+
     /// Fund the escrow (investor buys the invoice). Transfers `amount` from buyer to this contract.
     pub fn fund_escrow(env: Env, invoice_id: Symbol, buyer: Address) -> Result<(), Error> {
         buyer.require_auth();
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if data.status == EscrowStatus::Cancelled {
+            return Err(Error::EscrowCancelled);
+        }
         if data.status != EscrowStatus::Created {
             return Err(Error::EscrowFunded);
         }

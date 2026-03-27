@@ -9,3 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+invoice-escrow = { path = "../invoice-escrow" }
+invoice-token = { path = "../invoice-token" }
