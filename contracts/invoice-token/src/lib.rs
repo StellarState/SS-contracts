@@ -114,6 +114,9 @@ impl InvoiceToken {
         expiration_ledger: u32,
     ) -> Result<(), Error> {
         from.require_auth();
+        if amount < 0 {
+            return Err(Error::InvalidAmount);
+        }
         let ledger = env.ledger().sequence();
         if amount != 0 && expiration_ledger < ledger {
             return Err(Error::InvalidExpiration);

@@ -1037,3 +1037,60 @@ fn test_approve_update_expiration_shortens() {
         .with_mut(|li| li.sequence_number = new_expiration + 1);
     assert_eq!(client.allowance(&admin, &spender), 0);
 }
+
+// ========== Negative Amount Tests ==========
+
+#[test]
+fn test_approve_negative_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+
+    // Attempt to approve with negative amount should fail
+    let result = client.try_approve(&admin, &spender, &(-100i128), &expiration);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAmount)));
+
+    // Verify no allowance was set
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
+#[test]
+fn test_approve_zero_amount_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+
+    // First set a non-zero allowance
+    client.approve(&admin, &spender, &500, &expiration);
+    assert_eq!(client.allowance(&admin, &spender), 500);
+
+    // Approve with zero amount should remove allowance (current behavior)
+    client.approve(&admin, &spender, &0, &expiration);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
+#[test]
+fn test_approve_positive_amount_invalid_expiration_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+
+    // Advance ledger to ensure we can test past expiration
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    let current_ledger = env.ledger().sequence();
+
+    // Attempt to approve with positive amount and invalid expiration should fail
+    let result = client.try_approve(&admin, &spender, &500, &(current_ledger - 1));
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidExpiration)));
+
+    // Verify no allowance was set
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
