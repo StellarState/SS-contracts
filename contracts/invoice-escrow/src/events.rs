@@ -13,6 +13,7 @@ pub fn escrow_created(
     due_dt: u64,
     token: &Address,
     inv_token: &Address,
+    commitment: &soroban_sdk::BytesN<32>,
 ) {
     env.events().publish(
         (Symbol::new(env, "escrow_created"),),
@@ -25,6 +26,7 @@ pub fn escrow_created(
             due_dt,
             token,
             inv_token,
+            commitment,
         ),
     );
 }
