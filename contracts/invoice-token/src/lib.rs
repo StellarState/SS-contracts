@@ -39,6 +39,7 @@ impl InvoiceToken {
             decimals,
             invoice_id,
             transfer_locked: true, // default locked until settlement
+            paused: false,
         };
         storage::set_metadata(&env, &meta);
         storage::set_total_supply(&env, 0);
@@ -87,6 +88,9 @@ impl InvoiceToken {
             return Err(Error::InvalidAmount);
         }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if meta.paused {
+            return Err(Error::Paused);
+        }
         if meta.transfer_locked && from != meta.admin {
             return Err(Error::TransferLocked);
         }
@@ -114,6 +118,10 @@ impl InvoiceToken {
         expiration_ledger: u32,
     ) -> Result<(), Error> {
         from.require_auth();
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if meta.paused {
+            return Err(Error::Paused);
+        }
         let ledger = env.ledger().sequence();
         if amount != 0 && expiration_ledger < ledger {
             return Err(Error::InvalidExpiration);
@@ -136,6 +144,9 @@ impl InvoiceToken {
             return Err(Error::InvalidAmount);
         }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if meta.paused {
+            return Err(Error::Paused);
+        }
         if meta.transfer_locked && from != meta.admin {
             return Err(Error::TransferLocked);
         }
@@ -176,6 +187,10 @@ impl InvoiceToken {
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if meta.paused {
+            return Err(Error::Paused);
+        }
         let balance = storage::get_balance(&env, &from);
         if balance < amount {
             return Err(Error::InsufficientBalance);
@@ -191,6 +206,10 @@ impl InvoiceToken {
         spender.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if meta.paused {
+            return Err(Error::Paused);
         }
         let ledger = env.ledger().sequence();
         let allow = storage::get_allowance_data(&env, &from, &spender)
@@ -225,6 +244,9 @@ impl InvoiceToken {
     pub fn mint(env: Env, to: Address, amount: i128, by: Address) -> Result<(), Error> {
         by.require_auth();
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if meta.paused {
+            return Err(Error::Paused);
+        }
         if by != meta.admin && by != meta.minter {
             return Err(Error::Unauthorized);
         }
@@ -269,6 +291,17 @@ impl InvoiceToken {
         Ok(())
     }
 
+    /// Set emergency pause state. Admin only.
+    pub fn set_paused(env: Env, paused: bool) -> Result<(), Error> {
+        let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        meta.admin.require_auth();
+        let old_paused = meta.paused;
+        meta.paused = paused;
+        storage::set_metadata(&env, &meta);
+        events::paused_updated_event(&env, old_paused, paused);
+        Ok(())
+    }
+
     /// Get invoice_id for this token (metadata).
     pub fn invoice_id(env: Env) -> Result<Symbol, Error> {
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
@@ -279,6 +312,12 @@ impl InvoiceToken {
     pub fn transfer_locked(env: Env) -> Result<bool, Error> {
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         Ok(meta.transfer_locked)
+    }
+
+    /// Check if the contract is paused.
+    pub fn paused(env: Env) -> Result<bool, Error> {
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        Ok(meta.paused)
     }
 }
 

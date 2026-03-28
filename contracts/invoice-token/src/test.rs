@@ -1037,3 +1037,62 @@ fn test_approve_update_expiration_shortens() {
         .with_mut(|li| li.sequence_number = new_expiration + 1);
     assert_eq!(client.allowance(&admin, &spender), 0);
 }
+
+#[test]
+fn test_set_paused_requires_admin_auth() {
+    let env = Env::default();
+    let (client, _admin, _minter) = setup_token(&env);
+
+    let result = client.try_set_paused(&true);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_paused_blocks_sensitive_ops_and_unpause_restores() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    let recipient = Address::generate(&env);
+    let spender = Address::generate(&env);
+    client.mint(&admin, &1_000, &minter);
+
+    client.set_paused(&true);
+    assert!(client.paused());
+
+    let transfer_result = client.try_transfer(&admin, &recipient, &100);
+    assert_eq!(transfer_result, Err(Ok(crate::errors::Error::Paused)));
+
+    let approve_result = client.try_approve(&admin, &spender, &100, &100);
+    assert_eq!(approve_result, Err(Ok(crate::errors::Error::Paused)));
+
+    let mint_result = client.try_mint(&recipient, &100, &minter);
+    assert_eq!(mint_result, Err(Ok(crate::errors::Error::Paused)));
+
+    client.set_paused(&false);
+    assert!(!client.paused());
+    client.set_transfer_locked(&admin, &false);
+    client.transfer(&admin, &recipient, &100);
+
+    assert_eq!(client.balance(&admin), 900);
+    assert_eq!(client.balance(&recipient), 100);
+}
+
+#[test]
+fn test_paused_event_emission() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _minter) = setup_token(&env);
+
+    client.set_paused(&true);
+
+    let events = env.events().all();
+    let event = events.last().unwrap();
+    let (_contract_addr, topics, data) = event;
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "paused_updated"),).into_val(&env)
+    );
+    let event_data: (bool, bool) = data.try_into_val(&env).unwrap();
+    assert_eq!(event_data, (false, true));
+}

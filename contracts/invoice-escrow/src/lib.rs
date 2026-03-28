@@ -11,12 +11,21 @@ mod types;
 use soroban_sdk::{contract, contractimpl, token, Address, Env, IntoVal, Symbol};
 
 use errors::Error;
-use types::{Config, EscrowData, EscrowStatus};
+pub use types::{Config, EscrowData, EscrowStatus};
 
 const MAX_BPS: u32 = 10_000;
+const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
+const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
 
 #[contract]
 pub struct InvoiceEscrow;
+
+fn ensure_not_paused(config: &Config) -> Result<(), Error> {
+    if config.paused {
+        return Err(Error::Paused);
+    }
+    Ok(())
+}
 
 #[contractimpl]
 impl InvoiceEscrow {
@@ -31,6 +40,8 @@ impl InvoiceEscrow {
         let config = Config {
             admin: admin.clone(),
             fee_bps: platform_fee_bps,
+            payment_distributor: None,
+            paused: false,
         };
         storage::set_config(&env, &config);
         Ok(())
@@ -50,7 +61,8 @@ impl InvoiceEscrow {
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
-        storage::get_config(&env).ok_or(Error::NotInit)?;
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
@@ -83,6 +95,8 @@ impl InvoiceEscrow {
     /// Emits `escrow_cancelled` with `(invoice_id, seller)`.
     pub fn cancel_escrow(env: Env, invoice_id: Symbol, seller: Address) -> Result<(), Error> {
         seller.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.seller != seller {
@@ -100,6 +114,8 @@ impl InvoiceEscrow {
     /// Fund the escrow (investor buys the invoice). Transfers `amount` from buyer to this contract.
     pub fn fund_escrow(env: Env, invoice_id: Symbol, buyer: Address) -> Result<(), Error> {
         buyer.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.status == EscrowStatus::Cancelled {
@@ -144,6 +160,7 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
 
@@ -174,18 +191,48 @@ impl InvoiceEscrow {
         // 1. Transfer payer funds into escrow
         token.transfer(&payer, &contract, &amount);
 
-        // 2. Distribute payer's funds out (investor + platform fee)
-        token.transfer(&contract, funder, &investor_amount);
-        token.transfer(&contract, &config.admin, &platform_fee);
-
-        // 3. Release corresponding funding from initial buy-in back to the seller
-        token.transfer(&contract, &data.seller, &amount);
-
         data.paid_amt = data.paid_amt.checked_add(amount).ok_or(Error::Overflow)?;
 
         if data.paid_amt == data.amount {
             data.status = EscrowStatus::Settled;
-            // Unlock invoice token transfers only when the invoice is completely settled
+        }
+
+        storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        if let Some(distributor) = config.payment_distributor.as_ref() {
+            let total_to_distributor = amount.checked_add(amount).ok_or(Error::Overflow)?;
+            token.transfer(&contract, distributor, &total_to_distributor);
+            env.invoke_contract::<()>(
+                distributor,
+                &Symbol::new(&env, DISTRIBUTE_PAYMENT_FN),
+                soroban_sdk::vec![
+                    &env,
+                    contract.to_val(),
+                    invoice_id.clone().into_val(&env),
+                    soroban_sdk::vec![
+                        &env,
+                        data.token.clone(),
+                        data.seller.clone(),
+                        funder.clone(),
+                        config.admin.clone()
+                    ]
+                    .into_val(&env),
+                    soroban_sdk::vec![&env, data.paid_amt, amount, investor_amount, platform_fee]
+                        .into_val(&env),
+                    (data.status as u32).into_val(&env)
+                ],
+            );
+        } else {
+            // Distribute payer's funds out (investor + platform fee).
+            token.transfer(&contract, funder, &investor_amount);
+            token.transfer(&contract, &config.admin, &platform_fee);
+
+            // Release corresponding funding from initial buy-in back to the seller.
+            token.transfer(&contract, &data.seller, &amount);
+        }
+
+        if data.status == EscrowStatus::Settled {
+            // Unlock invoice token transfers only when the invoice is completely settled.
             env.invoke_contract::<()>(
                 &data.inv_token,
                 &Symbol::new(&env, "set_transfer_locked"),
@@ -193,13 +240,14 @@ impl InvoiceEscrow {
             );
         }
 
-        storage::set_escrow(&env, invoice_id.clone(), &data);
         events::payment_settled(&env, invoice_id, amount, platform_fee, investor_amount);
         Ok(())
     }
 
     /// Refund the investor if the invoice was not paid by due date. Anyone may call.
     pub fn refund(env: Env, invoice_id: Symbol) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.status != EscrowStatus::Funded {
@@ -220,12 +268,28 @@ impl InvoiceEscrow {
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
 
-        if amount_to_refund > 0 {
-            token.transfer(&contract, funder, &amount_to_refund);
-        }
-
         data.status = EscrowStatus::Refunded;
         storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        if amount_to_refund > 0 {
+            if let Some(distributor) = config.payment_distributor.as_ref() {
+                token.transfer(&contract, distributor, &amount_to_refund);
+                env.invoke_contract::<()>(
+                    distributor,
+                    &Symbol::new(&env, DISTRIBUTE_REFUND_FN),
+                    soroban_sdk::vec![
+                        &env,
+                        contract.to_val(),
+                        invoice_id.clone().into_val(&env),
+                        soroban_sdk::vec![&env, data.token.clone(), funder.clone()].into_val(&env),
+                        soroban_sdk::vec![&env, amount_to_refund].into_val(&env),
+                        (data.status as u32).into_val(&env)
+                    ],
+                );
+            } else {
+                token.transfer(&contract, funder, &amount_to_refund);
+            }
+        }
 
         // Unlock invoice token transfers now that the invoice is refunded
         env.invoke_contract::<()>(
@@ -253,6 +317,30 @@ impl InvoiceEscrow {
         Ok(())
     }
 
+    /// Set the payment distributor used for settlement/refund fan-out. Admin only.
+    pub fn set_payment_distributor(env: Env, payment_distributor: Address) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let admin = config.admin.clone();
+        admin.require_auth();
+        let old_distributor = config.payment_distributor.clone();
+        config.payment_distributor = Some(payment_distributor.clone());
+        storage::set_config(&env, &config);
+        events::payment_distributor_updated(&env, old_distributor.is_some(), &payment_distributor);
+        Ok(())
+    }
+
+    /// Toggle the emergency pause flag. Admin only.
+    pub fn set_paused(env: Env, paused: bool) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let admin = config.admin.clone();
+        admin.require_auth();
+        let old_paused = config.paused;
+        config.paused = paused;
+        storage::set_config(&env, &config);
+        events::paused_updated(&env, old_paused, paused);
+        Ok(())
+    }
+
     /// View: return escrow data for an invoice, or None if not found.
     pub fn get_escrow(env: Env, invoice_id: Symbol) -> Result<EscrowData, Error> {
         storage::get_escrow(&env, invoice_id).ok_or(Error::EscrowNotFound)
@@ -267,6 +355,12 @@ impl InvoiceEscrow {
     pub fn get_escrow_status(env: Env, invoice_id: Symbol) -> Result<EscrowStatus, Error> {
         let data = storage::get_escrow(&env, invoice_id).ok_or(Error::EscrowNotFound)?;
         Ok(data.status)
+    }
+
+    /// View: return the current pause state.
+    pub fn paused(env: Env) -> Result<bool, Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        Ok(config.paused)
     }
 }
 

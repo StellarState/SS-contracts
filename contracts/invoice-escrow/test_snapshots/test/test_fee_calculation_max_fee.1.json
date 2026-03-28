@@ -457,6 +457,20 @@
                               "val": {
                                 "u32": 10000
                               }
+                            },
+                            {
+                              "key": {
+                                "symbol": "paused"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "payment_distributor"
+                              },
+                              "val": "void"
                             }
                           ]
                         }

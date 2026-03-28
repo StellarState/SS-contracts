@@ -450,6 +450,20 @@
                               "val": {
                                 "u32": 300
                               }
+                            },
+                            {
+                              "key": {
+                                "symbol": "paused"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "payment_distributor"
+                              },
+                              "val": "void"
                             }
                           ]
                         }
@@ -583,6 +597,14 @@
                               },
                               "val": {
                                 "string": "Failed Invoice"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "paused"
+                              },
+                              "val": {
+                                "bool": false
                               }
                             },
                             {

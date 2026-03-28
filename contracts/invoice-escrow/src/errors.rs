@@ -35,4 +35,6 @@ pub enum Error {
     Overflow = 13,
     /// Escrow has been cancelled by the seller.
     EscrowCancelled = 14,
+    /// Contract is paused and the requested operation is temporarily disabled.
+    Paused = 15,
 }

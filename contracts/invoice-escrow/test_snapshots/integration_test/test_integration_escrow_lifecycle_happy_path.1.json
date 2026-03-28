@@ -629,6 +629,20 @@
                               "val": {
                                 "u32": 300
                               }
+                            },
+                            {
+                              "key": {
+                                "symbol": "paused"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "payment_distributor"
+                              },
+                              "val": "void"
                             }
                           ]
                         }
@@ -762,6 +776,14 @@
                               },
                               "val": {
                                 "string": "Invoice #1"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "paused"
+                              },
+                              "val": {
+                                "bool": false
                               }
                             },
                             {

@@ -44,6 +44,9 @@
               "function_name": "set_transfer_locked",
               "args": [
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
                   "bool": false
                 }
               ]
@@ -288,6 +291,14 @@
                               },
                               "val": {
                                 "string": "Invoice INV-001"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "paused"
+                              },
+                              "val": {
+                                "bool": false
                               }
                             },
                             {

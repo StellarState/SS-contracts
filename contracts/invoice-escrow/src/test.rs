@@ -1489,7 +1489,6 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
     assert_eq!(payment_token.balance(&buyer), 5000);
 }
 
-
 // ── Issue #41: cancel_escrow ─────────────────────────────────────────────────
 
 fn setup_escrow_created(env: &Env) -> (Address, InvoiceEscrowClient<'_>, Address, Address, Symbol) {
@@ -1528,7 +1527,10 @@ fn test_cancel_escrow_happy_path() {
 
     client.cancel_escrow(&invoice_id, &seller);
 
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Cancelled);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Cancelled
+    );
 }
 
 #[test]
@@ -1607,4 +1609,97 @@ fn test_fund_cancelled_escrow_rejected() {
     let buyer = Address::generate(&env);
     let res = client.try_fund_escrow(&invoice_id, &buyer);
     assert_eq!(res, Err(Ok(Error::EscrowCancelled)));
+}
+
+#[test]
+fn test_set_payment_distributor_updates_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let distributor = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+    client.set_payment_distributor(&distributor);
+
+    let config = client.get_config();
+    assert_eq!(config.payment_distributor, Some(distributor.clone()));
+}
+
+#[test]
+fn test_set_paused_requires_admin_auth() {
+    let env = Env::default();
+
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &300);
+
+    let result = client.try_set_paused(&true);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_pause_blocks_lifecycle_operations_and_unpause_restores() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INVPAUSE");
+    let inv_token_id = env.register_contract(None, MockInvoiceToken);
+
+    let pt_admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(pt_admin);
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let pt_client = TokenClient::new(&env, &pt_id.address());
+
+    client.initialize(&admin, &300);
+    client.set_paused(&true);
+    assert!(client.paused());
+
+    let create_while_paused = client.try_create_escrow(
+        &invoice_id,
+        &seller,
+        &1000i128,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+    );
+    assert_eq!(create_while_paused, Err(Ok(Error::Paused)));
+
+    client.set_paused(&false);
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &1000i128,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+    );
+
+    pt_asset.mint(&buyer, &1000);
+    client.set_paused(&true);
+    let fund_while_paused = client.try_fund_escrow(&invoice_id, &buyer);
+    assert_eq!(fund_while_paused, Err(Ok(Error::Paused)));
+
+    client.set_paused(&false);
+    client.fund_escrow(&invoice_id, &buyer);
+
+    pt_asset.mint(&payer, &1000);
+    client.set_paused(&true);
+    let record_while_paused = client.try_record_payment(&invoice_id, &payer, &1000i128);
+    assert_eq!(record_while_paused, Err(Ok(Error::Paused)));
+
+    client.set_paused(&false);
+    client.record_payment(&invoice_id, &payer, &1000i128);
+
+    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Settled);
+    assert_eq!(pt_client.balance(&seller), 1000);
 }
