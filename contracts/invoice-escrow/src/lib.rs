@@ -43,6 +43,7 @@ impl InvoiceEscrow {
     /// Create an escrow for an invoice. Caller (seller) must be authenticated.
     /// face_value: what the debtor owes (amount to be paid at settlement)
     /// purchase_price: what the investor pays (discount applied here)
+    /// commitment: immutable on-chain anchor (SHA-256 hash of off-chain invoice data)
     pub fn create_escrow(
         env: Env,
         invoice_id: Symbol,
@@ -53,6 +54,7 @@ impl InvoiceEscrow {
         due_date: u64,
         payment_token: Address,
         invoice_token: Address,
+        commitment: soroban_sdk::BytesN<32>,
     ) -> Result<(), Error> {
         seller.require_auth();
         if face_value <= 0 || purchase_price <= 0 {
@@ -75,6 +77,7 @@ impl InvoiceEscrow {
             inv_token: invoice_token.clone(),
             paid_amt: 0,
             status: EscrowStatus::Created,
+            commitment: commitment.clone(),
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
         events::escrow_created(
@@ -87,6 +90,7 @@ impl InvoiceEscrow {
             due_date,
             &payment_token,
             &invoice_token,
+            &commitment,
         );
         Ok(())
     }

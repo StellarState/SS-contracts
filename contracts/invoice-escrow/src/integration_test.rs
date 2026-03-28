@@ -3,8 +3,17 @@ use invoice_token::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as AssetClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, String as SorobanString, Symbol,
+    Address, Bytes, BytesN, Env, String as SorobanString, Symbol,
 };
+
+/// Helper function to create a test commitment hash (SHA-256 format)
+fn test_commitment(env: &Env, data: &str) -> BytesN<32> {
+    let mut array = [0u8; 32];
+    let bytes = data.as_bytes();
+    let len = bytes.len().min(32);
+    array[..len].copy_from_slice(&bytes[..len]);
+    BytesN::from_array(env, &array)
+}
 
 #[test]
 fn test_integration_escrow_lifecycle_happy_path() {
@@ -62,6 +71,7 @@ fn test_integration_escrow_lifecycle_happy_path() {
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
 
     // 8. Fund Escrow (Buyer buys the invoice)
@@ -149,6 +159,7 @@ fn test_integration_refund_lifecycle() {
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -219,6 +230,7 @@ fn test_integration_token_locked_during_active_escrow() {
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
 
     // Token is locked even before funding (initialized locked)

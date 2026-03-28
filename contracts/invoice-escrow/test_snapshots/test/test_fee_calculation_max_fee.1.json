@@ -114,6 +114,9 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                },
+                {
+                  "bytes": "746573745f696e766f6963655f64617461000000000000000000000000000000"
                 }
               ]
             }
@@ -337,6 +340,14 @@
                 "durability": "persistent",
                 "val": {
                   "map": [
+                    {
+                      "key": {
+                        "symbol": "commitment"
+                      },
+                      "val": {
+                        "bytes": "746573745f696e766f6963655f64617461000000000000000000000000000000"
+                      }
+                    },
                     {
                       "key": {
                         "symbol": "debtor"

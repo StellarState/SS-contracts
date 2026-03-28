@@ -13,8 +13,17 @@ use invoice_token::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as AssetClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, String as SorobanString, Symbol,
+    Address, Bytes, BytesN, Env, String as SorobanString, Symbol,
 };
+
+/// Helper function to create a test commitment hash (SHA-256 format)
+fn test_commitment(env: &Env, data: &str) -> BytesN<32> {
+    let mut array = [0u8; 32];
+    let bytes = data.as_bytes();
+    let len = bytes.len().min(32);
+    array[..len].copy_from_slice(&bytes[..len]);
+    BytesN::from_array(env, &array)
+}
 
 // ---------------------------------------------------------------------------
 // Happy-path integration: create → fund → settle → distribute
@@ -77,6 +86,7 @@ fn test_integration_settle_then_distribute() {
         &due_date,
         &pt_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
     escrow.fund_escrow(&invoice_id, &buyer, &amount);
 
@@ -146,6 +156,7 @@ fn test_integration_distribute_while_escrow_funded_not_settled() {
         &99_999u64,
         &pt_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
     escrow.fund_escrow(&invoice_id, &buyer, &amount);
 
@@ -258,6 +269,7 @@ fn test_integration_refund_does_not_affect_distributor() {
         &due_date,
         &pt_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
     escrow.fund_escrow(&invoice_id, &buyer, &amount);
 
