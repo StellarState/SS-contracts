@@ -30,7 +30,22 @@ Returns the current administrative address of the contract.
 (Legacy documentation for reference)
 
 ### `initialize(admin: Address, platform_fee_bps: u32)`
-### `create_escrow(invoice_id: Symbol, seller: Address, amount: i128, due_date: u64, payment_token: Address, invoice_token: Address)`
+### `create_escrow(invoice_id: Symbol, seller: Address, debtor: Address, face_value: i128, purchase_price: i128, due_date: u64, payment_token: Address, invoice_token: Address, commitment: BytesN<32>)`
+Creates an escrow for an invoice with the specified parameters.
+- **invoice_id**: Unique identifier for the invoice.
+- **seller**: Address of the invoice seller (creator of the escrow).
+- **debtor**: Address of the party responsible for paying the invoice.
+- **face_value**: Total amount owed by the debtor (must be > 0).
+- **purchase_price**: Amount the investor will pay to fund the escrow (must be > 0).
+- **due_date**: Unix timestamp when the invoice is due (must be > 0 and > current ledger timestamp).
+- **payment_token**: Address of the token used for payments.
+- **invoice_token**: Address of the invoice token contract.
+- **commitment**: SHA-256 hash of off-chain invoice data (immutable anchor).
+
+**Constraints:**
+- face_value and purchase_price must be positive (> 0)
+- due_date must be non-zero and strictly greater than the current ledger timestamp
+- Each invoice_id can only be used once
 ### `fund_escrow(invoice_id: Symbol, buyer: Address)`
 ### `record_payment(invoice_id: Symbol, payer: Address, amount: i128)`
 Records a full or partial payment for a funded invoice.

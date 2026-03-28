@@ -60,6 +60,13 @@ impl InvoiceEscrow {
         if face_value <= 0 || purchase_price <= 0 {
             return Err(Error::InvalidAmount);
         }
+        if due_date == 0 {
+            return Err(Error::InvalidDueDate);
+        }
+        let current_timestamp = env.ledger().timestamp();
+        if due_date <= current_timestamp {
+            return Err(Error::InvalidDueDate);
+        }
         storage::get_config(&env).ok_or(Error::NotInit)?;
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);

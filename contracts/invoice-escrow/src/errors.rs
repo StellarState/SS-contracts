@@ -37,4 +37,6 @@ pub enum Error {
     EscrowCancelled = 14,
     /// Payer is not the authorized debtor for this invoice.
     InvalidPayer = 15,
+    /// Due date is invalid (e.g., in the past or zero).
+    InvalidDueDate = 16,
 }
