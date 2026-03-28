@@ -70,4 +70,7 @@ pub struct EscrowData {
     pub paid_amt: i128,
     /// Current status.
     pub status: EscrowStatus,
+    /// Commitment hash: immutable on-chain anchor for off-chain invoice data (PDF hash, ERP ID, etc.).
+    /// Set at creation, cannot be modified. SHA-256 hash (32 bytes).
+    pub commitment: soroban_sdk::BytesN<32>,
 }
