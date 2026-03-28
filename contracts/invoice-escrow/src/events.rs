@@ -7,22 +7,42 @@ pub fn escrow_created(
     env: &Env,
     inv_id: Symbol,
     seller: &Address,
-    amount: i128,
+    debtor: &Address,
+    face_value: i128,
+    purchase_price: i128,
     due_dt: u64,
     token: &Address,
     inv_token: &Address,
+    commitment: &soroban_sdk::BytesN<32>,
 ) {
     env.events().publish(
         (Symbol::new(env, "escrow_created"),),
-        (inv_id.clone(), seller, amount, due_dt, token, inv_token),
+        (
+            inv_id.clone(),
+            seller,
+            debtor,
+            face_value,
+            purchase_price,
+            due_dt,
+            token,
+            inv_token,
+            commitment,
+        ),
     );
 }
 
-/// Publish escrow_funded event.
-pub fn escrow_funded(env: &Env, inv_id: Symbol, funder: &Address, amount: i128) {
+/// Publish escrow_funded event with partial funding info.
+pub fn escrow_funded(
+    env: &Env,
+    inv_id: Symbol,
+    funder: &Address,
+    amount: i128,
+    funded_amt: i128,
+    purchase_price: i128,
+) {
     env.events().publish(
         (Symbol::new(env, "escrow_funded"),),
-        (inv_id, funder, amount),
+        (inv_id, funder, amount, funded_amt, purchase_price),
     );
 }
 
@@ -41,11 +61,9 @@ pub fn payment_settled(
 }
 
 /// Publish refund event.
-pub fn escrow_refunded(env: &Env, inv_id: Symbol, funder: &Address, amount: i128) {
-    env.events().publish(
-        (Symbol::new(env, "escrow_refunded"),),
-        (inv_id, funder, amount),
-    );
+pub fn escrow_refunded(env: &Env, inv_id: Symbol, amount: i128) {
+    env.events()
+        .publish((Symbol::new(env, "escrow_refunded"),), (inv_id, amount));
 }
 
 /// Publish escrow_cancelled event (invoice_id, seller).

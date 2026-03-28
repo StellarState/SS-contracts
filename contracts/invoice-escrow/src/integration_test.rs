@@ -3,8 +3,17 @@ use invoice_token::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as AssetClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, String as SorobanString, Symbol,
+    Address, Bytes, BytesN, Env, String as SorobanString, Symbol,
 };
+
+/// Helper function to create a test commitment hash (SHA-256 format)
+fn test_commitment(env: &Env, data: &str) -> BytesN<32> {
+    let mut array = [0u8; 32];
+    let bytes = data.as_bytes();
+    let len = bytes.len().min(32);
+    array[..len].copy_from_slice(&bytes[..len]);
+    BytesN::from_array(env, &array)
+}
 
 #[test]
 fn test_integration_escrow_lifecycle_happy_path() {
@@ -56,14 +65,17 @@ fn test_integration_escrow_lifecycle_happy_path() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
 
     // 8. Fund Escrow (Buyer buys the invoice)
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Verify buyer received invoice tokens and paid payment tokens
     assert_eq!(inv_token_client.balance(&buyer), amount);
@@ -141,13 +153,16 @@ fn test_integration_refund_lifecycle() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &seller,
+        &amount,
         &amount,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Attempt refund before due date (should fail)
     let res = escrow_client.try_refund(&invoice_id);
@@ -178,6 +193,7 @@ fn test_integration_token_locked_during_active_escrow() {
     let admin = Address::generate(&env);
     let seller = Address::generate(&env);
     let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
 
     let escrow_id = env.register(InvoiceEscrow, ());
     let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
@@ -208,16 +224,19 @@ fn test_integration_token_locked_during_active_escrow() {
     escrow_client.create_escrow(
         &invoice_id,
         &seller,
+        &payer,
+        &amount,
         &amount,
         &due_date,
         &payment_token_id.address(),
         &inv_token_id,
+        &test_commitment(&env, "test_invoice_data"),
     );
 
     // Token is locked even before funding (initialized locked)
     assert!(inv_token_client.transfer_locked());
 
-    escrow_client.fund_escrow(&invoice_id, &buyer);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Token is still locked after funding — transfers are blocked while invoice is active
     assert!(inv_token_client.transfer_locked());
@@ -226,7 +245,6 @@ fn test_integration_token_locked_during_active_escrow() {
     assert!(result.is_err());
 
     // After settlement, token unlocks
-    let payer = Address::generate(&env);
     payment_token_asset.mint(&payer, &amount);
     escrow_client.record_payment(&invoice_id, &payer, &amount);
 
