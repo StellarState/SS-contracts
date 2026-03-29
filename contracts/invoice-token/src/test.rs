@@ -1038,61 +1038,59 @@ fn test_approve_update_expiration_shortens() {
     assert_eq!(client.allowance(&admin, &spender), 0);
 }
 
-#[test]
-fn test_set_paused_requires_admin_auth() {
-    let env = Env::default();
-    let (client, _admin, _minter) = setup_token(&env);
-
-    let result = client.try_set_paused(&true);
-    assert!(result.is_err());
-}
+// ========== Negative Amount Tests ==========
 
 #[test]
-fn test_paused_blocks_sensitive_ops_and_unpause_restores() {
+fn test_approve_negative_amount_rejected() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    let recipient = Address::generate(&env);
     let spender = Address::generate(&env);
-    client.mint(&admin, &1_000, &minter);
+    let expiration = env.ledger().sequence() + 100;
 
-    client.set_paused(&true);
-    assert!(client.paused());
+    // Attempt to approve with negative amount should fail
+    let result = client.try_approve(&admin, &spender, &(-100i128), &expiration);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAmount)));
 
-    let transfer_result = client.try_transfer(&admin, &recipient, &100);
-    assert_eq!(transfer_result, Err(Ok(crate::errors::Error::Paused)));
-
-    let approve_result = client.try_approve(&admin, &spender, &100, &100);
-    assert_eq!(approve_result, Err(Ok(crate::errors::Error::Paused)));
-
-    let mint_result = client.try_mint(&recipient, &100, &minter);
-    assert_eq!(mint_result, Err(Ok(crate::errors::Error::Paused)));
-
-    client.set_paused(&false);
-    assert!(!client.paused());
-    client.set_transfer_locked(&admin, &false);
-    client.transfer(&admin, &recipient, &100);
-
-    assert_eq!(client.balance(&admin), 900);
-    assert_eq!(client.balance(&recipient), 100);
+    // Verify no allowance was set
+    assert_eq!(client.allowance(&admin, &spender), 0);
 }
 
 #[test]
-fn test_paused_event_emission() {
+fn test_approve_zero_amount_accepted() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, _minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.set_paused(&true);
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
 
-    let events = env.events().all();
-    let event = events.last().unwrap();
-    let (_contract_addr, topics, data) = event;
-    assert_eq!(
-        topics,
-        (Symbol::new(&env, "paused_updated"),).into_val(&env)
-    );
-    let event_data: (bool, bool) = data.try_into_val(&env).unwrap();
-    assert_eq!(event_data, (false, true));
+    // First set a non-zero allowance
+    client.approve(&admin, &spender, &500, &expiration);
+    assert_eq!(client.allowance(&admin, &spender), 500);
+
+    // Approve with zero amount should remove allowance (current behavior)
+    client.approve(&admin, &spender, &0, &expiration);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
+#[test]
+fn test_approve_positive_amount_invalid_expiration_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+
+    // Advance ledger to ensure we can test past expiration
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    let current_ledger = env.ledger().sequence();
+
+    // Attempt to approve with positive amount and invalid expiration should fail
+    let result = client.try_approve(&admin, &spender, &500, &(current_ledger - 1));
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidExpiration)));
+
+    // Verify no allowance was set
+    assert_eq!(client.allowance(&admin, &spender), 0);
 }

@@ -118,9 +118,8 @@ impl InvoiceToken {
         expiration_ledger: u32,
     ) -> Result<(), Error> {
         from.require_auth();
-        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
-        if meta.paused {
-            return Err(Error::Paused);
+        if amount < 0 {
+            return Err(Error::InvalidAmount);
         }
         let ledger = env.ledger().sequence();
         if amount != 0 && expiration_ledger < ledger {

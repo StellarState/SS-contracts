@@ -37,5 +37,7 @@ pub enum Error {
     /// Contract is paused and the requested operation is temporarily disabled.
     Paused = 15,
     /// Payer is not the authorized debtor for this invoice.
-    InvalidPayer = 16,
+    InvalidPayer = 15,
+    /// Due date is invalid (e.g., in the past or zero).
+    InvalidDueDate = 16,
 }

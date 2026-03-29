@@ -2087,6 +2087,145 @@ fn test_commitment_persists_through_lifecycle() {
     let escrow_data = escrow_client.get_escrow(&invoice_id);
     assert_eq!(escrow_data.commitment, commitment);
     assert_eq!(escrow_data.status, EscrowStatus::Settled);
+}
 
-    let _ = payment_token;
+// ========== Due Date Validation Tests ==========
+
+#[test]
+fn test_create_escrow_due_date_in_past_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let payment_token = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+
+    escrow_client.initialize(&admin, &300);
+
+    // Set ledger timestamp to a known time
+    env.ledger().with_mut(|li| li.timestamp = 1000000);
+    let current_timestamp = env.ledger().timestamp();
+
+    // Try to create escrow with due_date in the past
+    let past_due_date = current_timestamp - 1000;
+    let result = escrow_client.try_create_escrow(
+        &Symbol::new(&env, "INV_PAST"),
+        &seller,
+        &seller,
+        &1000,
+        &950,
+        &past_due_date,
+        &payment_token,
+        &inv_token,
+        &test_commitment(&env, "past_due_test"),
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
+}
+
+#[test]
+fn test_create_escrow_due_date_equal_to_current_timestamp_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let payment_token = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+
+    escrow_client.initialize(&admin, &300);
+
+    // Set ledger timestamp to a known time
+    env.ledger().with_mut(|li| li.timestamp = 1000000);
+    let current_timestamp = env.ledger().timestamp();
+
+    // Try to create escrow with due_date equal to current timestamp
+    let result = escrow_client.try_create_escrow(
+        &Symbol::new(&env, "INV_EQUAL"),
+        &seller,
+        &seller,
+        &1000,
+        &950,
+        &current_timestamp,
+        &payment_token,
+        &inv_token,
+        &test_commitment(&env, "equal_timestamp_test"),
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
+}
+
+#[test]
+fn test_create_escrow_due_date_zero_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let payment_token = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+
+    escrow_client.initialize(&admin, &300);
+
+    // Try to create escrow with due_date = 0
+    let result = escrow_client.try_create_escrow(
+        &Symbol::new(&env, "INV_ZERO"),
+        &seller,
+        &seller,
+        &1000,
+        &950,
+        &0,
+        &payment_token,
+        &inv_token,
+        &test_commitment(&env, "zero_due_date_test"),
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
+}
+
+#[test]
+fn test_create_escrow_due_date_in_future_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let payment_token = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+
+    escrow_client.initialize(&admin, &300);
+
+    // Set ledger timestamp to a known time
+    env.ledger().with_mut(|li| li.timestamp = 1000000);
+    let current_timestamp = env.ledger().timestamp();
+
+    // Create escrow with due_date in the future - should succeed
+    let future_due_date = current_timestamp + 1000000;
+    let invoice_id = Symbol::new(&env, "INV_FUTURE");
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &950,
+        &future_due_date,
+        &payment_token,
+        &inv_token,
+        &test_commitment(&env, "future_due_test"),
+    );
+
+    // Verify escrow was created successfully
+    let escrow_data = escrow_client.get_escrow(&invoice_id);
+    assert_eq!(escrow_data.due_dt, future_due_date);
+    assert_eq!(escrow_data.status, EscrowStatus::Created);
 }

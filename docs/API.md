@@ -91,6 +91,29 @@ The `payment-distributor` contract now implements the settlement/refund fan-out 
 - If `payment_distributor` is configured, `record_payment` transfers the current settlement funds into the distributor and invokes `distribute_payment`.
 - If `payment_distributor` is configured, `refund` transfers the remaining collateral into the distributor and invokes `distribute_refund`.
 - If no distributor is configured, escrow falls back to the legacy direct-transfer path.
+### `initialize(admin: Address, platform_fee_bps: u32)`
+### `create_escrow(invoice_id: Symbol, seller: Address, debtor: Address, face_value: i128, purchase_price: i128, due_date: u64, payment_token: Address, invoice_token: Address, commitment: BytesN<32>)`
+Creates an escrow for an invoice with the specified parameters.
+- **invoice_id**: Unique identifier for the invoice.
+- **seller**: Address of the invoice seller (creator of the escrow).
+- **debtor**: Address of the party responsible for paying the invoice.
+- **face_value**: Total amount owed by the debtor (must be > 0).
+- **purchase_price**: Amount the investor will pay to fund the escrow (must be > 0).
+- **due_date**: Unix timestamp when the invoice is due (must be > 0 and > current ledger timestamp).
+- **payment_token**: Address of the token used for payments.
+- **invoice_token**: Address of the invoice token contract.
+- **commitment**: SHA-256 hash of off-chain invoice data (immutable anchor).
+
+**Constraints:**
+- face_value and purchase_price must be positive (> 0)
+- due_date must be non-zero and strictly greater than the current ledger timestamp
+- Each invoice_id can only be used once
+### `fund_escrow(invoice_id: Symbol, buyer: Address)`
+### `record_payment(invoice_id: Symbol, payer: Address, amount: i128)`
+Records a full or partial payment for a funded invoice.
+- **amount**: Must be $> 0$ and $\le$ (initial amount - total already paid).
+- Partial payments distribute the platform fee to the admin, the remainder to the investor, and release a proportional amount of the investor's initial funding to the seller.
+- The invoice status transitions to `Settled` only when the total paid matches the invoice amount.
 
 ### Pause Policy
 - When paused, the contract rejects lifecycle-changing operations:
