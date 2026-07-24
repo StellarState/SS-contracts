@@ -1,4 +1,7 @@
-//! Storage helpers for balances, metadata, and allowances.
+//! Storage helpers for balances, metadata, allowances, and transfer locks.
+//!
+//! Provides read and write accessors for instance and persistent storage keys
+//! adhering to Soroban storage TTL and authorization patterns.
 
 use soroban_sdk::Address;
 
