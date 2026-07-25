@@ -1,6 +1,6 @@
 # Invoice Escrow Lifecycle
 
-This document describes the end-to-end invoice lifecycle across `invoice-escrow`, `invoice-token`, and the configured `payment-distributor`.
+This document describes the end-to-end invoice lifecycle across `invoice-escrow`, `invoice-token`, and the configured `payment-distributor`. For formal state transition matrices, pre/post-conditions, and storage invariants, see [Escrow State Machine Invariants](state-machine.md).
 
 ## 1. Creation (`create_escrow`)
 - **Actor:** Seller

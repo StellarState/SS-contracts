@@ -27,6 +27,11 @@ contracts/
 └── payment-distributor/  # Settlement & distribution logic
 ```
 
+For detailed architectural and state-machine specifications, see:
+- [**Invoice Escrow Lifecycle**](docs/lifecycle.md)
+- [**Escrow State Machine Invariants & Transition Matrix**](docs/state-machine.md)
+- [**API Documentation**](docs/API.md)
+
 ## 🚀 Quick Start
 
 ### Prerequisites
