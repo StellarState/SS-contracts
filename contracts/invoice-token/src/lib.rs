@@ -18,6 +18,16 @@ pub struct InvoiceToken;
 
 #[contractimpl]
 impl InvoiceToken {
+    /// Validate that an address is not zero (null).
+    fn validate_address(addr: &Address) -> Result<(), Error> {
+        // In Soroban, we can check if address is zero by comparing with Address::default()
+        // A zero address would be equivalent to Address::default()
+        if *addr == Address::default() {
+            return Err(Error::InvalidAddress);
+        }
+        Ok(())
+    }
+
     /// Initialize the token with admin, metadata, and minter (escrow) address.
     pub fn initialize(
         env: Env,
@@ -28,6 +38,10 @@ impl InvoiceToken {
         invoice_id: Symbol,
         minter: Address,
     ) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&admin)?;
+        Self::validate_address(&minter)?;
+
         if storage::get_metadata(&env).is_some() {
             return Err(Error::AlreadyInit);
         }
@@ -69,11 +83,18 @@ impl InvoiceToken {
     }
 
     pub fn balance(env: Env, id: Address) -> Result<i128, Error> {
+        // Validate address parameters
+        Self::validate_address(&id)?;
+        
         storage::get_metadata(&env).ok_or(Error::NotInit)?;
         Ok(storage::get_balance(&env, &id))
     }
 
     pub fn allowance(env: Env, from: Address, spender: Address) -> Result<i128, Error> {
+        // Validate address parameters
+        Self::validate_address(&from)?;
+        Self::validate_address(&spender)?;
+        
         storage::get_metadata(&env).ok_or(Error::NotInit)?;
         let ledger = env.ledger().sequence();
         Ok(storage::get_allowance(&env, &from, &spender, ledger))
@@ -83,6 +104,10 @@ impl InvoiceToken {
 
     /// Transfer amount from `from` to `to`. Requires `from` auth.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&from)?;
+        Self::validate_address(&to)?;
+        
         from.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -117,6 +142,10 @@ impl InvoiceToken {
         amount: i128,
         expiration_ledger: u32,
     ) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&from)?;
+        Self::validate_address(&spender)?;
+        
         from.require_auth();
         if amount < 0 {
             return Err(Error::InvalidAmount);
@@ -138,6 +167,11 @@ impl InvoiceToken {
         to: Address,
         amount: i128,
     ) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&spender)?;
+        Self::validate_address(&from)?;
+        Self::validate_address(&to)?;
+        
         spender.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -182,6 +216,9 @@ impl InvoiceToken {
 
     /// Burn amount from `from`. Requires `from` auth.
     pub fn burn(env: Env, from: Address, amount: i128) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&from)?;
+        
         from.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -205,6 +242,10 @@ impl InvoiceToken {
 
     /// Burn from `from` using spender's allowance. Requires `spender` auth.
     pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&spender)?;
+        Self::validate_address(&from)?;
+        
         spender.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -247,6 +288,10 @@ impl InvoiceToken {
     /// Mint tokens to `to`. Callable only by admin or minter (escrow).
     /// `by` must be admin or minter and must authorize the call.
     pub fn mint(env: Env, to: Address, amount: i128, by: Address) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&to)?;
+        Self::validate_address(&by)?;
+        
         by.require_auth();
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         if meta.paused {
@@ -273,6 +318,9 @@ impl InvoiceToken {
     /// Set transfer lock. Callable by admin or minter (escrow contract).
     /// When true, only admin can transfer; when false, all holders can transfer.
     pub fn set_transfer_locked(env: Env, caller: Address, locked: bool) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&caller)?;
+        
         caller.require_auth();
         let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         if caller != meta.admin && caller != meta.minter {
@@ -287,6 +335,9 @@ impl InvoiceToken {
 
     /// Set minter address (admin only).
     pub fn set_minter(env: Env, new_minter: Address) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&new_minter)?;
+        
         let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         let old_minter = meta.minter.clone();
         meta.admin.require_auth();

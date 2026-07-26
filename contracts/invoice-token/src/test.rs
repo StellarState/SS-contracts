@@ -1094,3 +1094,258 @@ fn test_approve_positive_amount_invalid_expiration_rejected() {
     // Verify no allowance was set
     assert_eq!(client.allowance(&admin, &spender), 0);
 }
+// ========== Invalid Address Validation Tests ==========
+
+#[test]
+fn test_initialize_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+    
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let name = SorobanString::from_str(&env, "Invoice INV-001");
+    let symbol = SorobanString::from_str(&env, "INV001");
+    let invoice_id = Symbol::new(&env, "inv_001");
+    
+    // Test with zero admin address
+    let zero_address = Address::default();
+    let result = client.try_initialize(&zero_address, &name, &symbol, &7u32, &invoice_id, &minter);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero minter address
+    let result = client.try_initialize(&admin, &name, &symbol, &7u32, &invoice_id, &zero_address);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_transfer_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+    
+    let zero_address = Address::default();
+    
+    // Test with zero 'from' address
+    let recipient = Address::generate(&env);
+    let result = client.try_transfer(&zero_address, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero 'to' address
+    let result = client.try_transfer(&admin, &zero_address, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_approve_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+    
+    let zero_address = Address::default();
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    
+    // Test with zero 'from' address
+    let result = client.try_approve(&zero_address, &spender, &500, &expiration);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero 'spender' address
+    let result = client.try_approve(&admin, &zero_address, &500, &expiration);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_transfer_from_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    
+    // Mint tokens to admin and unlock transfers
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    
+    let zero_address = Address::default();
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    
+    // Setup allowance
+    client.approve(&admin, &spender, &500, &expiration);
+    
+    // Test with zero 'spender' address
+    let result = client.try_transfer_from(&zero_address, &admin, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero 'from' address
+    let result = client.try_transfer_from(&spender, &zero_address, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero 'to' address
+    let result = client.try_transfer_from(&spender, &admin, &zero_address, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_burn_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+    
+    let zero_address = Address::default();
+    
+    // Test with zero 'from' address
+    let result = client.try_burn(&zero_address, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_burn_from_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    
+    // Mint tokens to admin
+    client.mint(&admin, &1000, &minter);
+    
+    let zero_address = Address::default();
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    
+    // Setup allowance
+    client.approve(&admin, &spender, &500, &expiration);
+    
+    // Test with zero 'spender' address
+    let result = client.try_burn_from(&zero_address, &admin, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero 'from' address
+    let result = client.try_burn_from(&spender, &zero_address, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_mint_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    
+    let zero_address = Address::default();
+    
+    // Test with zero 'to' address
+    let result = client.try_mint(&zero_address, &100, &admin);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero 'by' address (even though it won't pass auth, should fail with InvalidAddress first)
+    let recipient = Address::generate(&env);
+    let result = client.try_mint(&recipient, &100, &zero_address);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_set_transfer_locked_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+    
+    let zero_address = Address::default();
+    
+    // Test with zero 'caller' address
+    let result = client.try_set_transfer_locked(&zero_address, &false);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Valid caller should still work
+    client.set_transfer_locked(&admin, &false);
+    assert!(!client.transfer_locked());
+}
+
+#[test]
+fn test_set_minter_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _minter) = setup_token(&env);
+    
+    let zero_address = Address::default();
+    
+    // Test with zero 'new_minter' address
+    let result = client.try_set_minter(&zero_address);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_balance_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _minter) = setup_token(&env);
+    
+    let zero_address = Address::default();
+    
+    // Test with zero 'id' address
+    let result = client.try_balance(&zero_address);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_allowance_with_zero_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+    
+    let zero_address = Address::default();
+    let spender = Address::generate(&env);
+    
+    // Test with zero 'from' address
+    let result = client.try_allowance(&zero_address, &spender);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+    
+    // Test with zero 'spender' address
+    let result = client.try_allowance(&admin, &zero_address);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAddress)));
+}
+
+#[test]
+fn test_valid_addresses_still_work() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    
+    // Test that normal operations still work with valid addresses
+    
+    // Mint tokens
+    let user = Address::generate(&env);
+    client.mint(&user, &1000, &minter);
+    assert_eq!(client.balance(&user), 1000);
+    
+    // Check balance
+    assert_eq!(client.balance(&user), 1000);
+    
+    // Set allowance
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    client.approve(&user, &spender, &500, &expiration);
+    assert_eq!(client.allowance(&user, &spender), 500);
+    
+    // Unlock transfers
+    client.set_transfer_locked(&admin, &false);
+    
+    // Transfer
+    let recipient = Address::generate(&env);
+    client.transfer(&user, &recipient, &100);
+    assert_eq!(client.balance(&user), 900);
+    assert_eq!(client.balance(&recipient), 100);
+    
+    // Burn
+    client.burn(&user, &50);
+    assert_eq!(client.balance(&user), 850);
+    
+    // Set new minter
+    let new_minter = Address::generate(&env);
+    client.set_minter(&new_minter);
+}
