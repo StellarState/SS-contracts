@@ -13,4 +13,11 @@ pub enum Error {
     RefundAlreadyDistributed = 7,
     Overflow = 8,
     WrongDistributor = 9,
+    EmptyFeeTiers = 10,
+    InvalidFeeTier = 11,
+    InvalidFeeSplit = 12,
+    TooManyFeeRecipients = 13,
+    InvalidRefundWeight = 14,
+    TooManyRefundRecipients = 15,
+    InvalidBonusRate = 16,
 }
