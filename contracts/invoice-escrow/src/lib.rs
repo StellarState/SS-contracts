@@ -49,6 +49,7 @@ impl InvoiceEscrow {
             paused: false,
         };
         storage::set_config(&env, &config);
+        events::contract_initialized(&env, &admin, platform_fee_bps);
         Ok(())
     }
 

@@ -102,3 +102,14 @@ pub fn paused_updated(env: &Env, old_paused: bool, new_paused: bool) {
         (old_paused, new_paused),
     );
 }
+
+/// Publish contract_initialized event with admin and fee_bps.
+///
+/// Emitted exactly once when `initialize` succeeds. Can be used by indexers to
+/// anchor the on-chain deployment and record the initial configuration.
+pub fn contract_initialized(env: &Env, admin: &Address, fee_bps: u32) {
+    env.events().publish(
+        (Symbol::new(env, "initialized"),),
+        (admin, fee_bps),
+    );
+}

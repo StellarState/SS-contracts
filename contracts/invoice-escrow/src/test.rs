@@ -2229,3 +2229,275 @@ fn test_create_escrow_due_date_in_future_accepted() {
     assert_eq!(escrow_data.due_dt, future_due_date);
     assert_eq!(escrow_data.status, EscrowStatus::Created);
 }
+
+// ========== Re-initialization Guard Tests ==========
+//
+// These tests verify that the `initialize` function is idempotent in the sense
+// that it can only be called once.  Attempting to call it a second time must
+// always return `Error::AlreadyInit`, regardless of the arguments supplied.
+
+/// Happy path: a single `initialize` call stores config and emits the
+/// `initialized` event.
+#[test]
+fn test_initialize_success_stores_config_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+
+    // Config must be readable and contain the values we passed in.
+    let config = client.get_config();
+    assert_eq!(config.admin, admin);
+    assert_eq!(config.fee_bps, 300);
+    assert_eq!(config.payment_distributor, None);
+    assert!(!config.paused);
+
+    // An `initialized` event must have been emitted.
+    let events = env.events().all();
+    let event = events.last().unwrap();
+    let (_contract_addr, topics, data) = event;
+    assert_eq!(topics, (Symbol::new(&env, "initialized"),).into_val(&env));
+
+    // Data is (admin: Address, fee_bps: u32).
+    let (ev_admin, ev_fee_bps): (Address, u32) = data.try_into_val(&env).unwrap();
+    assert_eq!(ev_admin, admin);
+    assert_eq!(ev_fee_bps, 300);
+}
+
+/// Re-initialization with the same admin and same fee must fail with AlreadyInit.
+#[test]
+fn test_reinit_same_args_returns_already_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    // First call succeeds.
+    client.initialize(&admin, &300);
+
+    // Identical second call must fail.
+    let result = client.try_initialize(&admin, &300);
+    assert_eq!(result, Err(Ok(Error::AlreadyInit)));
+}
+
+/// Re-initialization with a different admin must still fail with AlreadyInit.
+/// This guards against an admin-change exploit via re-init.
+#[test]
+fn test_reinit_different_admin_returns_already_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+
+    // Attempt to take over the contract by re-initializing with a new admin.
+    let result = client.try_initialize(&attacker, &300);
+    assert_eq!(result, Err(Ok(Error::AlreadyInit)));
+
+    // The original admin must still be in config after the failed attempt.
+    let config = client.get_config();
+    assert_eq!(config.admin, admin);
+}
+
+/// Re-initialization with a different fee bps must fail with AlreadyInit.
+/// This guards against fee manipulation via re-init.
+#[test]
+fn test_reinit_different_fee_returns_already_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+
+    // Attempt to change the fee by re-initializing.
+    let result = client.try_initialize(&admin, &9999);
+    assert_eq!(result, Err(Ok(Error::AlreadyInit)));
+
+    // The original fee must still be intact.
+    let config = client.get_config();
+    assert_eq!(config.fee_bps, 300);
+}
+
+/// Re-initialization with fee_bps = 0 must fail with AlreadyInit (not succeed).
+#[test]
+fn test_reinit_zero_fee_returns_already_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &500);
+
+    let result = client.try_initialize(&admin, &0);
+    assert_eq!(result, Err(Ok(Error::AlreadyInit)));
+}
+
+/// Re-initialization with a fee that exceeds MAX_BPS must still return
+/// AlreadyInit (guard fires before fee validation).
+#[test]
+fn test_reinit_invalid_fee_returns_already_init_not_invalid_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+
+    // An already-initialized contract must reject re-init even if the fee
+    // would also be invalid on its own.
+    let result = client.try_initialize(&admin, &99999);
+    assert_eq!(result, Err(Ok(Error::AlreadyInit)));
+}
+
+/// Re-initialization must not overwrite existing escrow data or config.
+/// Creates an escrow after init, re-init attempt fails, escrow is still intact.
+#[test]
+fn test_reinit_does_not_corrupt_existing_escrow_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let payment_token = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INVGUARD");
+
+    client.initialize(&admin, &300);
+
+    // Create an escrow to represent live contract state.
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &9_999_999,
+        &payment_token,
+        &inv_token,
+        &test_commitment(&env, "reinit_guard_test"),
+    );
+
+    // Attempt re-init with a hostile admin.
+    let attacker = Address::generate(&env);
+    let reinit_result = client.try_initialize(&attacker, &0);
+    assert_eq!(reinit_result, Err(Ok(Error::AlreadyInit)));
+
+    // Existing escrow data must be unaffected.
+    let escrow_data = client.get_escrow(&invoice_id);
+    assert_eq!(escrow_data.seller, seller);
+    assert_eq!(escrow_data.face_value, 1000);
+    assert_eq!(escrow_data.status, EscrowStatus::Created);
+
+    // Config must still point to the original admin.
+    let config = client.get_config();
+    assert_eq!(config.admin, admin);
+    assert_eq!(config.fee_bps, 300);
+}
+
+/// Re-initialization does not emit a second `initialized` event.
+/// After a failed re-init attempt the event log should have exactly one
+/// `initialized` topic.
+#[test]
+fn test_reinit_does_not_emit_second_initialized_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+
+    // Count `initialized` events after successful first init.
+    let initialized_sym = Symbol::new(&env, "initialized");
+    let count_initialized = |env: &Env| -> usize {
+        env.events()
+            .all()
+            .iter()
+            .filter(|(_addr, topics, _data)| {
+                let tv: soroban_sdk::Vec<soroban_sdk::Val> = topics.clone();
+                if let Some(first) = tv.get(0) {
+                    if let Ok(sym) = first.try_into_val::<_, Symbol>(env) {
+                        return sym == Symbol::new(env, "initialized");
+                    }
+                }
+                false
+            })
+            .count()
+    };
+    assert_eq!(count_initialized(&env), 1);
+
+    // Failed re-init attempt.
+    let _ = client.try_initialize(&admin, &500);
+
+    // Still exactly one `initialized` event.
+    assert_eq!(count_initialized(&env), 1);
+    let _ = initialized_sym; // suppress unused warning
+}
+
+/// Initializing with fee_bps exactly at MAX_BPS (10 000) must succeed.
+#[test]
+fn test_initialize_max_fee_bps_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin, &10_000);
+
+    let config = client.get_config();
+    assert_eq!(config.fee_bps, 10_000);
+}
+
+/// Initializing with fee_bps one above MAX_BPS (10 001) must fail with
+/// InvalidFeeBps — this validates the fee guard fires before the guard succeeds.
+#[test]
+fn test_initialize_fee_above_max_bps_fails_with_invalid_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    let result = client.try_initialize(&admin, &10_001);
+    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+
+    // Contract must still be uninitialized: get_config() returns NotInit.
+    let config_result = client.try_get_config();
+    assert_eq!(config_result, Err(Ok(Error::NotInit)));
+}
+
+/// A fresh contract that has never been initialized returns NotInit for
+/// get_config(), confirming the storage key is absent until initialize is called.
+#[test]
+fn test_uninitialized_contract_has_no_config() {
+    let env = Env::default();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let result = client.try_get_config();
+    assert_eq!(result, Err(Ok(Error::NotInit)));
+}
