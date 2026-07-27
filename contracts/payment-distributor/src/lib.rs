@@ -176,6 +176,16 @@ impl PaymentDistributor {
         storage::get_admin(&env).ok_or(Error::NotInit)?;
         Ok(get_distribution_state(&env, &escrow_contract, &invoice_id))
     }
+
+    /// Transfer admin role to a new address. Only callable by the current admin.
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let current_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        current_admin.require_auth();
+
+        storage::set_admin(&env, &new_admin);
+        events::admin_transferred(&env, &current_admin, &new_admin);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

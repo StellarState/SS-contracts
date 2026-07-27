@@ -35,3 +35,9 @@ pub fn refund_distributed(
     );
     env.events().publish(topics, (funder, amount));
 }
+
+pub fn admin_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
+    let topics = (Symbol::new(env, "admin_transferred"),);
+    env.events()
+        .publish(topics, (old_admin.clone(), new_admin.clone()));
+}
