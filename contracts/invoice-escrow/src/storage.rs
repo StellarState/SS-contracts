@@ -2,7 +2,7 @@
 
 use soroban_sdk::Symbol;
 
-use crate::types::{Config, EscrowData, StorageKey};
+use crate::types::{Config, DisputeData, EscrowData, StorageKey};
 
 /// Load contract config from instance storage.
 pub fn get_config(env: &soroban_sdk::Env) -> Option<Config> {
@@ -59,4 +59,18 @@ pub fn set_funder_amount(
             .persistent()
             .set(&StorageKey::FunderAmount(inv_id, funder.clone()), &amount);
     }
+}
+
+/// Load dispute data for an invoice from persistent storage.
+pub fn get_dispute_data(env: &soroban_sdk::Env, inv_id: Symbol) -> Option<DisputeData> {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::DisputeData(inv_id))
+}
+
+/// Save dispute data for an invoice to persistent storage.
+pub fn set_dispute_data(env: &soroban_sdk::Env, inv_id: Symbol, data: &DisputeData) {
+    env.storage()
+        .persistent()
+        .set(&StorageKey::DisputeData(inv_id), data);
 }

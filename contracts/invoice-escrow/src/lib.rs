@@ -10,17 +10,20 @@ mod events;
 mod storage;
 mod types;
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, Bytes, Env, IntoVal, Symbol, Val};
 
 // EscrowStatus is re-exported publicly; Config and EscrowData are crate-private.
 pub use types::EscrowStatus;
-use types::{Config, EscrowData};
+use types::{Config, DisputeData, EscrowData};
 
 use errors::Error;
 
 const MAX_BPS: u32 = 10_000;
 const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
 const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
+
+/// Default dispute resolution timeout: 7 days in seconds.
+const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60; // 604_800
 
 #[contract]
 pub struct InvoiceEscrow;
@@ -30,6 +33,15 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
         return Err(Error::Paused);
     }
     Ok(())
+}
+
+/// Return the effective dispute timeout (falls back to DEFAULT when stored as 0).
+fn effective_dispute_timeout(config: &Config) -> u64 {
+    if config.dispute_timeout_secs == 0 {
+        DEFAULT_DISPUTE_TIMEOUT_SECS
+    } else {
+        config.dispute_timeout_secs
+    }
 }
 
 #[contractimpl]
@@ -47,6 +59,7 @@ impl InvoiceEscrow {
             fee_bps: platform_fee_bps,
             payment_distributor: None,
             paused: false,
+            dispute_timeout_secs: 0, // 0 → use DEFAULT_DISPUTE_TIMEOUT_SECS
         };
         storage::set_config(&env, &config);
         Ok(())
@@ -79,7 +92,8 @@ impl InvoiceEscrow {
         if due_date <= current_timestamp {
             return Err(Error::InvalidDueDate);
         }
-        storage::get_config(&env).ok_or(Error::NotInit)?;
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
@@ -278,12 +292,20 @@ impl InvoiceEscrow {
         let funder_opt = data.funder.clone();
 
         if let Some(distributor) = config.payment_distributor.as_ref() {
-            // Forward the full payment amount to the distributor contract.
-            // Fix: was `amount + amount` (double-counting); correct is investor_amount + platform_fee == amount.
+            // Forward both the payment amount (from payer) AND the collateral release
+            // (from purchase_price) to the distributor so it can pay seller, investor, and admin.
+            // The distributor receives: investor_amount + platform_fee (from payer) + amount (collateral)
+            // = amount + amount = 2 * amount for a fully-funded invoice at parity.
             let total_to_distributor = investor_amount
                 .checked_add(platform_fee)
+                .ok_or(Error::Overflow)?
+                .checked_add(amount)
                 .ok_or(Error::Overflow)?;
             token.transfer(&contract, distributor, &total_to_distributor);
+            let funder_val: Val = match funder_opt.clone() {
+                Some(addr) => addr.into_val(&env),
+                None => Val::from_void().into(),
+            };
             env.invoke_contract::<()>(
                 distributor,
                 &Symbol::new(&env, DISTRIBUTE_PAYMENT_FN),
@@ -293,10 +315,10 @@ impl InvoiceEscrow {
                     invoice_id.clone().into_val(&env),
                     soroban_sdk::vec![
                         &env,
-                        data.token.clone(),
-                        data.seller.clone(),
-                        funder_opt.clone().into_val(&env),
-                        config.admin.clone()
+                        data.token.clone().into_val(&env),
+                        data.seller.clone().into_val(&env),
+                        funder_val,
+                        config.admin.clone().into_val(&env)
                     ]
                     .into_val(&env),
                     soroban_sdk::vec![&env, data.paid_amt, amount, investor_amount, platform_fee]
@@ -374,6 +396,10 @@ impl InvoiceEscrow {
         if amount_to_refund > 0 {
             if let Some(distributor) = config.payment_distributor.as_ref() {
                 token.transfer(&contract, distributor, &amount_to_refund);
+                let refund_funder_val: Val = match funder_opt.clone() {
+                    Some(addr) => addr.into_val(&env),
+                    None => Val::from_void().into(),
+                };
                 env.invoke_contract::<()>(
                     distributor,
                     &Symbol::new(&env, DISTRIBUTE_REFUND_FN),
@@ -383,8 +409,8 @@ impl InvoiceEscrow {
                         invoice_id.clone().into_val(&env),
                         soroban_sdk::vec![
                             &env,
-                            data.token.clone(),
-                            funder_opt.clone().into_val(&env)
+                            data.token.clone().into_val(&env),
+                            refund_funder_val
                         ]
                         .into_val(&env),
                         soroban_sdk::vec![&env, amount_to_refund].into_val(&env),
@@ -420,6 +446,221 @@ impl InvoiceEscrow {
         events::escrow_refunded(&env, invoice_id, amount_to_refund);
         Ok(())
     }
+
+    // ─── Dispute Resolution ────────────────────────────────────────────────────
+
+    /// Raise a dispute on a funded (but not yet settled/refunded) escrow.
+    ///
+    /// Only the admin may raise a dispute.  The escrow must currently be in
+    /// the `Funded` status.  Once raised the status transitions to `Disputed`
+    /// and the dispute timestamp is recorded.
+    ///
+    /// * `invoice_id` – the invoice to dispute.
+    /// * `reason`     – a short byte-string reason (e.g. b"delivery_failure").
+    ///
+    /// Emits `dispute_raised`.
+    pub fn raise_dispute(
+        env: Env,
+        invoice_id: Symbol,
+        reason: Bytes,
+    ) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
+        // Only the admin is authorised to raise a dispute.
+        config.admin.require_auth();
+
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+
+        // Can only dispute a funded escrow.
+        if data.status == EscrowStatus::Disputed {
+            return Err(Error::AlreadyDisputed);
+        }
+        if data.status != EscrowStatus::Funded {
+            return Err(Error::EscrowNotFunded);
+        }
+
+        let raised_at = env.ledger().timestamp();
+
+        // Persist the dispute data.
+        let dispute = DisputeData {
+            raiser: config.admin.clone(),
+            reason: reason.clone(),
+            raised_at,
+            resolved: false,
+        };
+        storage::set_dispute_data(&env, invoice_id.clone(), &dispute);
+
+        // Transition escrow to Disputed.
+        data.status = EscrowStatus::Disputed;
+        storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        events::dispute_raised(&env, invoice_id, &config.admin, &reason, raised_at);
+        Ok(())
+    }
+
+    /// Resolve a disputed escrow.
+    ///
+    /// There are two resolution paths:
+    ///
+    /// **Admin resolution (within timeout)**
+    /// The admin may call before the dispute timeout has elapsed and specify
+    /// `favour` as either `"seller"` or `"buyer"`:
+    /// - `"seller"` → the held `purchase_price` funds are released to the
+    ///   seller (the delivery was accepted).
+    /// - `"buyer"` → the held `purchase_price` funds are refunded to the
+    ///   funder/investor (the delivery was rejected).
+    ///
+    /// **Default fallback (after timeout)**
+    /// Anyone may call once the dispute timeout has elapsed.  The default
+    /// fallback always refunds the buyer/funder — protecting investors from
+    /// a dispute that is never resolved.  In this path `favour` is ignored.
+    ///
+    /// Emits `dispute_resolved`.
+    pub fn resolve_dispute(
+        env: Env,
+        invoice_id: Symbol,
+        favour: Symbol,
+    ) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
+
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+
+        // Check if dispute data exists at all — if so, check if already resolved
+        // before checking the current escrow status.
+        if let Some(ref existing_dispute) = storage::get_dispute_data(&env, invoice_id.clone()) {
+            if existing_dispute.resolved {
+                return Err(Error::DisputeAlreadyResolved);
+            }
+        }
+
+        // Must be in Disputed status.
+        if data.status != EscrowStatus::Disputed {
+            return Err(Error::NotDisputed);
+        }
+
+        let dispute = storage::get_dispute_data(&env, invoice_id.clone())
+            .ok_or(Error::NotDisputed)?;
+
+        let now = env.ledger().timestamp();
+        let timeout = effective_dispute_timeout(&config);
+        let timeout_elapsed = now >= dispute.raised_at.saturating_add(timeout);
+
+        let favour_seller = Symbol::new(&env, "seller");
+        let favour_buyer = Symbol::new(&env, "buyer");
+
+        // Determine the actual resolution direction and whether auth is needed.
+        let (resolve_to_seller, is_fallback) = if timeout_elapsed {
+            // Default fallback: no auth required, always refund buyer.
+            (false, true)
+        } else {
+            // Admin must explicitly resolve before timeout.
+            config.admin.require_auth();
+            if favour == favour_seller {
+                (true, false)
+            } else if favour == favour_buyer {
+                (false, false)
+            } else {
+                return Err(Error::InvalidDisputeFavour);
+            }
+        };
+
+        // Amount held in escrow for this invoice = purchase_price - paid_amt.
+        let amount_held = data
+            .purchase_price
+            .checked_sub(data.paid_amt)
+            .ok_or(Error::Overflow)?;
+
+        let token = token::Client::new(&env, &data.token);
+        let contract = env.current_contract_address();
+
+        // Mark dispute as resolved before transfers (reentrancy guard pattern).
+        let mut updated_dispute = dispute.clone();
+        updated_dispute.resolved = true;
+        storage::set_dispute_data(&env, invoice_id.clone(), &updated_dispute);
+
+        // Update escrow status.
+        if resolve_to_seller {
+            data.status = EscrowStatus::Settled;
+        } else {
+            data.status = EscrowStatus::Refunded;
+        }
+        storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        // Execute transfers.
+        let actual_favour: Symbol;
+        if resolve_to_seller {
+            // Seller wins: release the held purchase_price to the seller.
+            actual_favour = favour_seller;
+            if amount_held > 0 {
+                token.transfer(&contract, &data.seller, &amount_held);
+            }
+            // Unlock invoice tokens on settlement.
+            env.invoke_contract::<()>(
+                &data.inv_token,
+                &Symbol::new(&env, "set_transfer_locked"),
+                soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+            );
+        } else {
+            // Buyer wins (or default fallback): refund the funder.
+            actual_favour = favour_buyer;
+            if amount_held > 0 {
+                if let Some(ref funder) = data.funder {
+                    // Pro-rata refund (MVP: single funder gets everything).
+                    if data.funded_amt > 0 {
+                        let funder_amt =
+                            storage::get_funder_amount(&env, invoice_id.clone(), funder);
+                        let pro_rata_refund = amount_held
+                            .checked_mul(funder_amt)
+                            .ok_or(Error::Overflow)?
+                            .checked_div(data.funded_amt)
+                            .ok_or(Error::Overflow)?;
+                        if pro_rata_refund > 0 {
+                            token.transfer(&contract, funder, &pro_rata_refund);
+                        }
+                    }
+                }
+            }
+            // Unlock invoice tokens on refund.
+            env.invoke_contract::<()>(
+                &data.inv_token,
+                &Symbol::new(&env, "set_transfer_locked"),
+                soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+            );
+        }
+
+        let resolver = if is_fallback {
+            // The caller is the resolver for the fallback path; use env.current_contract_address()
+            // as a neutral sentinel — no single external caller owns this.
+            env.current_contract_address()
+        } else {
+            config.admin.clone()
+        };
+
+        events::dispute_resolved(
+            &env,
+            invoice_id,
+            &resolver,
+            actual_favour,
+            amount_held,
+            is_fallback,
+        );
+        Ok(())
+    }
+
+    /// Set the dispute resolution timeout (seconds). Admin only.
+    /// Pass 0 to revert to the default (7 days / 604_800 seconds).
+    pub fn set_dispute_timeout(env: Env, timeout_secs: u64) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        config.admin.clone().require_auth();
+        config.dispute_timeout_secs = timeout_secs;
+        storage::set_config(&env, &config);
+        Ok(())
+    }
+
+    // ─── Admin / config operations ─────────────────────────────────────────────
 
     /// Update platform fee (basis points). Admin only.
     pub fn update_platform_fee_bps(env: Env, new_fee_bps: u32) -> Result<(), Error> {
@@ -460,6 +701,8 @@ impl InvoiceEscrow {
         Ok(())
     }
 
+    // ─── View functions ────────────────────────────────────────────────────────
+
     /// View: return escrow data for an invoice, or None if not found.
     pub fn get_escrow(env: Env, invoice_id: Symbol) -> Result<EscrowData, Error> {
         storage::get_escrow(&env, invoice_id).ok_or(Error::EscrowNotFound)
@@ -480,6 +723,11 @@ impl InvoiceEscrow {
     pub fn paused(env: Env) -> Result<bool, Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         Ok(config.paused)
+    }
+
+    /// View: return dispute data for an invoice, or error if none exists.
+    pub fn get_dispute_data(env: Env, invoice_id: Symbol) -> Result<DisputeData, Error> {
+        storage::get_dispute_data(&env, invoice_id).ok_or(Error::NotDisputed)
     }
 }
 

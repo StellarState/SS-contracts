@@ -270,11 +270,33 @@
                             },
                             {
                               "key": {
+                                "symbol": "dispute_timeout_secs"
+                              },
+                              "val": {
+                                "u64": 0
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "fee_bps"
                               },
                               "val": {
                                 "u32": 300
                               }
+                            },
+                            {
+                              "key": {
+                                "symbol": "paused"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "payment_distributor"
+                              },
+                              "val": "void"
                             }
                           ]
                         }

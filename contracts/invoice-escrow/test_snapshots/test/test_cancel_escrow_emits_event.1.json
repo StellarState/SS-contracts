@@ -372,6 +372,14 @@
                             },
                             {
                               "key": {
+                                "symbol": "dispute_timeout_secs"
+                              },
+                              "val": {
+                                "u64": 0
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "fee_bps"
                               },
                               "val": {

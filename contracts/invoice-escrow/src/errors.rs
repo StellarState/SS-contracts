@@ -37,7 +37,17 @@ pub enum Error {
     /// Contract is paused and the requested operation is temporarily disabled.
     Paused = 15,
     /// Payer is not the authorized debtor for this invoice.
-    InvalidPayer = 15,
+    InvalidPayer = 16,
     /// Due date is invalid (e.g., in the past or zero).
-    InvalidDueDate = 16,
+    InvalidDueDate = 17,
+    /// Escrow is already in a disputed state.
+    AlreadyDisputed = 18,
+    /// Escrow is not in a disputed state; cannot resolve.
+    NotDisputed = 19,
+    /// The dispute timeout window has not yet elapsed.
+    DisputeNotExpired = 20,
+    /// The dispute has already been resolved.
+    DisputeAlreadyResolved = 21,
+    /// Resolve favour is invalid (must be "seller" or "buyer").
+    InvalidDisputeFavour = 22,
 }

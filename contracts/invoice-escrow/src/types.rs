@@ -13,6 +13,8 @@ pub enum StorageKey {
     Escrow(soroban_sdk::Symbol),
     /// Persistent: funder amounts by (invoice_id, funder_address).
     FunderAmount(soroban_sdk::Symbol, soroban_sdk::Address),
+    /// Persistent: dispute data by invoice id.
+    DisputeData(soroban_sdk::Symbol),
 }
 
 /// Global contract configuration.
@@ -27,6 +29,10 @@ pub struct Config {
     pub payment_distributor: Option<soroban_sdk::Address>,
     /// Emergency pause flag for lifecycle-changing operations.
     pub paused: bool,
+    /// Dispute resolution timeout in seconds. After this many seconds a dispute
+    /// may be resolved via the default fallback (funds returned to buyer/funder).
+    /// Defaults to 7 days (604_800 seconds) when zero.
+    pub dispute_timeout_secs: u64,
 }
 
 /// Lifecycle status of an escrow.
@@ -44,6 +50,22 @@ pub enum EscrowStatus {
     Refunded = 3,
     /// Cancelled by seller while still in Created state (never funded).
     Cancelled = 4,
+    /// A dispute has been raised; awaiting resolution.
+    Disputed = 5,
+}
+
+/// Recorded data for an active or resolved dispute.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeData {
+    /// The party who raised the dispute (admin or authorised caller).
+    pub raiser: soroban_sdk::Address,
+    /// Short human-readable reason (≤32 bytes recommended).
+    pub reason: soroban_sdk::Bytes,
+    /// Ledger timestamp at which the dispute was raised.
+    pub raised_at: u64,
+    /// True once resolve_dispute has been called.
+    pub resolved: bool,
 }
 
 /// Per-invoice escrow data stored in persistent storage.

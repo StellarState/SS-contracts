@@ -1,6 +1,6 @@
 //! Event definitions for state changes (escrow_created, escrow_funded, payment_settled).
 
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Bytes, Env, Symbol};
 
 /// Publish escrow_created event.
 pub fn escrow_created(
@@ -100,5 +100,38 @@ pub fn paused_updated(env: &Env, old_paused: bool, new_paused: bool) {
     env.events().publish(
         (Symbol::new(env, "paused_updated"),),
         (old_paused, new_paused),
+    );
+}
+
+/// Publish dispute_raised event.
+/// Data: (invoice_id, raiser, reason, raised_at)
+pub fn dispute_raised(
+    env: &Env,
+    inv_id: Symbol,
+    raiser: &Address,
+    reason: &Bytes,
+    raised_at: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_raised"),),
+        (inv_id, raiser, reason, raised_at),
+    );
+}
+
+/// Publish dispute_resolved event.
+/// Data: (invoice_id, resolved_by, favour, amount_to_winner, timeout_fallback)
+/// `favour` is "seller" or "buyer" as a Symbol.
+/// `timeout_fallback` is true when the default fallback path was taken.
+pub fn dispute_resolved(
+    env: &Env,
+    inv_id: Symbol,
+    resolved_by: &Address,
+    favour: Symbol,
+    amount: i128,
+    timeout_fallback: bool,
+) {
+    env.events().publish(
+        (Symbol::new(env, "dispute_resolved"),),
+        (inv_id, resolved_by, favour, amount, timeout_fallback),
     );
 }
