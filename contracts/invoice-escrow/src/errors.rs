@@ -37,7 +37,13 @@ pub enum Error {
     /// Contract is paused and the requested operation is temporarily disabled.
     Paused = 15,
     /// Payer is not the authorized debtor for this invoice.
-    InvalidPayer = 15,
+    InvalidPayer = 16,
     /// Due date is invalid (e.g., in the past or zero).
-    InvalidDueDate = 16,
+    InvalidDueDate = 17,
+    /// Caller is not on the buyer whitelist and cannot fund escrows.
+    NotWhitelisted = 18,
+    /// No pending admin transfer exists; accept_admin called with nothing proposed.
+    NoPendingAdmin = 19,
+    /// Proposed new admin is the same as the current admin (self-transfer not allowed).
+    SelfTransfer = 20,
 }

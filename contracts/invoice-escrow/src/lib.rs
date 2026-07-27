@@ -3,6 +3,7 @@
 //! Handles escrow creation, funding by investors, payment settlement,
 //! and refunds when invoices are not paid by due date.
 
+#![no_std]
 #![allow(clippy::too_many_arguments)]
 
 mod errors;
@@ -47,9 +48,44 @@ impl InvoiceEscrow {
             fee_bps: platform_fee_bps,
             payment_distributor: None,
             paused: false,
+            whitelist_enabled: false,
+            pending_admin: None,
         };
         storage::set_config(&env, &config);
         Ok(())
+    }
+
+    /// Admin-only: enable/disable buyer whitelist enforcement on `fund_escrow`.
+    pub fn set_whitelist_enabled(env: Env, admin: Address, enabled: bool) -> Result<(), Error> {
+        admin.require_auth();
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        config.whitelist_enabled = enabled;
+        storage::set_config(&env, &config);
+        Ok(())
+    }
+
+    /// Admin-only: add or remove a buyer from the whitelist.
+    pub fn set_buyer_whitelisted(
+        env: Env,
+        admin: Address,
+        buyer: Address,
+        allowed: bool,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        storage::set_whitelisted(&env, &buyer, allowed);
+        Ok(())
+    }
+
+    /// View: is `buyer` whitelisted to fund escrows.
+    pub fn is_buyer_whitelisted(env: Env, buyer: Address) -> bool {
+        storage::is_whitelisted(&env, &buyer)
     }
 
     /// Create an escrow for an invoice. Caller (seller) must be authenticated.
@@ -79,7 +115,8 @@ impl InvoiceEscrow {
         if due_date <= current_timestamp {
             return Err(Error::InvalidDueDate);
         }
-        storage::get_config(&env).ok_or(Error::NotInit)?;
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
@@ -101,7 +138,7 @@ impl InvoiceEscrow {
         storage::set_escrow(&env, invoice_id.clone(), &data);
         events::escrow_created(
             &env,
-            invoice_id,
+            invoice_id.clone(),
             &seller,
             &debtor,
             face_value,
@@ -110,6 +147,12 @@ impl InvoiceEscrow {
             &payment_token,
             &invoice_token,
             &commitment,
+        );
+        events::escrow_status_changed(
+            &env,
+            invoice_id,
+            EscrowStatus::Created,
+            current_timestamp,
         );
         Ok(())
     }
@@ -131,7 +174,13 @@ impl InvoiceEscrow {
         }
         data.status = EscrowStatus::Cancelled;
         storage::set_escrow(&env, invoice_id.clone(), &data);
-        events::escrow_cancelled(&env, invoice_id, &seller);
+        events::escrow_cancelled(&env, invoice_id.clone(), &seller);
+        events::escrow_status_changed(
+            &env,
+            invoice_id,
+            EscrowStatus::Cancelled,
+            env.ledger().timestamp(),
+        );
         Ok(())
     }
 
@@ -150,6 +199,9 @@ impl InvoiceEscrow {
         }
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
+        if config.whitelist_enabled && !storage::is_whitelisted(&env, &buyer) {
+            return Err(Error::NotWhitelisted);
+        }
 
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
@@ -204,12 +256,20 @@ impl InvoiceEscrow {
         storage::set_escrow(&env, invoice_id.clone(), &data);
         events::escrow_funded(
             &env,
-            invoice_id,
+            invoice_id.clone(),
             &buyer,
             amount,
             data.funded_amt,
             data.purchase_price,
         );
+        if data.status == EscrowStatus::Funded {
+            events::escrow_status_changed(
+                &env,
+                invoice_id,
+                EscrowStatus::Funded,
+                env.ledger().timestamp(),
+            );
+        }
         Ok(())
     }
 
@@ -278,11 +338,10 @@ impl InvoiceEscrow {
         let funder_opt = data.funder.clone();
 
         if let Some(distributor) = config.payment_distributor.as_ref() {
-            // Forward the full payment amount to the distributor contract.
-            // Fix: was `amount + amount` (double-counting); correct is investor_amount + platform_fee == amount.
-            let total_to_distributor = investor_amount
-                .checked_add(platform_fee)
-                .ok_or(Error::Overflow)?;
+            // The distributor must pay seller_amount (== amount) plus investor_amount + platform_fee
+            // (== amount), mirroring the direct path below which releases the payer's `amount` to the
+            // seller in addition to paying the investor/admin out of escrow's held funding.
+            let total_to_distributor = amount.checked_add(amount).ok_or(Error::Overflow)?;
             token.transfer(&contract, distributor, &total_to_distributor);
             env.invoke_contract::<()>(
                 distributor,
@@ -293,10 +352,13 @@ impl InvoiceEscrow {
                     invoice_id.clone().into_val(&env),
                     soroban_sdk::vec![
                         &env,
-                        data.token.clone(),
-                        data.seller.clone(),
-                        funder_opt.clone().into_val(&env),
-                        config.admin.clone()
+                        <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&data.token, &env),
+                        <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&data.seller, &env),
+                        <Option<Address> as IntoVal<Env, soroban_sdk::Val>>::into_val(
+                            &funder_opt,
+                            &env,
+                        ),
+                        <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&config.admin, &env)
                     ]
                     .into_val(&env),
                     soroban_sdk::vec![&env, data.paid_amt, amount, investor_amount, platform_fee]
@@ -311,8 +373,7 @@ impl InvoiceEscrow {
             // 3. Pro-rata investor distribution
             if let Some(funder) = &funder_opt {
                 if data.funded_amt > 0 && investor_amount > 0 {
-                    let funder_amt =
-                        storage::get_funder_amount(&env, invoice_id.clone(), funder);
+                    let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), funder);
                     let pro_rata_share = investor_amount
                         .checked_mul(funder_amt)
                         .ok_or(Error::Overflow)?
@@ -337,7 +398,15 @@ impl InvoiceEscrow {
             );
         }
 
-        events::payment_settled(&env, invoice_id, amount, platform_fee, investor_amount);
+        events::payment_settled(&env, invoice_id.clone(), amount, platform_fee, investor_amount);
+        if data.status == EscrowStatus::Settled {
+            events::escrow_status_changed(
+                &env,
+                invoice_id,
+                EscrowStatus::Settled,
+                env.ledger().timestamp(),
+            );
+        }
         Ok(())
     }
 
@@ -383,8 +452,14 @@ impl InvoiceEscrow {
                         invoice_id.clone().into_val(&env),
                         soroban_sdk::vec![
                             &env,
-                            data.token.clone(),
-                            funder_opt.clone().into_val(&env)
+                            <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(
+                                &data.token,
+                                &env
+                            ),
+                            <Option<Address> as IntoVal<Env, soroban_sdk::Val>>::into_val(
+                                &funder_opt,
+                                &env,
+                            )
                         ]
                         .into_val(&env),
                         soroban_sdk::vec![&env, amount_to_refund].into_val(&env),
@@ -417,7 +492,13 @@ impl InvoiceEscrow {
             soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
         );
 
-        events::escrow_refunded(&env, invoice_id, amount_to_refund);
+        events::escrow_refunded(&env, invoice_id.clone(), amount_to_refund);
+        events::escrow_status_changed(
+            &env,
+            invoice_id,
+            EscrowStatus::Refunded,
+            env.ledger().timestamp(),
+        );
         Ok(())
     }
 
@@ -457,6 +538,61 @@ impl InvoiceEscrow {
         config.paused = paused;
         storage::set_config(&env, &config);
         events::paused_updated(&env, old_paused, paused);
+        Ok(())
+    }
+
+    /// Propose a new admin for a two-step admin authority transfer. Current admin only.
+    ///
+    /// The proposed new admin must call `accept_admin` to complete the transfer.
+    /// Proposing the same address as the current admin is rejected with `SelfTransfer`.
+    /// Any previous pending proposal is overwritten by the new one.
+    ///
+    /// Emits `admin_proposed` with `(current_admin, proposed_admin)`.
+    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let current_admin = config.admin.clone();
+        current_admin.require_auth();
+        if new_admin == current_admin {
+            return Err(Error::SelfTransfer);
+        }
+        config.pending_admin = Some(new_admin.clone());
+        storage::set_config(&env, &config);
+        events::admin_transfer_proposed(&env, &current_admin, &new_admin);
+        Ok(())
+    }
+
+    /// Accept an in-flight admin transfer. Must be called by the address that was proposed.
+    ///
+    /// On success, `config.admin` is updated to the caller and `pending_admin` is cleared.
+    /// Fails with `NoPendingAdmin` if no proposal exists, or `Unauthorized` if the caller
+    /// is not the pending admin.
+    ///
+    /// Emits `admin_accepted` with `(old_admin, new_admin)`.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let pending = config.pending_admin.clone().ok_or(Error::NoPendingAdmin)?;
+        pending.require_auth();
+        let old_admin = config.admin.clone();
+        config.admin = pending.clone();
+        config.pending_admin = None;
+        storage::set_config(&env, &config);
+        events::admin_transfer_accepted(&env, &old_admin, &pending);
+        Ok(())
+    }
+
+    /// Cancel an in-flight admin transfer proposal. Current admin only.
+    ///
+    /// Clears `pending_admin`. Fails with `NoPendingAdmin` if there is nothing to cancel.
+    ///
+    /// Emits `admin_cancelled` with `(current_admin, cancelled_pending_admin)`.
+    pub fn cancel_admin_transfer(env: Env) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let current_admin = config.admin.clone();
+        current_admin.require_auth();
+        let pending = config.pending_admin.clone().ok_or(Error::NoPendingAdmin)?;
+        config.pending_admin = None;
+        storage::set_config(&env, &config);
+        events::admin_transfer_cancelled(&env, &current_admin, &pending);
         Ok(())
     }
 

@@ -2,6 +2,19 @@
 
 use soroban_sdk::{Address, Env, Symbol};
 
+use crate::types::EscrowStatus;
+
+/// Publish a lifecycle transition event carrying the new status and ledger
+/// timestamp, in addition to the narrower per-action events below. Lets
+/// off-chain indexers reconstruct full escrow lifecycle history/metadata
+/// from a single event stream instead of correlating five separate events.
+pub fn escrow_status_changed(env: &Env, inv_id: Symbol, status: EscrowStatus, timestamp: u64) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_status_changed"),),
+        (inv_id, status as u32, timestamp),
+    );
+}
+
 /// Publish escrow_created event.
 pub fn escrow_created(
     env: &Env,
@@ -100,5 +113,39 @@ pub fn paused_updated(env: &Env, old_paused: bool, new_paused: bool) {
     env.events().publish(
         (Symbol::new(env, "paused_updated"),),
         (old_paused, new_paused),
+    );
+}
+
+/// Publish admin_transfer_proposed event when the current admin nominates a new admin.
+/// Topics: ("admin_transfer_proposed",)
+/// Data: (current_admin, proposed_admin)
+pub fn admin_transfer_proposed(env: &Env, current_admin: &Address, proposed_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "admin_proposed"),),
+        (current_admin, proposed_admin),
+    );
+}
+
+/// Publish admin_transfer_accepted event when the pending admin accepts and becomes admin.
+/// Topics: ("admin_accepted",)
+/// Data: (old_admin, new_admin)
+pub fn admin_transfer_accepted(env: &Env, old_admin: &Address, new_admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "admin_accepted"),),
+        (old_admin, new_admin),
+    );
+}
+
+/// Publish admin_transfer_cancelled event when the current admin cancels an in-flight proposal.
+/// Topics: ("admin_cancelled",)
+/// Data: (current_admin, cancelled_pending_admin)
+pub fn admin_transfer_cancelled(
+    env: &Env,
+    current_admin: &Address,
+    cancelled_pending: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "admin_cancelled"),),
+        (current_admin, cancelled_pending),
     );
 }

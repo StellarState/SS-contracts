@@ -13,6 +13,8 @@ pub enum StorageKey {
     Escrow(soroban_sdk::Symbol),
     /// Persistent: funder amounts by (invoice_id, funder_address).
     FunderAmount(soroban_sdk::Symbol, soroban_sdk::Address),
+    /// Persistent: whether a given address is whitelisted to fund (buy) escrows.
+    BuyerWhitelist(soroban_sdk::Address),
 }
 
 /// Global contract configuration.
@@ -27,6 +29,13 @@ pub struct Config {
     pub payment_distributor: Option<soroban_sdk::Address>,
     /// Emergency pause flag for lifecycle-changing operations.
     pub paused: bool,
+    /// When true, `fund_escrow` requires the buyer to be on the whitelist.
+    /// Defaults to false (opt-in) so existing deployments/tests are unaffected
+    /// until an admin explicitly enables it.
+    pub whitelist_enabled: bool,
+    /// Pending new admin address proposed during a two-step admin transfer.
+    /// Set by `propose_admin`; cleared by `accept_admin` or `cancel_admin_transfer`.
+    pub pending_admin: Option<soroban_sdk::Address>,
 }
 
 /// Lifecycle status of an escrow.
