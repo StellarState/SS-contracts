@@ -98,3 +98,25 @@ pub fn get_allowance_data(
         .persistent()
         .get(&StorageKey::Allowance(from.clone(), spender.clone()))
 }
+
+/// Check if an account is frozen.
+pub fn is_frozen(env: &soroban_sdk::Env, addr: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::Frozen(addr.clone()))
+        .unwrap_or(false)
+}
+
+/// Freeze an account.
+pub fn freeze_account(env: &soroban_sdk::Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .set(&StorageKey::Frozen(addr.clone()), &true);
+}
+
+/// Unfreeze an account.
+pub fn unfreeze_account(env: &soroban_sdk::Env, addr: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&StorageKey::Frozen(addr.clone()));
+}

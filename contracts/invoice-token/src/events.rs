@@ -56,3 +56,15 @@ pub fn paused_updated_event(env: &Env, old_value: bool, new_value: bool) {
         (old_value, new_value),
     );
 }
+
+/// Emit account frozen event.
+pub fn account_frozen_event(env: &Env, account: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "account_frozen"),), account);
+}
+
+/// Emit account unfrozen event.
+pub fn account_unfrozen_event(env: &Env, account: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "account_unfrozen"),), account);
+}

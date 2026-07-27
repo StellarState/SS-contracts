@@ -15,6 +15,8 @@ pub enum StorageKey {
     Balance(soroban_sdk::Address),
     /// Persistent: allowance (from, spender) -> AllowanceData.
     Allowance(soroban_sdk::Address, soroban_sdk::Address),
+    /// Persistent: frozen account status.
+    Frozen(soroban_sdk::Address),
 }
 
 /// Token metadata and admin config (instance storage).

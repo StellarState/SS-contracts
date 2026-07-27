@@ -94,6 +94,10 @@ impl InvoiceToken {
         if meta.transfer_locked && from != meta.admin {
             return Err(Error::TransferLocked);
         }
+        // Check if from account is frozen
+        if storage::is_frozen(&env, &from) {
+            return Err(Error::AccountFrozen);
+        }
         let from_balance = storage::get_balance(&env, &from);
         if from_balance < amount {
             return Err(Error::InsufficientBalance);
@@ -148,6 +152,10 @@ impl InvoiceToken {
         }
         if meta.transfer_locked && from != meta.admin {
             return Err(Error::TransferLocked);
+        }
+        // Check if from account is frozen
+        if storage::is_frozen(&env, &from) {
+            return Err(Error::AccountFrozen);
         }
         let ledger = env.ledger().sequence();
         let allow = storage::get_allowance_data(&env, &from, &spender)
@@ -323,6 +331,53 @@ impl InvoiceToken {
     pub fn paused(env: Env) -> Result<bool, Error> {
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         Ok(meta.paused)
+    }
+
+    // ---------- Account Freeze/Unfreeze ----------
+
+    /// Freeze an account, preventing it from transferring tokens. Admin only.
+    pub fn freeze_account(env: Env, account: Address) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&account)?;
+        
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        meta.admin.require_auth();
+        
+        // Check if account is already frozen
+        if storage::is_frozen(&env, &account) {
+            return Err(Error::AccountFrozen);
+        }
+        
+        storage::freeze_account(&env, &account);
+        events::account_frozen_event(&env, &account);
+        Ok(())
+    }
+
+    /// Unfreeze an account, allowing it to transfer tokens again. Admin only.
+    pub fn unfreeze_account(env: Env, account: Address) -> Result<(), Error> {
+        // Validate address parameters
+        Self::validate_address(&account)?;
+        
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        meta.admin.require_auth();
+        
+        // Check if account is not frozen
+        if !storage::is_frozen(&env, &account) {
+            return Err(Error::AccountNotFrozen);
+        }
+        
+        storage::unfreeze_account(&env, &account);
+        events::account_unfrozen_event(&env, &account);
+        Ok(())
+    }
+
+    /// Check if an account is frozen.
+    pub fn is_frozen(env: Env, account: Address) -> Result<bool, Error> {
+        // Validate address parameters
+        Self::validate_address(&account)?;
+        
+        storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        Ok(storage::is_frozen(&env, &account))
     }
 }
 

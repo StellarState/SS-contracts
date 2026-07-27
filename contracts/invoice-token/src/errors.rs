@@ -29,4 +29,10 @@ pub enum Error {
     InvalidExpiration = 10,
     /// Contract is paused and the requested operation is temporarily disabled.
     Paused = 11,
+    /// Address parameter is zero (null).
+    InvalidAddress = 12,
+    /// Account is frozen and cannot perform transfers.
+    AccountFrozen = 13,
+    /// Account is not frozen and cannot be unfrozen.
+    AccountNotFrozen = 14,
 }
