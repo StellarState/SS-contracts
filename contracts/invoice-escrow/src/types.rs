@@ -13,6 +13,10 @@ pub enum StorageKey {
     Escrow(soroban_sdk::Symbol),
     /// Persistent: funder amounts by (invoice_id, funder_address).
     FunderAmount(soroban_sdk::Symbol, soroban_sdk::Address),
+    /// Persistent: total number of escrows created.
+    EscrowCount,
+    /// Persistent: escrow invoice id by index (u32).
+    EscrowIdByIndex(u32),
 }
 
 /// Global contract configuration.

@@ -40,4 +40,8 @@ pub enum Error {
     InvalidPayer = 15,
     /// Due date is invalid (e.g., in the past or zero).
     InvalidDueDate = 16,
+    /// Limit is zero or invalid for batch query.
+    InvalidLimit = 17,
+    /// Limit exceeds the maximum allowed page size.
+    LimitExceeded = 18,
 }

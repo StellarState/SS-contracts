@@ -2229,3 +2229,89 @@ fn test_create_escrow_due_date_in_future_accepted() {
     assert_eq!(escrow_data.due_dt, future_due_date);
     assert_eq!(escrow_data.status, EscrowStatus::Created);
 }
+
+#[test]
+fn test_get_escrows_empty() {
+    let env = Env::default();
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    
+    let escrows = escrow_client.get_escrows(&0, &10);
+    assert_eq!(escrows.len(), 0);
+}
+
+#[test]
+fn test_get_escrows_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    
+    let admin = Address::generate(&env);
+    let payment_token = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    env.ledger().with_mut(|li| li.timestamp = 1000000);
+    let due_date = env.ledger().timestamp() + 1000000;
+    
+    let ids = ["INV0", "INV1", "INV2", "INV3", "INV4"];
+    for id_str in ids.iter() {
+        let invoice_id = Symbol::new(&env, id_str);
+        escrow_client.create_escrow(
+            &invoice_id,
+            &seller,
+            &seller,
+            &1000,
+            &1000,
+            &due_date,
+            &payment_token,
+            &inv_token,
+            &test_commitment(&env, "test_data"),
+        );
+    }
+    
+    let page1 = escrow_client.get_escrows(&0, &3);
+    assert_eq!(page1.len(), 3);
+    assert_eq!(page1.get(0).unwrap().inv_id, Symbol::new(&env, "INV0"));
+    assert_eq!(page1.get(2).unwrap().inv_id, Symbol::new(&env, "INV2"));
+    
+    let page2 = escrow_client.get_escrows(&3, &3);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap().inv_id, Symbol::new(&env, "INV3"));
+    assert_eq!(page2.get(1).unwrap().inv_id, Symbol::new(&env, "INV4"));
+    
+    let page3 = escrow_client.get_escrows(&10, &3);
+    assert_eq!(page3.len(), 0);
+    
+    let page4 = escrow_client.get_escrows(&0, &5);
+    assert_eq!(page4.len(), 5);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, 17)")]
+fn test_get_escrows_invalid_limit() {
+    let env = Env::default();
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    escrow_client.get_escrows(&0, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, 18)")]
+fn test_get_escrows_limit_exceeded() {
+    let env = Env::default();
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    escrow_client.get_escrows(&0, &101);
+}
+
+#[test]
+fn test_get_escrows_max_page_size() {
+    let env = Env::default();
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let page = escrow_client.get_escrows(&0, &100);
+    assert_eq!(page.len(), 0);
+}

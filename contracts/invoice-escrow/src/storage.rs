@@ -60,3 +60,30 @@ pub fn set_funder_amount(
             .set(&StorageKey::FunderAmount(inv_id, funder.clone()), &amount);
     }
 }
+
+/// Get the total number of escrows.
+pub fn get_escrow_count(env: &soroban_sdk::Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::EscrowCount)
+        .unwrap_or(0)
+}
+
+/// Set the total number of escrows.
+pub fn set_escrow_count(env: &soroban_sdk::Env, count: u32) {
+    env.storage().persistent().set(&StorageKey::EscrowCount, &count);
+}
+
+/// Get an escrow ID by its index (0-based).
+pub fn get_escrow_id_by_index(env: &soroban_sdk::Env, index: u32) -> Option<Symbol> {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::EscrowIdByIndex(index))
+}
+
+/// Set an escrow ID at the given index.
+pub fn set_escrow_id_by_index(env: &soroban_sdk::Env, index: u32, inv_id: Symbol) {
+    env.storage()
+        .persistent()
+        .set(&StorageKey::EscrowIdByIndex(index), &inv_id);
+}

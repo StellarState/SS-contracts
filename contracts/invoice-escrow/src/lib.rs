@@ -21,6 +21,7 @@ use errors::Error;
 const MAX_BPS: u32 = 10_000;
 const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
 const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
+const MAX_PAGE_SIZE: u32 = 100;
 
 #[contract]
 pub struct InvoiceEscrow;
@@ -99,6 +100,11 @@ impl InvoiceEscrow {
             commitment: commitment.clone(),
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        let index = storage::get_escrow_count(&env);
+        storage::set_escrow_id_by_index(&env, index, invoice_id.clone());
+        storage::set_escrow_count(&env, index.checked_add(1).ok_or(Error::Overflow)?);
+
         events::escrow_created(
             &env,
             invoice_id,
@@ -480,6 +486,35 @@ impl InvoiceEscrow {
     pub fn paused(env: Env) -> Result<bool, Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         Ok(config.paused)
+    }
+
+    /// View: return a batch of escrows with pagination.
+    /// Rejects limit = 0 and limits > MAX_PAGE_SIZE.
+    pub fn get_escrows(env: Env, start: u32, limit: u32) -> Result<soroban_sdk::Vec<EscrowData>, Error> {
+        if limit == 0 {
+            return Err(Error::InvalidLimit);
+        }
+        if limit > MAX_PAGE_SIZE {
+            return Err(Error::LimitExceeded);
+        }
+
+        let total_count = storage::get_escrow_count(&env);
+        let mut result = soroban_sdk::Vec::new(&env);
+        
+        if start >= total_count {
+            return Ok(result);
+        }
+
+        let end = start.checked_add(limit).unwrap_or(total_count).min(total_count);
+
+        for i in start..end {
+            if let Some(id) = storage::get_escrow_id_by_index(&env, i) {
+                if let Some(escrow) = storage::get_escrow(&env, id) {
+                    result.push_back(escrow);
+                }
+            }
+        }
+        Ok(result)
     }
 }
 
