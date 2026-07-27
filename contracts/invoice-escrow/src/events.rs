@@ -2,12 +2,11 @@
 
 use soroban_sdk::{Address, Env, Symbol};
 
-use crate::types::EscrowStatus;
+use crate::types::{EscrowStatus, InvoiceCategory};
 
 /// Publish a lifecycle transition event carrying the new status and ledger
-/// timestamp, in addition to the narrower per-action events below. Lets
-/// off-chain indexers reconstruct full escrow lifecycle history/metadata
-/// from a single event stream instead of correlating five separate events.
+/// timestamp. Lets off-chain indexers reconstruct full escrow lifecycle
+/// history from a single event stream instead of correlating multiple events.
 pub fn escrow_status_changed(env: &Env, inv_id: Symbol, status: EscrowStatus, timestamp: u64) {
     env.events().publish(
         (Symbol::new(env, "escrow_status_changed"),),
@@ -27,6 +26,8 @@ pub fn escrow_created(
     token: &Address,
     inv_token: &Address,
     commitment: &soroban_sdk::BytesN<32>,
+    category: InvoiceCategory,
+    effective_fee_bps: u32,
 ) {
     env.events().publish(
         (Symbol::new(env, "escrow_created"),),
@@ -40,6 +41,8 @@ pub fn escrow_created(
             token,
             inv_token,
             commitment,
+            category as u32,
+            effective_fee_bps,
         ),
     );
 }
@@ -93,7 +96,7 @@ pub fn platform_fee_updated(env: &Env, old_fee_bps: u32, new_fee_bps: u32) {
     );
 }
 
-/// Publish payment distributor update event with previous and new distributor addresses.
+/// Publish payment distributor update event.
 pub fn payment_distributor_updated(
     env: &Env,
     had_previous_distributor: bool,
@@ -113,5 +116,21 @@ pub fn paused_updated(env: &Env, old_paused: bool, new_paused: bool) {
     env.events().publish(
         (Symbol::new(env, "paused_updated"),),
         (old_paused, new_paused),
+    );
+}
+
+/// Publish category fee schedule set/updated event.
+///
+/// `old_fee_bps` is `None` when this is the first time a schedule is set for
+/// this category, `Some(old)` when overwriting an existing schedule.
+pub fn category_fee_set(
+    env: &Env,
+    category: InvoiceCategory,
+    old_fee_bps: Option<u32>,
+    new_fee_bps: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "cat_fee_set"),),
+        (category as u32, old_fee_bps, new_fee_bps),
     );
 }

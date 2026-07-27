@@ -13,9 +13,10 @@ mod types;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, IntoVal, Symbol};
 
-// EscrowStatus is re-exported publicly; Config and EscrowData are crate-private.
-pub use types::EscrowStatus;
-use types::{Config, EscrowData};
+// EscrowStatus and InvoiceCategory are re-exported publicly for client use.
+pub use types::{EscrowStatus, InvoiceCategory};
+// CategoryFeeSchedule and Config / EscrowData remain crate-private.
+use types::{CategoryFeeSchedule, Config, EscrowData};
 
 use errors::Error;
 
@@ -54,6 +55,8 @@ impl InvoiceEscrow {
         Ok(())
     }
 
+    // ── Buyer whitelist ───────────────────────────────────────────────────────
+
     /// Admin-only: enable/disable buyer whitelist enforcement on `fund_escrow`.
     pub fn set_whitelist_enabled(env: Env, admin: Address, enabled: bool) -> Result<(), Error> {
         admin.require_auth();
@@ -87,10 +90,56 @@ impl InvoiceEscrow {
         storage::is_whitelisted(&env, &buyer)
     }
 
+    // ── Category fee schedule ─────────────────────────────────────────────────
+
+    /// Set (or update) a per-category fee schedule override. Admin only.
+    ///
+    /// When a category fee schedule is set, any escrow created under that
+    /// `category` will use `fee_bps` instead of the global `Config.fee_bps`.
+    /// Existing escrows are not affected — they retain the effective fee that
+    /// was stamped at creation time.
+    ///
+    /// Emits `cat_fee_set(category_u32, old_fee_bps, new_fee_bps)`.
+    pub fn set_category_fee(
+        env: Env,
+        category: InvoiceCategory,
+        fee_bps: u32,
+    ) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        config.admin.require_auth();
+        if fee_bps > MAX_BPS {
+            return Err(Error::InvalidFeeBps);
+        }
+        let old = storage::get_category_fee(&env, category).map(|s| s.fee_bps);
+        storage::set_category_fee(&env, category, &CategoryFeeSchedule { fee_bps });
+        events::category_fee_set(&env, category, old, fee_bps);
+        Ok(())
+    }
+
+    /// View: return the fee schedule for a given category, or `CategoryFeeNotFound`
+    /// if no override has been set.
+    pub fn get_category_fee_schedule(
+        env: Env,
+        category: InvoiceCategory,
+    ) -> Result<CategoryFeeSchedule, Error> {
+        storage::get_category_fee(&env, category).ok_or(Error::CategoryFeeNotFound)
+    }
+
+    // ── Escrow lifecycle ──────────────────────────────────────────────────────
+
     /// Create an escrow for an invoice. Caller (seller) must be authenticated.
-    /// face_value: what the debtor owes (amount to be paid at settlement)
-    /// purchase_price: what the investor pays (discount applied here)
-    /// commitment: immutable on-chain anchor (SHA-256 hash of off-chain invoice data)
+    ///
+    /// `face_value`     – what the debtor owes (amount to be paid at settlement).
+    /// `purchase_price` – what the investor pays (discount applied here).
+    /// `commitment`     – immutable on-chain anchor (SHA-256 hash of off-chain invoice data).
+    /// `category`       – invoice category; selects per-category fee override if one is set.
+    ///
+    /// The effective fee basis points are resolved at creation time:
+    /// - If a `CategoryFeeSchedule` exists for `category`, that `fee_bps` is used.
+    /// - Otherwise, `Config.fee_bps` (the global default) is used.
+    ///
+    /// The resolved fee is stored in `EscrowData.effective_fee_bps` so that
+    /// subsequent fee changes do not affect outstanding escrows.
     pub fn create_escrow(
         env: Env,
         invoice_id: Symbol,
@@ -102,6 +151,7 @@ impl InvoiceEscrow {
         payment_token: Address,
         invoice_token: Address,
         commitment: soroban_sdk::BytesN<32>,
+        category: InvoiceCategory,
     ) -> Result<(), Error> {
         seller.require_auth();
         if face_value <= 0 || purchase_price <= 0 {
@@ -119,6 +169,12 @@ impl InvoiceEscrow {
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
+
+        // Resolve effective fee: category override takes precedence over global default.
+        let effective_fee_bps = storage::get_category_fee(&env, category)
+            .map(|s| s.fee_bps)
+            .unwrap_or(config.fee_bps);
+
         let data = EscrowData {
             inv_id: invoice_id.clone(),
             seller: seller.clone(),
@@ -133,6 +189,8 @@ impl InvoiceEscrow {
             paid_amt: 0,
             status: EscrowStatus::Created,
             commitment: commitment.clone(),
+            category,
+            effective_fee_bps,
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
         events::escrow_created(
@@ -146,19 +204,16 @@ impl InvoiceEscrow {
             &payment_token,
             &invoice_token,
             &commitment,
+            category,
+            effective_fee_bps,
         );
-        events::escrow_status_changed(
-            &env,
-            invoice_id,
-            EscrowStatus::Created,
-            current_timestamp,
-        );
+        events::escrow_status_changed(&env, invoice_id, EscrowStatus::Created, current_timestamp);
         Ok(())
     }
 
     /// Cancel an unfunded escrow. Only the seller may cancel, and only while status is Created.
     ///
-    /// Emits `escrow_cancelled` with `(invoice_id, seller)`.
+    /// Emits `escrow_cancelled` and `escrow_status_changed`.
     pub fn cancel_escrow(env: Env, invoice_id: Symbol, seller: Address) -> Result<(), Error> {
         seller.require_auth();
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
@@ -185,6 +240,7 @@ impl InvoiceEscrow {
 
     /// Fund the escrow (investor buys part or all of the invoice at purchase_price).
     /// Transfers `amount` from buyer to this contract. Multiple investors can fund until fully subscribed.
+    /// If whitelist is enabled, buyer must be whitelisted.
     pub fn fund_escrow(
         env: Env,
         invoice_id: Symbol,
@@ -192,7 +248,6 @@ impl InvoiceEscrow {
         amount: i128,
     ) -> Result<(), Error> {
         buyer.require_auth();
-        // Fail fast: validate amount before hitting storage.
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -211,7 +266,6 @@ impl InvoiceEscrow {
             return Err(Error::EscrowFunded);
         }
 
-        // Check that funding doesn't exceed purchase_price
         let new_funded = data.funded_amt.checked_add(amount).ok_or(Error::Overflow)?;
         if new_funded > data.purchase_price {
             return Err(Error::InvalidAmount);
@@ -221,7 +275,6 @@ impl InvoiceEscrow {
         let contract = env.current_contract_address();
         token.transfer(&buyer, &contract, &amount);
 
-        // Mint invoice tokens to the buyer to represent their ownership share
         env.invoke_contract::<()>(
             &data.inv_token,
             &Symbol::new(&env, "mint"),
@@ -233,7 +286,6 @@ impl InvoiceEscrow {
             ],
         );
 
-        // Track this funder's contribution
         let current_funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), &buyer);
         let new_funder_amt = current_funder_amt
             .checked_add(amount)
@@ -242,12 +294,10 @@ impl InvoiceEscrow {
 
         data.funded_amt = new_funded;
 
-        // MVP: Store the first funder for direct distribution
         if data.funder.is_none() {
             data.funder = Some(buyer.clone());
         }
 
-        // If fully funded, transition to Funded status
         if data.funded_amt == data.purchase_price {
             data.status = EscrowStatus::Funded;
         }
@@ -273,9 +323,11 @@ impl InvoiceEscrow {
     }
 
     /// Record payment: distribute to investors and platform fee. Payer must auth.
+    ///
     /// Payer must be the authorized debtor for this invoice.
-    /// Payment is applied toward face_value; fees are calculated on the payment amount.
-    /// MVP: Distributes pro-rata to all funders based on their contribution.
+    /// Payment is applied toward `face_value`; fees are calculated on the payment
+    /// amount using the **per-escrow** `effective_fee_bps` that was resolved at
+    /// creation time (which may reflect a category-level override).
     pub fn record_payment(
         env: Env,
         invoice_id: Symbol,
@@ -291,7 +343,6 @@ impl InvoiceEscrow {
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
 
-        // Enforce payer role: payer must be the authorized debtor
         if payer != data.debtor {
             return Err(Error::InvalidPayer);
         }
@@ -300,7 +351,6 @@ impl InvoiceEscrow {
             return Err(Error::AlreadySettled);
         }
 
-        // Remaining balance toward face_value
         let remaining = data
             .face_value
             .checked_sub(data.paid_amt)
@@ -309,8 +359,8 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        let fee_bps = i128::from(config.fee_bps);
-        // Fee is calculated on the payment amount (not face_value)
+        // Use the effective fee stamped at creation time (may reflect a category override).
+        let fee_bps = i128::from(data.effective_fee_bps);
         let platform_fee = amount
             .checked_mul(fee_bps)
             .ok_or(Error::Overflow)?
@@ -321,26 +371,22 @@ impl InvoiceEscrow {
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
 
-        // 1. Pull payer's funds into escrow
         token.transfer(&payer, &contract, &amount);
 
         data.paid_amt = data.paid_amt.checked_add(amount).ok_or(Error::Overflow)?;
 
-        // Settlement occurs when paid_amt reaches face_value
         if data.paid_amt == data.face_value {
             data.status = EscrowStatus::Settled;
         }
 
         storage::set_escrow(&env, invoice_id.clone(), &data);
 
-        // Extract funder address before branching so it is available in both paths.
         let funder_opt = data.funder.clone();
 
         if let Some(distributor) = config.payment_distributor.as_ref() {
-            // The distributor must pay seller_amount (== amount) plus investor_amount + platform_fee
-            // (== amount), mirroring the direct path below which releases the payer's `amount` to the
-            // seller in addition to paying the investor/admin out of escrow's held funding.
-            let total_to_distributor = amount.checked_add(amount).ok_or(Error::Overflow)?;
+            let total_to_distributor = investor_amount
+                .checked_add(platform_fee)
+                .ok_or(Error::Overflow)?;
             token.transfer(&contract, distributor, &total_to_distributor);
             env.invoke_contract::<()>(
                 distributor,
@@ -351,13 +397,10 @@ impl InvoiceEscrow {
                     invoice_id.clone().into_val(&env),
                     soroban_sdk::vec![
                         &env,
-                        <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&data.token, &env),
-                        <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&data.seller, &env),
-                        <Option<Address> as IntoVal<Env, soroban_sdk::Val>>::into_val(
-                            &funder_opt,
-                            &env,
-                        ),
-                        <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&config.admin, &env)
+                        data.token.clone(),
+                        data.seller.clone(),
+                        funder_opt.clone().into_val(&env),
+                        config.admin.clone()
                     ]
                     .into_val(&env),
                     soroban_sdk::vec![&env, data.paid_amt, amount, investor_amount, platform_fee]
@@ -366,13 +409,12 @@ impl InvoiceEscrow {
                 ],
             );
         } else {
-            // 2. Platform fee to admin
             token.transfer(&contract, &config.admin, &platform_fee);
 
-            // 3. Pro-rata investor distribution
             if let Some(funder) = &funder_opt {
                 if data.funded_amt > 0 && investor_amount > 0 {
-                    let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), funder);
+                    let funder_amt =
+                        storage::get_funder_amount(&env, invoice_id.clone(), funder);
                     let pro_rata_share = investor_amount
                         .checked_mul(funder_amt)
                         .ok_or(Error::Overflow)?
@@ -384,12 +426,10 @@ impl InvoiceEscrow {
                 }
             }
 
-            // 4. Release the purchase_price collateral back to the seller
             token.transfer(&contract, &data.seller, &amount);
         }
 
         if data.status == EscrowStatus::Settled {
-            // Unlock invoice token transfers only when the invoice is completely settled.
             env.invoke_contract::<()>(
                 &data.inv_token,
                 &Symbol::new(&env, "set_transfer_locked"),
@@ -410,7 +450,6 @@ impl InvoiceEscrow {
     }
 
     /// Refund the investors if the invoice was not paid by due date. Anyone may call.
-    /// Refunds are distributed pro-rata based on each investor's contribution.
     pub fn refund(env: Env, invoice_id: Symbol) -> Result<(), Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
@@ -424,7 +463,6 @@ impl InvoiceEscrow {
             return Err(Error::RefundNotAllowed);
         }
 
-        // Refund the remaining collateral (purchase_price minus already released partial payments)
         let amount_to_refund = data
             .purchase_price
             .checked_sub(data.paid_amt)
@@ -433,7 +471,6 @@ impl InvoiceEscrow {
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
 
-        // Extract funder address before status mutation so it is available in both paths.
         let funder_opt = data.funder.clone();
 
         data.status = EscrowStatus::Refunded;
@@ -451,14 +488,8 @@ impl InvoiceEscrow {
                         invoice_id.clone().into_val(&env),
                         soroban_sdk::vec![
                             &env,
-                            <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(
-                                &data.token,
-                                &env
-                            ),
-                            <Option<Address> as IntoVal<Env, soroban_sdk::Val>>::into_val(
-                                &funder_opt,
-                                &env,
-                            )
+                            data.token.clone(),
+                            funder_opt.clone().into_val(&env)
                         ]
                         .into_val(&env),
                         soroban_sdk::vec![&env, amount_to_refund].into_val(&env),
@@ -466,7 +497,6 @@ impl InvoiceEscrow {
                     ],
                 );
             } else {
-                // Pro-rata refund to funders
                 if let Some(funder) = &funder_opt {
                     if data.funded_amt > 0 {
                         let funder_amt =
@@ -484,7 +514,6 @@ impl InvoiceEscrow {
             }
         }
 
-        // Unlock invoice token transfers now that the invoice is refunded
         env.invoke_contract::<()>(
             &data.inv_token,
             &Symbol::new(&env, "set_transfer_locked"),
@@ -500,6 +529,8 @@ impl InvoiceEscrow {
         );
         Ok(())
     }
+
+    // ── Admin configuration ───────────────────────────────────────────────────
 
     /// Update platform fee (basis points). Admin only.
     pub fn update_platform_fee_bps(env: Env, new_fee_bps: u32) -> Result<(), Error> {
@@ -540,12 +571,14 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// View: return escrow data for an invoice, or None if not found.
+    // ── View functions ────────────────────────────────────────────────────────
+
+    /// View: return escrow data for an invoice.
     pub fn get_escrow(env: Env, invoice_id: Symbol) -> Result<EscrowData, Error> {
         storage::get_escrow(&env, invoice_id).ok_or(Error::EscrowNotFound)
     }
 
-    /// View: return current config (admin and fee_bps).
+    /// View: return current config.
     pub fn get_config(env: Env) -> Result<Config, Error> {
         storage::get_config(&env).ok_or(Error::NotInit)
     }

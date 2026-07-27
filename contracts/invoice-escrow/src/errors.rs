@@ -42,4 +42,6 @@ pub enum Error {
     InvalidDueDate = 17,
     /// Caller is not on the buyer whitelist and cannot fund escrows.
     NotWhitelisted = 18,
+    /// No fee schedule has been configured for the requested invoice category.
+    CategoryFeeNotFound = 19,
 }

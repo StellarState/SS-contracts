@@ -72,6 +72,7 @@ fn test_integration_escrow_lifecycle_happy_path() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // 8. Fund Escrow (Buyer buys the invoice)
@@ -160,6 +161,7 @@ fn test_integration_refund_lifecycle() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -231,6 +233,7 @@ fn test_integration_token_locked_during_active_escrow() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Token is locked even before funding (initialized locked)

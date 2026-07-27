@@ -2,7 +2,7 @@
 
 use soroban_sdk::{Address, Symbol};
 
-use crate::types::{Config, EscrowData, StorageKey};
+use crate::types::{CategoryFeeSchedule, Config, EscrowData, InvoiceCategory, StorageKey};
 
 /// Ledgers below which a persistent entry's TTL is extended (~7 days at 5s/ledger).
 const TTL_THRESHOLD: u32 = 120_960;
@@ -87,6 +87,8 @@ pub fn set_funder_amount(
     }
 }
 
+// ── Buyer whitelist helpers ───────────────────────────────────────────────────
+
 /// Whether `buyer` is whitelisted to fund (buy) escrows. Absent entry = not whitelisted.
 pub fn is_whitelisted(env: &soroban_sdk::Env, buyer: &Address) -> bool {
     env.storage()
@@ -106,4 +108,36 @@ pub fn set_whitelisted(env: &soroban_sdk::Env, buyer: &Address, allowed: bool) {
             .persistent()
             .remove(&StorageKey::BuyerWhitelist(buyer.clone()));
     }
+}
+
+// ── Category fee schedule helpers ────────────────────────────────────────────
+
+/// Load the fee schedule for a given invoice category from instance storage.
+/// Returns `None` when no override has been configured for that category.
+pub fn get_category_fee(
+    env: &soroban_sdk::Env,
+    category: InvoiceCategory,
+) -> Option<CategoryFeeSchedule> {
+    env.storage()
+        .instance()
+        .get(&StorageKey::CategoryFee(category))
+}
+
+/// Persist a fee schedule for the given category in instance storage.
+pub fn set_category_fee(
+    env: &soroban_sdk::Env,
+    category: InvoiceCategory,
+    schedule: &CategoryFeeSchedule,
+) {
+    env.storage()
+        .instance()
+        .set(&StorageKey::CategoryFee(category), schedule);
+}
+
+/// Remove the fee schedule override for a category, reverting to the global
+/// `Config.fee_bps` for future escrows of that category.
+pub fn remove_category_fee(env: &soroban_sdk::Env, category: InvoiceCategory) {
+    env.storage()
+        .instance()
+        .remove(&StorageKey::CategoryFee(category));
 }

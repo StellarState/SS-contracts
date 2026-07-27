@@ -15,6 +15,36 @@ pub enum StorageKey {
     FunderAmount(soroban_sdk::Symbol, soroban_sdk::Address),
     /// Persistent: whether a given address is whitelisted to fund (buy) escrows.
     BuyerWhitelist(soroban_sdk::Address),
+    /// Instance: per-category fee schedule overrides.
+    CategoryFee(InvoiceCategory),
+}
+
+/// Invoice category used to select a per-category fee schedule override.
+///
+/// When a `CategoryFeeSchedule` is set for a given category, escrows created
+/// under that category use the category-level fee instead of the global
+/// `Config.fee_bps`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum InvoiceCategory {
+    /// Standard commercial invoice (default).
+    Standard = 0,
+    /// Invoice factoring: seller sells the receivable at a discount.
+    Factoring = 1,
+    /// Reverse factoring / supply-chain finance: buyer-initiated.
+    Reverse = 2,
+    /// Government / public-sector invoice.
+    Government = 3,
+}
+
+/// Per-category fee schedule. Stored in instance storage keyed by
+/// `StorageKey::CategoryFee(category)`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CategoryFeeSchedule {
+    /// Platform fee in basis points for this category (e.g. 250 = 2.5%).
+    pub fee_bps: u32,
 }
 
 /// Global contract configuration.
@@ -83,4 +113,11 @@ pub struct EscrowData {
     /// Commitment hash: immutable on-chain anchor for off-chain invoice data (PDF hash, ERP ID, etc.).
     /// Set at creation, cannot be modified. SHA-256 hash (32 bytes).
     pub commitment: soroban_sdk::BytesN<32>,
+    /// Invoice category used to determine per-category fee override.
+    pub category: InvoiceCategory,
+    /// Effective platform fee in basis points stamped at creation time.
+    /// Derived from the per-category override if one is set, otherwise the
+    /// global `Config.fee_bps`. Stored so that fee changes after creation
+    /// do not affect outstanding escrows.
+    pub effective_fee_bps: u32,
 }

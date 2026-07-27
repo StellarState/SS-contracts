@@ -6,6 +6,9 @@ use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::token::StellarAssetClient as AssetClient;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, IntoVal, Symbol, TryIntoVal};
 
+// Re-export InvoiceCategory and CategoryFeeSchedule for use in tests
+use types::{CategoryFeeSchedule, InvoiceCategory};
+
 /// Helper function to create a test commitment hash (SHA-256 format)
 fn test_commitment(env: &Env, data: &str) -> BytesN<32> {
     let mut array = [0u8; 32];
@@ -174,6 +177,7 @@ fn test_create_and_fund() {
         &payment_token.address,
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Fund escrow
@@ -417,6 +421,7 @@ fn test_record_payment() {
         &payment_token.address,
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -475,6 +480,7 @@ fn test_escrow_created_event() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Assert escrow_created event was emitted
@@ -499,6 +505,8 @@ fn test_escrow_created_event() {
         Address,
         Address,
         BytesN<32>,
+        u32,
+        u32,
     ) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
     assert_eq!(event_data.1, seller);
@@ -509,6 +517,8 @@ fn test_escrow_created_event() {
     assert_eq!(event_data.6, payment_token_id.address());
     assert_eq!(event_data.7, inv_token_id);
     assert_eq!(event_data.8, test_commitment(&env, "test_invoice_data"));
+    assert_eq!(event_data.9, InvoiceCategory::Standard as u32);
+    assert_eq!(event_data.10, 300u32); // effective_fee_bps == global 300
     assert_eq!(event_data.6, payment_token_id.address());
     assert_eq!(event_data.7, inv_token_id);
 }
@@ -546,6 +556,7 @@ fn test_escrow_funded_event() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -601,6 +612,7 @@ fn test_payment_settled_event() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -658,6 +670,7 @@ fn test_escrow_refunded_event() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -716,6 +729,7 @@ fn test_no_settlement_event_on_invalid_state() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Try to record payment without funding first (should fail)
@@ -770,6 +784,7 @@ fn test_no_refund_event_on_invalid_state() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Set ledger timestamp past due date
@@ -842,6 +857,7 @@ fn test_create_escrow_requires_seller_auth() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
     assert!(result.is_err());
 }
@@ -904,6 +920,7 @@ fn test_create_escrow_zero_amount() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -934,6 +951,7 @@ fn test_create_escrow_negative_amount() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -1164,6 +1182,7 @@ fn test_create_escrow_duplicate_invoice_id() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Second create with same invoice_id should fail
@@ -1177,6 +1196,7 @@ fn test_create_escrow_duplicate_invoice_id() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(result, Err(Ok(Error::EscrowExists)));
 }
@@ -1270,6 +1290,7 @@ fn test_fund_escrow_already_funded() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // First funding should succeed
@@ -1307,6 +1328,7 @@ fn test_record_payment_not_funded() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Try to record payment without funding first
@@ -1348,6 +1370,7 @@ fn test_record_payment_already_settled() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1392,6 +1415,7 @@ fn test_record_payment_amount_exceeds_escrow() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1427,6 +1451,7 @@ fn test_refund_not_funded() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Set time past due date
@@ -1472,6 +1497,7 @@ fn test_refund_before_due_date() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1518,6 +1544,7 @@ fn test_refund_at_due_date() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1570,6 +1597,7 @@ fn test_refund_after_due_date() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1623,6 +1651,7 @@ fn test_refund_already_settled() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1674,6 +1703,7 @@ fn test_fee_calculation_zero_fee() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1720,6 +1750,7 @@ fn test_fee_calculation_max_fee() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
@@ -1835,6 +1866,7 @@ fn test_get_escrow_data() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     // Get escrow data and verify
@@ -1875,6 +1907,7 @@ fn test_create_escrow_not_initialized() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(result, Err(Ok(Error::NotInit)));
 }
@@ -1928,6 +1961,7 @@ fn test_partial_payment_lifecycle() {
         &payment_token.address,
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -2011,6 +2045,7 @@ fn test_refund_after_partial_payment() {
         &payment_token.address,
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
@@ -2077,6 +2112,7 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
         &pt_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
@@ -2115,7 +2151,12 @@ fn setup_escrow_created(env: &Env) -> (Address, InvoiceEscrowClient<'_>, Address
         &9_999_999u64,
         &pt_id.address(),
         &inv_token_id,
+<<<<<<< Updated upstream
         &test_commitment(env, "test_invoice_data"),
+=======
+        &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
+>>>>>>> Stashed changes
     );
 
     let _ = (pt_asset,);
@@ -2194,6 +2235,7 @@ fn test_cancel_escrow_already_funded_rejected() {
         &pt_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &InvoiceCategory::Standard,
     );
     client.fund_escrow(&invoice_id, &buyer, &1000);
 
@@ -2286,6 +2328,7 @@ fn test_pause_blocks_lifecycle_operations_and_unpause_restores() {
         &pt_id.address(),
         &inv_token_id,
         &test_commitment(&env, "pause_test_invoice"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(create_while_paused, Err(Ok(Error::Paused)));
 
@@ -2301,6 +2344,7 @@ fn test_pause_blocks_lifecycle_operations_and_unpause_restores() {
         &pt_id.address(),
         &inv_token_id,
         &test_commitment(&env, "pause_test_invoice"),
+        &InvoiceCategory::Standard,
     );
 
     // Pause and verify fund_escrow is blocked
@@ -2359,6 +2403,7 @@ fn test_create_escrow_with_commitment() {
         &payment_token,
         &inv_token,
         &commitment,
+        &InvoiceCategory::Standard,
     );
 
     // Verify escrow was created with commitment
@@ -2394,6 +2439,7 @@ fn test_commitment_immutable_after_creation() {
         &payment_token,
         &inv_token,
         &original_commitment,
+        &InvoiceCategory::Standard,
     );
 
     // Verify commitment is stored
@@ -2432,6 +2478,7 @@ fn test_commitment_included_in_created_event() {
         &payment_token,
         &inv_token,
         &commitment,
+        &InvoiceCategory::Standard,
     );
 
     // Assert escrow_created event was emitted with commitment
@@ -2445,7 +2492,7 @@ fn test_commitment_included_in_created_event() {
         (Symbol::new(&env, "escrow_created"),).into_val(&env)
     );
 
-    // Event data includes commitment as the 9th field
+    // Event data now has 11 fields: the original 9 + category (u32) + effective_fee_bps (u32)
     let event_data: (
         Symbol,
         Address,
@@ -2456,10 +2503,14 @@ fn test_commitment_included_in_created_event() {
         Address,
         Address,
         BytesN<32>,
+        u32,
+        u32,
     ) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
     assert_eq!(event_data.1, seller);
     assert_eq!(event_data.8, commitment); // Commitment is the 9th field
+    assert_eq!(event_data.9, InvoiceCategory::Standard as u32);
+    assert_eq!(event_data.10, 300u32); // effective_fee_bps == global default
 }
 
 #[test]
@@ -2490,6 +2541,7 @@ fn test_different_commitments_for_different_invoices() {
         &payment_token,
         &inv_token,
         &commitment_a,
+        &InvoiceCategory::Standard,
     );
 
     // Create second invoice with commitment B
@@ -2505,6 +2557,7 @@ fn test_different_commitments_for_different_invoices() {
         &payment_token,
         &inv_token,
         &commitment_b,
+        &InvoiceCategory::Standard,
     );
 
     // Verify each invoice has its own commitment
@@ -2555,6 +2608,7 @@ fn test_commitment_persists_through_lifecycle() {
         &payment_token.address,
         &inv_token_id,
         &commitment,
+        &InvoiceCategory::Standard,
     );
 
     // Verify commitment after creation
@@ -2610,6 +2664,7 @@ fn test_create_escrow_due_date_in_past_rejected() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "past_due_test"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
 }
@@ -2644,6 +2699,7 @@ fn test_create_escrow_due_date_equal_to_current_timestamp_rejected() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "equal_timestamp_test"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
 }
@@ -2674,6 +2730,7 @@ fn test_create_escrow_due_date_zero_rejected() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "zero_due_date_test"),
+        &InvoiceCategory::Standard,
     );
     assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
 }
@@ -2710,10 +2767,542 @@ fn test_create_escrow_due_date_in_future_accepted() {
         &payment_token,
         &inv_token,
         &test_commitment(&env, "future_due_test"),
+        &InvoiceCategory::Standard,
     );
 
     // Verify escrow was created successfully
     let escrow_data = escrow_client.get_escrow(&invoice_id);
     assert_eq!(escrow_data.due_dt, future_due_date);
     assert_eq!(escrow_data.status, EscrowStatus::Created);
+}
+
+// ========== Category Fee Schedule Tests ==========
+
+/// Helper: register and initialize the escrow contract, return (escrow_id, client, admin).
+fn setup_initialized(env: &Env) -> (Address, InvoiceEscrowClient<'_>, Address) {
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(env, &escrow_id);
+    let admin = Address::generate(env);
+    client.initialize(&admin, &300); // global default = 300 bps (3%)
+    (escrow_id, client, admin)
+}
+
+// ── set_category_fee ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_set_category_fee_stores_schedule() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    client.set_category_fee(&InvoiceCategory::Factoring, &500);
+
+    let schedule = client.get_category_fee_schedule(&InvoiceCategory::Factoring);
+    assert_eq!(schedule.fee_bps, 500);
+}
+
+#[test]
+fn test_set_category_fee_requires_admin_auth() {
+    let env = Env::default();
+    // Initialize with mock auth, then call set_category_fee WITHOUT mocking auth.
+    // The contract must enforce admin.require_auth(), so the call must fail.
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &300);
+
+    // Fresh env — no mocked auths. set_category_fee must check admin auth and fail.
+    let env_no_auth = Env::default();
+    let client2 = InvoiceEscrowClient::new(&env_no_auth, &escrow_id);
+    let result = client2.try_set_category_fee(&InvoiceCategory::Standard, &200);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_category_fee_invalid_bps_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    // fee_bps > 10_000 must be rejected
+    let result = client.try_set_category_fee(&InvoiceCategory::Government, &10_001);
+    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+}
+
+#[test]
+fn test_set_category_fee_max_bps_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    // exactly 10_000 must be accepted
+    client.set_category_fee(&InvoiceCategory::Government, &10_000);
+    let schedule = client.get_category_fee_schedule(&InvoiceCategory::Government);
+    assert_eq!(schedule.fee_bps, 10_000);
+}
+
+#[test]
+fn test_set_category_fee_zero_bps_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    client.set_category_fee(&InvoiceCategory::Reverse, &0);
+    let schedule = client.get_category_fee_schedule(&InvoiceCategory::Reverse);
+    assert_eq!(schedule.fee_bps, 0);
+}
+
+#[test]
+fn test_set_category_fee_overwrites_existing() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    client.set_category_fee(&InvoiceCategory::Factoring, &400);
+    assert_eq!(client.get_category_fee_schedule(&InvoiceCategory::Factoring).fee_bps, 400);
+
+    // Overwrite with a new value
+    client.set_category_fee(&InvoiceCategory::Factoring, &250);
+    assert_eq!(client.get_category_fee_schedule(&InvoiceCategory::Factoring).fee_bps, 250);
+}
+
+#[test]
+fn test_set_category_fee_not_initialized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let result = client.try_set_category_fee(&InvoiceCategory::Standard, &100);
+    assert_eq!(result, Err(Ok(Error::NotInit)));
+}
+
+#[test]
+fn test_set_category_fee_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    // First set — old_fee_bps should be None
+    client.set_category_fee(&InvoiceCategory::Factoring, &500);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topic: Symbol = last.1.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "cat_fee_set"));
+
+    let event_data: (u32, Option<u32>, u32) = last.2.try_into_val(&env).unwrap();
+    assert_eq!(event_data.0, InvoiceCategory::Factoring as u32);
+    assert_eq!(event_data.1, None); // no previous value
+    assert_eq!(event_data.2, 500);
+
+    // Second set — old_fee_bps should be Some(500)
+    client.set_category_fee(&InvoiceCategory::Factoring, &300);
+    let events2 = env.events().all();
+    let last2 = events2.last().unwrap();
+    let event_data2: (u32, Option<u32>, u32) = last2.2.try_into_val(&env).unwrap();
+    assert_eq!(event_data2.1, Some(500));
+    assert_eq!(event_data2.2, 300);
+}
+
+// ── get_category_fee_schedule ────────────────────────────────────────────────
+
+#[test]
+fn test_get_category_fee_schedule_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    // No schedule set for Government yet
+    let result = client.try_get_category_fee_schedule(&InvoiceCategory::Government);
+    assert_eq!(result, Err(Ok(Error::CategoryFeeNotFound)));
+}
+
+#[test]
+fn test_get_category_fee_schedule_independent_per_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _admin) = setup_initialized(&env);
+
+    client.set_category_fee(&InvoiceCategory::Factoring, &400);
+    client.set_category_fee(&InvoiceCategory::Government, &100);
+
+    assert_eq!(client.get_category_fee_schedule(&InvoiceCategory::Factoring).fee_bps, 400);
+    assert_eq!(client.get_category_fee_schedule(&InvoiceCategory::Government).fee_bps, 100);
+    // Standard has no override
+    assert_eq!(
+        client.try_get_category_fee_schedule(&InvoiceCategory::Standard),
+        Err(Ok(Error::CategoryFeeNotFound))
+    );
+}
+
+// ── create_escrow: effective_fee_bps resolution ───────────────────────────────
+
+#[test]
+fn test_create_escrow_uses_global_fee_when_no_category_override() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let pt = Address::generate(&env);
+    let inv = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_GLOB");
+
+    client.initialize(&admin, &300); // global = 300 bps
+
+    // No category override set — should use global 300
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &9_999_999,
+        &pt,
+        &inv,
+        &test_commitment(&env, "global_fee_test"),
+        &InvoiceCategory::Standard,
+    );
+
+    let data = client.get_escrow(&invoice_id);
+    assert_eq!(data.effective_fee_bps, 300);
+    assert_eq!(data.category, InvoiceCategory::Standard);
+}
+
+#[test]
+fn test_create_escrow_uses_category_fee_override() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let pt = Address::generate(&env);
+    let inv = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_CAT");
+
+    client.initialize(&admin, &300); // global = 300 bps
+    client.set_category_fee(&InvoiceCategory::Factoring, &150); // override = 150 bps
+
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &9_999_999,
+        &pt,
+        &inv,
+        &test_commitment(&env, "category_fee_test"),
+        &InvoiceCategory::Factoring,
+    );
+
+    let data = client.get_escrow(&invoice_id);
+    assert_eq!(data.effective_fee_bps, 150); // category override wins
+    assert_eq!(data.category, InvoiceCategory::Factoring);
+}
+
+#[test]
+fn test_category_override_takes_precedence_over_global() {
+    // Explicitly verify: category fee (200) beats global (500) when both are set.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let pt = Address::generate(&env);
+    let inv = Address::generate(&env);
+
+    client.initialize(&admin, &500); // global = 500 bps
+    client.set_category_fee(&InvoiceCategory::Government, &200); // override = 200
+
+    let invoice_id = Symbol::new(&env, "INV_GOV");
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &9_999_999,
+        &pt,
+        &inv,
+        &test_commitment(&env, "precedence_test"),
+        &InvoiceCategory::Government,
+    );
+
+    assert_eq!(client.get_escrow(&invoice_id).effective_fee_bps, 200);
+}
+
+#[test]
+fn test_different_categories_have_independent_fees() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let pt = Address::generate(&env);
+    let inv = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+    client.set_category_fee(&InvoiceCategory::Factoring, &150);
+    client.set_category_fee(&InvoiceCategory::Government, &50);
+
+    let inv_std = Symbol::new(&env, "INV_STD");
+    let inv_fac = Symbol::new(&env, "INV_FAC");
+    let inv_gov = Symbol::new(&env, "INV_GOV");
+
+    client.create_escrow(
+        &inv_std, &seller, &seller, &1000, &1000, &9_999_999, &pt, &inv,
+        &test_commitment(&env, "std"), &InvoiceCategory::Standard,
+    );
+    client.create_escrow(
+        &inv_fac, &seller, &seller, &1000, &1000, &9_999_999, &pt, &inv,
+        &test_commitment(&env, "fac"), &InvoiceCategory::Factoring,
+    );
+    client.create_escrow(
+        &inv_gov, &seller, &seller, &1000, &1000, &9_999_999, &pt, &inv,
+        &test_commitment(&env, "gov"), &InvoiceCategory::Government,
+    );
+
+    assert_eq!(client.get_escrow(&inv_std).effective_fee_bps, 300); // global fallback
+    assert_eq!(client.get_escrow(&inv_fac).effective_fee_bps, 150);
+    assert_eq!(client.get_escrow(&inv_gov).effective_fee_bps, 50);
+}
+
+// ── record_payment: uses effective_fee_bps stamped at creation ────────────────
+
+#[test]
+fn test_record_payment_uses_category_fee_not_global() {
+    // Create escrow with category override (150 bps), then update global to 800 bps.
+    // record_payment must use 150, not 800.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let payment_token = soroban_sdk::token::Client::new(&env, &pt_id.address());
+    let pt_asset = soroban_sdk::token::StellarAssetClient::new(&env, &pt_id.address());
+    let inv = env.register(MockInvoiceToken, ());
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EFF");
+
+    client.initialize(&admin, &300); // global = 300 bps
+    client.set_category_fee(&InvoiceCategory::Factoring, &150); // override = 150 bps
+
+    pt_asset.mint(&buyer, &1000);
+    pt_asset.mint(&payer, &1000);
+
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &1000,
+        &1000,
+        &9_999_999,
+        &pt_id.address(),
+        &inv,
+        &test_commitment(&env, "eff_fee_test"),
+        &InvoiceCategory::Factoring,
+    );
+
+    // Now change global fee to 800 — must NOT affect this escrow
+    client.update_platform_fee_bps(&800);
+
+    client.fund_escrow(&invoice_id, &buyer, &1000);
+    client.record_payment(&invoice_id, &payer, &1000);
+
+    // platform_fee = 1000 * 150 / 10_000 = 15
+    assert_eq!(payment_token.balance(&admin), 15);
+    // investor_amount = 1000 - 15 = 985
+    assert_eq!(payment_token.balance(&buyer), 985);
+    // seller gets back the purchase_price collateral
+    assert_eq!(payment_token.balance(&seller), 1000);
+    assert_eq!(payment_token.balance(&escrow_id), 0);
+}
+
+#[test]
+fn test_record_payment_with_zero_category_fee() {
+    // Category override of 0 bps — investor gets full payment, admin gets nothing.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let payment_token = soroban_sdk::token::Client::new(&env, &pt_id.address());
+    let pt_asset = soroban_sdk::token::StellarAssetClient::new(&env, &pt_id.address());
+    let inv = env.register(MockInvoiceToken, ());
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_ZFEE");
+
+    client.initialize(&admin, &500); // global = 500 bps
+    client.set_category_fee(&InvoiceCategory::Government, &0); // override = 0
+
+    pt_asset.mint(&buyer, &1000);
+    pt_asset.mint(&payer, &1000);
+
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &1000,
+        &1000,
+        &9_999_999,
+        &pt_id.address(),
+        &inv,
+        &test_commitment(&env, "zero_fee_cat"),
+        &InvoiceCategory::Government,
+    );
+
+    client.fund_escrow(&invoice_id, &buyer, &1000);
+    client.record_payment(&invoice_id, &payer, &1000);
+
+    assert_eq!(payment_token.balance(&admin), 0);   // 0% fee
+    assert_eq!(payment_token.balance(&buyer), 1000); // full amount to investor
+    assert_eq!(payment_token.balance(&seller), 1000);
+}
+
+// ── effective_fee_bps is immutable after creation ─────────────────────────────
+
+#[test]
+fn test_effective_fee_bps_immutable_after_category_fee_updated() {
+    // Update category fee after escrow creation — existing escrow must keep old fee.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let pt = Address::generate(&env);
+    let inv = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+    client.set_category_fee(&InvoiceCategory::Reverse, &200);
+
+    let invoice_id = Symbol::new(&env, "INV_IMM2");
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &9_999_999,
+        &pt,
+        &inv,
+        &test_commitment(&env, "immutable_fee"),
+        &InvoiceCategory::Reverse,
+    );
+
+    // Verify stamped at 200
+    assert_eq!(client.get_escrow(&invoice_id).effective_fee_bps, 200);
+
+    // Now change the category fee
+    client.set_category_fee(&InvoiceCategory::Reverse, &999);
+
+    // Existing escrow must still show 200
+    assert_eq!(client.get_escrow(&invoice_id).effective_fee_bps, 200);
+}
+
+#[test]
+fn test_escrow_category_field_stored_correctly() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let pt = Address::generate(&env);
+    let inv = Address::generate(&env);
+
+    client.initialize(&admin, &300);
+
+    for (sym_str, category) in [
+        ("INV_S", InvoiceCategory::Standard),
+        ("INV_F", InvoiceCategory::Factoring),
+        ("INV_R", InvoiceCategory::Reverse),
+        ("INV_G", InvoiceCategory::Government),
+    ] {
+        let invoice_id = Symbol::new(&env, sym_str);
+        client.create_escrow(
+            &invoice_id,
+            &seller,
+            &seller,
+            &1000,
+            &1000,
+            &9_999_999,
+            &pt,
+            &inv,
+            &test_commitment(&env, sym_str),
+            &category,
+        );
+        assert_eq!(client.get_escrow(&invoice_id).category, category);
+    }
+}
+
+// ── escrow_created event includes category and effective_fee_bps ──────────────
+
+#[test]
+fn test_create_escrow_event_includes_category_and_effective_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let pt = Address::generate(&env);
+    let inv = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EVT2");
+
+    client.initialize(&admin, &300);
+    client.set_category_fee(&InvoiceCategory::Factoring, &175);
+
+    client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &9_999_999,
+        &pt,
+        &inv,
+        &test_commitment(&env, "event_cat_test"),
+        &InvoiceCategory::Factoring,
+    );
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topic: Symbol = last.1.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "escrow_created"));
+
+    // Tuple: (inv_id, seller, debtor, face_value, purchase_price, due_dt,
+    //         token, inv_token, commitment, category_u32, effective_fee_bps)
+    let event_data: (Symbol, Address, Address, i128, i128, u64, Address, Address, BytesN<32>, u32, u32) =
+        last.2.try_into_val(&env).unwrap();
+    assert_eq!(event_data.9, InvoiceCategory::Factoring as u32);
+    assert_eq!(event_data.10, 175u32); // category override, not global 300
 }
