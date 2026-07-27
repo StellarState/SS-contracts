@@ -49,6 +49,7 @@ impl InvoiceEscrow {
             payment_distributor: None,
             paused: false,
             whitelist_enabled: false,
+            pending_admin: None,
         };
         storage::set_config(&env, &config);
         Ok(())
@@ -537,6 +538,61 @@ impl InvoiceEscrow {
         config.paused = paused;
         storage::set_config(&env, &config);
         events::paused_updated(&env, old_paused, paused);
+        Ok(())
+    }
+
+    /// Propose a new admin for a two-step admin authority transfer. Current admin only.
+    ///
+    /// The proposed new admin must call `accept_admin` to complete the transfer.
+    /// Proposing the same address as the current admin is rejected with `SelfTransfer`.
+    /// Any previous pending proposal is overwritten by the new one.
+    ///
+    /// Emits `admin_proposed` with `(current_admin, proposed_admin)`.
+    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let current_admin = config.admin.clone();
+        current_admin.require_auth();
+        if new_admin == current_admin {
+            return Err(Error::SelfTransfer);
+        }
+        config.pending_admin = Some(new_admin.clone());
+        storage::set_config(&env, &config);
+        events::admin_transfer_proposed(&env, &current_admin, &new_admin);
+        Ok(())
+    }
+
+    /// Accept an in-flight admin transfer. Must be called by the address that was proposed.
+    ///
+    /// On success, `config.admin` is updated to the caller and `pending_admin` is cleared.
+    /// Fails with `NoPendingAdmin` if no proposal exists, or `Unauthorized` if the caller
+    /// is not the pending admin.
+    ///
+    /// Emits `admin_accepted` with `(old_admin, new_admin)`.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let pending = config.pending_admin.clone().ok_or(Error::NoPendingAdmin)?;
+        pending.require_auth();
+        let old_admin = config.admin.clone();
+        config.admin = pending.clone();
+        config.pending_admin = None;
+        storage::set_config(&env, &config);
+        events::admin_transfer_accepted(&env, &old_admin, &pending);
+        Ok(())
+    }
+
+    /// Cancel an in-flight admin transfer proposal. Current admin only.
+    ///
+    /// Clears `pending_admin`. Fails with `NoPendingAdmin` if there is nothing to cancel.
+    ///
+    /// Emits `admin_cancelled` with `(current_admin, cancelled_pending_admin)`.
+    pub fn cancel_admin_transfer(env: Env) -> Result<(), Error> {
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let current_admin = config.admin.clone();
+        current_admin.require_auth();
+        let pending = config.pending_admin.clone().ok_or(Error::NoPendingAdmin)?;
+        config.pending_admin = None;
+        storage::set_config(&env, &config);
+        events::admin_transfer_cancelled(&env, &current_admin, &pending);
         Ok(())
     }
 

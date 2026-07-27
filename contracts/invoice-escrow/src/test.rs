@@ -2968,4 +2968,355 @@ fn test_overdue_escrow_state_preserved_after_refund() {
     assert_eq!(data.seller, seller);
     assert_eq!(data.face_value, 1000);
     assert_eq!(data.due_dt, 1000);
+// ============================================================
+// Admin Transfer Tests (propose_admin / accept_admin / cancel)
+// ============================================================
+
+/// Helper: set up a minimal initialized contract and return (client, contract_id, admin).
+fn setup_initialized(env: &Env) -> (InvoiceEscrowClient, Address, Address) {
+    let contract_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    client.initialize(&admin, &300);
+    (client, contract_id, admin)
+}
+
+// ── propose_admin ────────────────────────────────────────────
+
+#[test]
+fn test_propose_admin_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    // propose should succeed
+    client.propose_admin(&new_admin);
+
+    // pending_admin reflected in config
+    let config = client.get_config();
+    assert_eq!(config.pending_admin, Some(new_admin.clone()));
+    // current admin unchanged
+    assert_eq!(config.admin, admin);
+}
+
+#[test]
+fn test_propose_admin_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let (_contract, topics, data) = last;
+
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "admin_proposed"),).into_val(&env)
+    );
+    let (ev_current, ev_proposed): (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(ev_current, admin);
+    assert_eq!(ev_proposed, new_admin);
+}
+
+#[test]
+fn test_propose_admin_self_transfer_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, admin) = setup_initialized(&env);
+
+    // proposing self should fail with SelfTransfer
+    let result = client.try_propose_admin(&admin);
+    assert_eq!(result, Err(Ok(Error::SelfTransfer)));
+}
+
+#[test]
+fn test_propose_admin_requires_admin_auth() {
+    let env = Env::default();
+    // Do NOT mock_all_auths — auth must come from the real admin only.
+
+    let contract_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &300);
+    env.set_auths(&[]); // clear all mocked auths
+
+    let new_admin = Address::generate(&env);
+
+    // calling without auth should panic (auth failure)
+    let result = client.try_propose_admin(&new_admin);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_propose_admin_overwrites_previous_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, _admin) = setup_initialized(&env);
+    let candidate_a = Address::generate(&env);
+    let candidate_b = Address::generate(&env);
+
+    client.propose_admin(&candidate_a);
+    // overwrite with a different candidate
+    client.propose_admin(&candidate_b);
+
+    let config = client.get_config();
+    assert_eq!(config.pending_admin, Some(candidate_b));
+}
+
+#[test]
+fn test_propose_admin_not_init_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &contract_id);
+    let new_admin = Address::generate(&env);
+
+    let result = client.try_propose_admin(&new_admin);
+    assert_eq!(result, Err(Ok(Error::NotInit)));
+}
+
+// ── accept_admin ─────────────────────────────────────────────
+
+#[test]
+fn test_accept_admin_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, old_admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    client.accept_admin();
+
+    let config = client.get_config();
+    // admin updated
+    assert_eq!(config.admin, new_admin);
+    // pending_admin cleared
+    assert_eq!(config.pending_admin, None);
+    // old admin is no longer admin
+    assert_ne!(config.admin, old_admin);
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, old_admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    client.accept_admin();
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let (_contract, topics, data) = last;
+
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "admin_accepted"),).into_val(&env)
+    );
+    let (ev_old, ev_new): (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(ev_old, old_admin);
+    assert_eq!(ev_new, new_admin);
+}
+
+#[test]
+fn test_accept_admin_no_pending_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, _admin) = setup_initialized(&env);
+
+    // no proposal in flight
+    let result = client.try_accept_admin();
+    assert_eq!(result, Err(Ok(Error::NoPendingAdmin)));
+}
+
+#[test]
+fn test_accept_admin_requires_pending_admin_auth() {
+    let env = Env::default();
+
+    let contract_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &300);
+
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&new_admin);
+
+    // Clear all mocked auths so accept_admin has no valid auth.
+    env.set_auths(&[]);
+
+    let result = client.try_accept_admin();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_accept_admin_not_init_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &contract_id);
+
+    let result = client.try_accept_admin();
+    assert_eq!(result, Err(Ok(Error::NotInit)));
+}
+
+/// After accept_admin, the new admin can perform admin-gated operations and the old one cannot
+/// (in a real auth scenario).  In mock_all_auths mode we verify the admin address itself changes.
+#[test]
+fn test_new_admin_can_update_fee_after_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, _old_admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    client.accept_admin();
+
+    // New admin updates the fee — should succeed (mock_all_auths satisfies auth for new_admin).
+    client.update_platform_fee_bps(&500);
+    let config = client.get_config();
+    assert_eq!(config.fee_bps, 500);
+    assert_eq!(config.admin, new_admin);
+}
+
+// ── cancel_admin_transfer ─────────────────────────────────────
+
+#[test]
+fn test_cancel_admin_transfer_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    client.cancel_admin_transfer();
+
+    let config = client.get_config();
+    // pending cleared, admin unchanged
+    assert_eq!(config.pending_admin, None);
+    assert_eq!(config.admin, admin);
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    client.cancel_admin_transfer();
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let (_contract, topics, data) = last;
+
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "admin_cancelled"),).into_val(&env)
+    );
+    let (ev_admin, ev_cancelled): (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(ev_admin, admin);
+    assert_eq!(ev_cancelled, new_admin);
+}
+
+#[test]
+fn test_cancel_admin_transfer_no_pending_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, _admin) = setup_initialized(&env);
+
+    // nothing to cancel
+    let result = client.try_cancel_admin_transfer();
+    assert_eq!(result, Err(Ok(Error::NoPendingAdmin)));
+}
+
+#[test]
+fn test_cancel_admin_transfer_requires_admin_auth() {
+    let env = Env::default();
+
+    let contract_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &300);
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&new_admin);
+
+    env.set_auths(&[]);
+
+    let result = client.try_cancel_admin_transfer();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cancel_admin_transfer_not_init_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(InvoiceEscrow, ());
+    let client = InvoiceEscrowClient::new(&env, &contract_id);
+
+    let result = client.try_cancel_admin_transfer();
+    assert_eq!(result, Err(Ok(Error::NotInit)));
+}
+
+/// After a cancel, accept_admin should fail with NoPendingAdmin.
+#[test]
+fn test_accept_after_cancel_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, _admin) = setup_initialized(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&new_admin);
+    client.cancel_admin_transfer();
+
+    let result = client.try_accept_admin();
+    assert_eq!(result, Err(Ok(Error::NoPendingAdmin)));
+}
+
+/// Full end-to-end: propose → accept → new admin proposes again → new pending admin accepts.
+#[test]
+fn test_double_transfer_full_cycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _id, _admin_a) = setup_initialized(&env);
+    let admin_b = Address::generate(&env);
+    let admin_c = Address::generate(&env);
+
+    // Transfer A → B
+    client.propose_admin(&admin_b);
+    client.accept_admin();
+    assert_eq!(client.get_config().admin, admin_b);
+
+    // Transfer B → C
+    client.propose_admin(&admin_c);
+    client.accept_admin();
+    assert_eq!(client.get_config().admin, admin_c);
+    assert_eq!(client.get_config().pending_admin, None);
 }

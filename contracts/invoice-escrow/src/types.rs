@@ -33,6 +33,9 @@ pub struct Config {
     /// Defaults to false (opt-in) so existing deployments/tests are unaffected
     /// until an admin explicitly enables it.
     pub whitelist_enabled: bool,
+    /// Pending new admin address proposed during a two-step admin transfer.
+    /// Set by `propose_admin`; cleared by `accept_admin` or `cancel_admin_transfer`.
+    pub pending_admin: Option<soroban_sdk::Address>,
 }
 
 /// Lifecycle status of an escrow.
