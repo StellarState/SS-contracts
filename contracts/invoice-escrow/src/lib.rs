@@ -10,7 +10,7 @@ mod events;
 mod storage;
 mod types;
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
 
 // EscrowStatus is re-exported publicly; Config and EscrowData are crate-private.
 pub use types::EscrowStatus;
@@ -30,6 +30,23 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
         return Err(Error::Paused);
     }
     Ok(())
+}
+
+/// Return the `Some` value inside an `Option<Address>` wrapped as a Soroban Val.
+/// Soroban SDK does not implement `IntoVal<Env, Val>` for `Option<Address>` directly,
+/// so we convert via a helper that maps `None` → an error instead of panicking.
+fn require_funder(funder: Option<Address>) -> Result<Address, Error> {
+    funder.ok_or(Error::EscrowNotFunded)
+}
+
+/// Check that `token` is present in the `accepted_tokens` list.
+fn is_token_accepted(accepted: &Vec<Address>, token: &Address) -> bool {
+    for i in 0..accepted.len() {
+        if &accepted.get(i).unwrap() == token {
+            return true;
+        }
+    }
+    false
 }
 
 #[contractimpl]
@@ -52,10 +69,16 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// Create an escrow for an invoice. Caller (seller) must be authenticated.
-    /// face_value: what the debtor owes (amount to be paid at settlement)
-    /// purchase_price: what the investor pays (discount applied here)
-    /// commitment: immutable on-chain anchor (SHA-256 hash of off-chain invoice data)
+    /// Create an escrow for an invoice.  Caller (seller) must be authenticated.
+    ///
+    /// # Parameters
+    /// * `accepted_tokens` – non-empty list of token contract addresses accepted
+    ///   for funding and payment.  The first element is the canonical token; all
+    ///   tokens in the list are equally valid.  Pass a one-element Vec to keep the
+    ///   original single-token behaviour.
+    /// * `face_value` – what the debtor owes (amount to be paid at settlement).
+    /// * `purchase_price` – what the investor(s) pay in total (discount applied here).
+    /// * `commitment` – immutable on-chain anchor (SHA-256 hash of off-chain invoice data).
     pub fn create_escrow(
         env: Env,
         invoice_id: Symbol,
@@ -67,6 +90,7 @@ impl InvoiceEscrow {
         payment_token: Address,
         invoice_token: Address,
         commitment: soroban_sdk::BytesN<32>,
+        accepted_tokens: Vec<Address>,
     ) -> Result<(), Error> {
         seller.require_auth();
         if face_value <= 0 || purchase_price <= 0 {
@@ -79,7 +103,16 @@ impl InvoiceEscrow {
         if due_date <= current_timestamp {
             return Err(Error::InvalidDueDate);
         }
-        storage::get_config(&env).ok_or(Error::NotInit)?;
+        // accepted_tokens must be non-empty.
+        if accepted_tokens.is_empty() {
+            return Err(Error::InvalidAmount);
+        }
+        // payment_token must be in the accepted_tokens list.
+        if !is_token_accepted(&accepted_tokens, &payment_token) {
+            return Err(Error::TokenNotAccepted);
+        }
+
+        storage::get_config(&env).ok_or(Error::NotInit).and_then(|cfg| ensure_not_paused(&cfg))?;
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
@@ -92,11 +125,14 @@ impl InvoiceEscrow {
             funded_amt: 0,
             funder: None,
             due_dt: due_date,
+            // `token` is set to `payment_token` (canonical token) until fund_escrow
+            // locks it to whichever accepted token the first funder uses.
             token: payment_token.clone(),
             inv_token: invoice_token.clone(),
             paid_amt: 0,
             status: EscrowStatus::Created,
             commitment: commitment.clone(),
+            accepted_tokens: accepted_tokens.clone(),
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
         events::escrow_created(
@@ -110,6 +146,7 @@ impl InvoiceEscrow {
             &payment_token,
             &invoice_token,
             &commitment,
+            &accepted_tokens,
         );
         Ok(())
     }
@@ -136,12 +173,20 @@ impl InvoiceEscrow {
     }
 
     /// Fund the escrow (investor buys part or all of the invoice at purchase_price).
-    /// Transfers `amount` from buyer to this contract. Multiple investors can fund until fully subscribed.
+    ///
+    /// The `funding_token` parameter must be one of the escrow's `accepted_tokens`.
+    /// All funding must use the **same** token: once the first funder's token is
+    /// recorded (stored as `data.token`), subsequent partial funders must also use
+    /// that token.
+    ///
+    /// Transfers `amount` from buyer to this contract.  Multiple investors can fund
+    /// until fully subscribed.
     pub fn fund_escrow(
         env: Env,
         invoice_id: Symbol,
         buyer: Address,
         amount: i128,
+        funding_token: Address,
     ) -> Result<(), Error> {
         buyer.require_auth();
         // Fail fast: validate amount before hitting storage.
@@ -160,13 +205,24 @@ impl InvoiceEscrow {
             return Err(Error::EscrowFunded);
         }
 
+        // Validate that the funding token is accepted.
+        if !is_token_accepted(&data.accepted_tokens, &funding_token) {
+            return Err(Error::TokenNotAccepted);
+        }
+
+        // Once the first funder has chosen a token, all subsequent partial funders
+        // must use the same token (stored in data.token after first fund).
+        if data.funded_amt > 0 && funding_token != data.token {
+            return Err(Error::TokenNotAccepted);
+        }
+
         // Check that funding doesn't exceed purchase_price
         let new_funded = data.funded_amt.checked_add(amount).ok_or(Error::Overflow)?;
         if new_funded > data.purchase_price {
             return Err(Error::InvalidAmount);
         }
 
-        let token = token::Client::new(&env, &data.token);
+        let token = token::Client::new(&env, &funding_token);
         let contract = env.current_contract_address();
         token.transfer(&buyer, &contract, &amount);
 
@@ -177,7 +233,7 @@ impl InvoiceEscrow {
             soroban_sdk::vec![
                 &env,
                 buyer.to_val(),
-                amount.into_val(&env),
+                soroban_sdk::IntoVal::into_val(&amount, &env),
                 contract.to_val()
             ],
         );
@@ -190,6 +246,12 @@ impl InvoiceEscrow {
         storage::set_funder_amount(&env, invoice_id.clone(), &buyer, new_funder_amt);
 
         data.funded_amt = new_funded;
+
+        // Lock in the funding token for this escrow (first funder determines it).
+        if data.funded_amt == amount {
+            // This is the first funding contribution — record the chosen token.
+            data.token = funding_token.clone();
+        }
 
         // MVP: Store the first funder for direct distribution
         if data.funder.is_none() {
@@ -259,6 +321,7 @@ impl InvoiceEscrow {
             .ok_or(Error::Overflow)?;
         let investor_amount = amount.checked_sub(platform_fee).ok_or(Error::Overflow)?;
 
+        // Payments always use the locked-in funding token (data.token).
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
 
@@ -279,29 +342,33 @@ impl InvoiceEscrow {
 
         if let Some(distributor) = config.payment_distributor.as_ref() {
             // Forward the full payment amount to the distributor contract.
-            // Fix: was `amount + amount` (double-counting); correct is investor_amount + platform_fee == amount.
             let total_to_distributor = investor_amount
                 .checked_add(platform_fee)
                 .ok_or(Error::Overflow)?;
             token.transfer(&contract, distributor, &total_to_distributor);
+
+            // Resolve Option<Address> to Address before building the Vec<Address>
+            // because Soroban SDK cannot convert Option<Address> into Val directly.
+            let funder_addr = require_funder(funder_opt.clone())?;
+
             env.invoke_contract::<()>(
                 distributor,
                 &Symbol::new(&env, DISTRIBUTE_PAYMENT_FN),
                 soroban_sdk::vec![
                     &env,
                     contract.to_val(),
-                    invoice_id.clone().into_val(&env),
+                    soroban_sdk::IntoVal::into_val(&invoice_id.clone(), &env),
                     soroban_sdk::vec![
                         &env,
                         data.token.clone(),
                         data.seller.clone(),
-                        funder_opt.clone().into_val(&env),
+                        funder_addr,
                         config.admin.clone()
                     ]
-                    .into_val(&env),
+                    .to_val(),
                     soroban_sdk::vec![&env, data.paid_amt, amount, investor_amount, platform_fee]
-                        .into_val(&env),
-                    (data.status as u32).into_val(&env)
+                        .to_val(),
+                    soroban_sdk::IntoVal::into_val(&(data.status as u32), &env)
                 ],
             );
         } else {
@@ -333,7 +400,7 @@ impl InvoiceEscrow {
             env.invoke_contract::<()>(
                 &data.inv_token,
                 &Symbol::new(&env, "set_transfer_locked"),
-                soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+                soroban_sdk::vec![&env, contract.to_val(), soroban_sdk::IntoVal::into_val(&false, &env)],
             );
         }
 
@@ -362,6 +429,7 @@ impl InvoiceEscrow {
             .checked_sub(data.paid_amt)
             .ok_or(Error::Overflow)?;
 
+        // Refunds always use the locked-in funding token (data.token).
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
 
@@ -374,21 +442,20 @@ impl InvoiceEscrow {
         if amount_to_refund > 0 {
             if let Some(distributor) = config.payment_distributor.as_ref() {
                 token.transfer(&contract, distributor, &amount_to_refund);
+
+                // Resolve Option<Address> before building Vec<Address>.
+                let funder_addr = require_funder(funder_opt.clone())?;
+
                 env.invoke_contract::<()>(
                     distributor,
                     &Symbol::new(&env, DISTRIBUTE_REFUND_FN),
                     soroban_sdk::vec![
                         &env,
                         contract.to_val(),
-                        invoice_id.clone().into_val(&env),
-                        soroban_sdk::vec![
-                            &env,
-                            data.token.clone(),
-                            funder_opt.clone().into_val(&env)
-                        ]
-                        .into_val(&env),
-                        soroban_sdk::vec![&env, amount_to_refund].into_val(&env),
-                        (data.status as u32).into_val(&env)
+                        soroban_sdk::IntoVal::into_val(&invoice_id.clone(), &env),
+                        soroban_sdk::vec![&env, data.token.clone(), funder_addr].to_val(),
+                        soroban_sdk::vec![&env, amount_to_refund].to_val(),
+                        soroban_sdk::IntoVal::into_val(&(data.status as u32), &env)
                     ],
                 );
             } else {
@@ -414,7 +481,7 @@ impl InvoiceEscrow {
         env.invoke_contract::<()>(
             &data.inv_token,
             &Symbol::new(&env, "set_transfer_locked"),
-            soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+            soroban_sdk::vec![&env, contract.to_val(), soroban_sdk::IntoVal::into_val(&false, &env)],
         );
 
         events::escrow_refunded(&env, invoice_id, amount_to_refund);

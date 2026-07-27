@@ -1,8 +1,9 @@
 //! Event definitions for state changes (escrow_created, escrow_funded, payment_settled).
 
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Publish escrow_created event.
+#[allow(clippy::too_many_arguments)]
 pub fn escrow_created(
     env: &Env,
     inv_id: Symbol,
@@ -14,7 +15,10 @@ pub fn escrow_created(
     token: &Address,
     inv_token: &Address,
     commitment: &soroban_sdk::BytesN<32>,
+    accepted_tokens: &Vec<Address>,
 ) {
+    // accepted_tokens is published as a raw Val to avoid tuple-element trait bounds
+    // that Vec<Address> does not satisfy directly. Callers decode with try_into_val.
     env.events().publish(
         (Symbol::new(env, "escrow_created"),),
         (
@@ -27,6 +31,7 @@ pub fn escrow_created(
             token,
             inv_token,
             commitment,
+            accepted_tokens.to_val(),
         ),
     );
 }

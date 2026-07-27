@@ -61,20 +61,12 @@ fn test_create_and_fund() {
     payment_token_asset.mint(&buyer, &2000);
 
     // Create escrow
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &amount,
-        &amount,
-        &1000000,
-        &payment_token.address,
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &1000000, &payment_token.address, &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.address.clone()]
     );
 
     // Fund escrow
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token.address);
 
     // Check status
     let status = escrow_client.get_escrow_status(&invoice_id);
@@ -118,19 +110,11 @@ fn test_record_payment() {
     // Payer gets payment tokens for settling
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &amount,
-        &amount,
-        &1000000,
-        &payment_token.address,
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &amount, &amount, &1000000, &payment_token.address, &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.address.clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token.address);
     assert_eq!(payment_token.balance(&buyer), 0);
 
     // The contract holds the buyer's 1000
@@ -176,16 +160,8 @@ fn test_escrow_created_event() {
     let amount = 5000;
     let due_date = 2000000;
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &amount,
-        &amount,
-        &due_date,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &due_date, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
     // Assert escrow_created event was emitted
@@ -210,6 +186,7 @@ fn test_escrow_created_event() {
         Address,
         Address,
         BytesN<32>,
+        soroban_sdk::Val,
     ) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
     assert_eq!(event_data.1, seller);
@@ -220,8 +197,6 @@ fn test_escrow_created_event() {
     assert_eq!(event_data.6, payment_token_id.address());
     assert_eq!(event_data.7, inv_token_id);
     assert_eq!(event_data.8, test_commitment(&env, "test_invoice_data"));
-    assert_eq!(event_data.6, payment_token_id.address());
-    assert_eq!(event_data.7, inv_token_id);
 }
 
 #[test]
@@ -247,19 +222,11 @@ fn test_escrow_funded_event() {
 
     payment_token_asset.mint(&buyer, &3000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &amount,
-        &amount,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token_id.address());
 
     // Find escrow_funded event (should be the last event)
     let events = env.events().all();
@@ -302,19 +269,11 @@ fn test_payment_settled_event() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &amount,
-        &amount,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &amount, &amount, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token_id.address());
     escrow_client.record_payment(&invoice_id, &payer, &amount);
 
     // Find payment_settled event (should be the last event)
@@ -359,19 +318,11 @@ fn test_escrow_refunded_event() {
 
     payment_token_asset.mint(&buyer, &2000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &amount,
-        &amount,
-        &due_date,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &due_date, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token_id.address());
 
     // Set ledger timestamp past due date to allow refund
     env.ledger().with_mut(|li| li.timestamp = due_date + 1);
@@ -417,16 +368,8 @@ fn test_no_settlement_event_on_invalid_state() {
 
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &amount,
-        &amount,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &amount, &amount, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
     // Try to record payment without funding first (should fail)
@@ -471,16 +414,8 @@ fn test_no_refund_event_on_invalid_state() {
     let amount = 1000;
     let due_date = 1000;
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &amount,
-        &amount,
-        &due_date,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &due_date, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
     // Set ledger timestamp past due date
@@ -543,16 +478,8 @@ fn test_create_escrow_requires_seller_auth() {
     escrow_client.initialize(&admin, &300);
 
     // Without auth, should fail
-    let result = escrow_client.try_create_escrow(
-        &Symbol::new(&env, "INV001"),
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    let result = escrow_client.try_create_escrow(&Symbol::new(&env, "INV001"), &seller, &seller, &1000, &1000, &1000000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert!(result.is_err());
 }
@@ -605,16 +532,8 @@ fn test_create_escrow_zero_amount() {
     escrow_client.initialize(&admin, &300);
 
     // Zero amount should fail
-    let result = escrow_client.try_create_escrow(
-        &Symbol::new(&env, "INV001"),
-        &seller,
-        &seller,
-        &0,
-        &0,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    let result = escrow_client.try_create_escrow(&Symbol::new(&env, "INV001"), &seller, &seller, &0, &0, &1000000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -635,16 +554,8 @@ fn test_create_escrow_negative_amount() {
     escrow_client.initialize(&admin, &300);
 
     // Negative amount should fail
-    let result = escrow_client.try_create_escrow(
-        &Symbol::new(&env, "INV001"),
-        &seller,
-        &seller,
-        &-100,
-        &-100,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    let result = escrow_client.try_create_escrow(&Symbol::new(&env, "INV001"), &seller, &seller, &-100, &-100, &1000000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
@@ -666,29 +577,13 @@ fn test_create_escrow_duplicate_invoice_id() {
     escrow_client.initialize(&admin, &300);
 
     // First create should succeed
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &1000000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Second create with same invoice_id should fail
-    let result = escrow_client.try_create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &2000,
-        &2000,
-        &2000000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    let result = escrow_client.try_create_escrow(&invoice_id, &seller, &seller, &2000, &2000, &2000000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert_eq!(result, Err(Ok(Error::EscrowExists)));
 }
@@ -744,7 +639,7 @@ fn test_fund_escrow_not_found() {
     escrow_client.initialize(&admin, &300);
 
     // Try to fund non-existent escrow
-    let result = escrow_client.try_fund_escrow(&Symbol::new(&env, "NONEXISTENT"), &buyer, &1000);
+    let result = escrow_client.try_fund_escrow(&Symbol::new(&env, "NONEXISTENT"), &buyer, &1000, &Address::generate(&env));
     assert_eq!(result, Err(Ok(Error::EscrowNotFound)));
 }
 
@@ -772,23 +667,15 @@ fn test_fund_escrow_already_funded() {
     payment_token_asset.mint(&buyer1, &1000);
     payment_token_asset.mint(&buyer2, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
     // First funding should succeed
-    escrow_client.fund_escrow(&invoice_id, &buyer1, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer1, &1000, &payment_token_id.address());
 
     // Second funding should fail
-    let result = escrow_client.try_fund_escrow(&invoice_id, &buyer2, &1000);
+    let result = escrow_client.try_fund_escrow(&invoice_id, &buyer2, &1000, &payment_token_id.address());
     assert_eq!(result, Err(Ok(Error::EscrowFunded)));
 }
 
@@ -809,16 +696,8 @@ fn test_record_payment_not_funded() {
 
     escrow_client.initialize(&admin, &300);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &1000, &1000, &1000000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Try to record payment without funding first
@@ -850,19 +729,11 @@ fn test_record_payment_already_settled() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &2000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &1000, &1000, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // Try to record payment again
@@ -894,19 +765,11 @@ fn test_record_payment_amount_exceeds_escrow() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &2000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &1000, &1000, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
 
     // Try to record payment with amount > escrow amount
     let result = escrow_client.try_record_payment(&invoice_id, &payer, &1500);
@@ -929,16 +792,8 @@ fn test_refund_not_funded() {
 
     escrow_client.initialize(&admin, &300);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &1000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Set time past due date
@@ -974,19 +829,11 @@ fn test_refund_before_due_date() {
 
     payment_token_asset.mint(&buyer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &due_date,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &due_date, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
 
     // Set time before due date
     env.ledger().with_mut(|li| li.timestamp = due_date - 1);
@@ -1020,19 +867,11 @@ fn test_refund_at_due_date() {
 
     payment_token_asset.mint(&buyer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &due_date,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &due_date, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
 
     // Set time exactly at due date
     env.ledger().with_mut(|li| li.timestamp = due_date);
@@ -1072,19 +911,11 @@ fn test_refund_after_due_date() {
 
     payment_token_asset.mint(&buyer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &due_date,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &due_date, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
 
     // Set time after due date
     env.ledger().with_mut(|li| li.timestamp = due_date + 5000);
@@ -1125,19 +956,11 @@ fn test_refund_already_settled() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &1000,
-        &1000,
-        &due_date,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &1000, &1000, &due_date, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // Set time after due date
@@ -1176,19 +999,11 @@ fn test_fee_calculation_zero_fee() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &1000, &1000, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // With 0% fee, buyer should get full amount
@@ -1222,19 +1037,11 @@ fn test_fee_calculation_max_fee() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &1000, &1000, &1000000, &payment_token_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000, &payment_token_id.address());
     escrow_client.record_payment(&invoice_id, &payer, &1000);
 
     // With 100% fee, admin gets all, buyer gets nothing
@@ -1337,16 +1144,8 @@ fn test_get_escrow_data() {
 
     escrow_client.initialize(&admin, &300);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &amount,
-        &amount,
-        &due_date,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &amount, &amount, &due_date, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Get escrow data and verify
@@ -1377,16 +1176,8 @@ fn test_create_escrow_not_initialized() {
     let inv_token = Address::generate(&env);
 
     // Try to create escrow without initialization
-    let result = escrow_client.try_create_escrow(
-        &Symbol::new(&env, "INV001"),
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "test_invoice_data"),
+    let result = escrow_client.try_create_escrow(&Symbol::new(&env, "INV001"), &seller, &seller, &1000, &1000, &1000000, &payment_token, &inv_token, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert_eq!(result, Err(Ok(Error::NotInit)));
 }
@@ -1430,19 +1221,11 @@ fn test_partial_payment_lifecycle() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &amount,
-        &amount,
-        &1000000,
-        &payment_token.address,
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &amount, &amount, &1000000, &payment_token.address, &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.address.clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token.address);
 
     // First payment: 400
     escrow_client.record_payment(&invoice_id, &payer, &400);
@@ -1513,19 +1296,11 @@ fn test_refund_after_partial_payment() {
     payment_token_asset.mint(&buyer, &1000);
     payment_token_asset.mint(&payer, &1000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &amount,
-        &amount,
-        &due_date,
-        &payment_token.address,
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &amount, &amount, &due_date, &payment_token.address, &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token.address.clone()]
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token.address);
 
     // Partial payment: 300
     escrow_client.record_payment(&invoice_id, &payer, &300);
@@ -1579,18 +1354,10 @@ fn test_record_payment_removes_initial_fund_even_on_full_payment() {
     payment_token_asset.mint(&buyer, &5000);
     payment_token_asset.mint(&payer, &5000);
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &amount,
-        &amount,
-        &100,
-        &pt_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &amount, &amount, &100, &pt_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, pt_id.address().clone()]
     );
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &pt_id.address());
 
     assert_eq!(payment_token.balance(&escrow_id), 5000);
 
@@ -1618,16 +1385,8 @@ fn setup_escrow_created(env: &Env) -> (Address, InvoiceEscrowClient<'_>, Address
     let seller = Address::generate(env);
     let invoice_id = Symbol::new(env, "INV_CANC");
 
-    client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000i128,
-        &1000i128,
-        &9_999_999u64,
-        &pt_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    client.create_escrow(&invoice_id, &seller, &seller, &1000i128, &1000i128, &9_999_999u64, &pt_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, pt_id.address().clone()]
     );
 
     let _ = (pt_asset,);
@@ -1696,18 +1455,10 @@ fn test_cancel_escrow_already_funded_rejected() {
 
     pt_asset.mint(&buyer, &1000);
 
-    client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000i128,
-        &1000i128,
-        &9_999_999u64,
-        &pt_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "test_invoice_data"),
+    client.create_escrow(&invoice_id, &seller, &seller, &1000i128, &1000i128, &9_999_999u64, &pt_id.address(), &inv_token_id, &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, pt_id.address().clone()]
     );
-    client.fund_escrow(&invoice_id, &buyer, &1000);
+    client.fund_escrow(&invoice_id, &buyer, &1000, &pt_id.address());
 
     // Cannot cancel once funded
     let res = client.try_cancel_escrow(&invoice_id, &seller);
@@ -1725,7 +1476,7 @@ fn test_fund_cancelled_escrow_rejected() {
     client.cancel_escrow(&invoice_id, &seller);
 
     let buyer = Address::generate(&env);
-    let res = client.try_fund_escrow(&invoice_id, &buyer, &1000);
+    let res = client.try_fund_escrow(&invoice_id, &buyer, &1000, &Address::generate(&env));
     assert_eq!(res, Err(Ok(Error::EscrowCancelled)));
 }
 
@@ -1788,42 +1539,28 @@ fn test_pause_blocks_lifecycle_operations_and_unpause_restores() {
     client.set_paused(&true);
     assert!(client.paused());
 
-    let create_while_paused = client.try_create_escrow(
-        &invoice_id,
-        &seller,
-        &seller, // debtor == seller for this test
-        &1000i128,
-        &1000i128,
-        &9_999_999u64,
-        &pt_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "pause_test_invoice"),
+    let create_while_paused = client.try_create_escrow(&invoice_id, &seller, &seller, // debtor == seller for this test
+        &1000i128, &1000i128, &9_999_999u64, &pt_id.address(), &inv_token_id, &test_commitment(&env, "pause_test_invoice"),
+        &soroban_sdk::vec![&env, pt_id.address().clone()]
     );
     assert_eq!(create_while_paused, Err(Ok(Error::Paused)));
 
     // Unpause and create successfully
     client.set_paused(&false);
-    client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer, // use payer as debtor so record_payment works
-        &1000i128,
-        &1000i128,
-        &9_999_999u64,
-        &pt_id.address(),
-        &inv_token_id,
-        &test_commitment(&env, "pause_test_invoice"),
+    client.create_escrow(&invoice_id, &seller, &payer, // use payer as debtor so record_payment works
+        &1000i128, &1000i128, &9_999_999u64, &pt_id.address(), &inv_token_id, &test_commitment(&env, "pause_test_invoice"),
+        &soroban_sdk::vec![&env, pt_id.address().clone()]
     );
 
     // Pause and verify fund_escrow is blocked
     pt_asset.mint(&buyer, &1000);
     client.set_paused(&true);
-    let fund_while_paused = client.try_fund_escrow(&invoice_id, &buyer, &1000i128);
+    let fund_while_paused = client.try_fund_escrow(&invoice_id, &buyer, &1000i128, &pt_id.address());
     assert_eq!(fund_while_paused, Err(Ok(Error::Paused)));
 
     // Unpause and fund successfully
     client.set_paused(&false);
-    client.fund_escrow(&invoice_id, &buyer, &1000i128);
+    client.fund_escrow(&invoice_id, &buyer, &1000i128, &pt_id.address());
 
     // Pause and verify record_payment is blocked
     pt_asset.mint(&payer, &1000);
@@ -1861,16 +1598,8 @@ fn test_create_escrow_with_commitment() {
 
     let commitment = test_commitment(&env, "invoice_pdf_hash_12345");
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &commitment,
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &1000000, &payment_token, &inv_token, &commitment,
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Verify escrow was created with commitment
@@ -1896,16 +1625,8 @@ fn test_commitment_immutable_after_creation() {
 
     let original_commitment = test_commitment(&env, "original_invoice_data");
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &original_commitment,
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &1000000, &payment_token, &inv_token, &original_commitment,
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Verify commitment is stored
@@ -1934,16 +1655,8 @@ fn test_commitment_included_in_created_event() {
 
     let commitment = test_commitment(&env, "event_test_invoice");
 
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &commitment,
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &1000, &1000000, &payment_token, &inv_token, &commitment,
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Assert escrow_created event was emitted with commitment
@@ -1968,6 +1681,7 @@ fn test_commitment_included_in_created_event() {
         Address,
         Address,
         BytesN<32>,
+        soroban_sdk::Val,
     ) = data.try_into_val(&env).unwrap();
     assert_eq!(event_data.0, invoice_id);
     assert_eq!(event_data.1, seller);
@@ -1992,31 +1706,15 @@ fn test_different_commitments_for_different_invoices() {
     // Create first invoice with commitment A
     let invoice_id_1 = Symbol::new(&env, "INV_A");
     let commitment_a = test_commitment(&env, "invoice_a_data");
-    escrow_client.create_escrow(
-        &invoice_id_1,
-        &seller,
-        &seller,
-        &1000,
-        &1000,
-        &1000000,
-        &payment_token,
-        &inv_token,
-        &commitment_a,
+    escrow_client.create_escrow(&invoice_id_1, &seller, &seller, &1000, &1000, &1000000, &payment_token, &inv_token, &commitment_a,
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Create second invoice with commitment B
     let invoice_id_2 = Symbol::new(&env, "INV_B");
     let commitment_b = test_commitment(&env, "invoice_b_data");
-    escrow_client.create_escrow(
-        &invoice_id_2,
-        &seller,
-        &seller,
-        &2000,
-        &2000,
-        &2000000,
-        &payment_token,
-        &inv_token,
-        &commitment_b,
+    escrow_client.create_escrow(&invoice_id_2, &seller, &seller, &2000, &2000, &2000000, &payment_token, &inv_token, &commitment_b,
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Verify each invoice has its own commitment
@@ -2057,16 +1755,8 @@ fn test_commitment_persists_through_lifecycle() {
     let commitment = test_commitment(&env, "lifecycle_test_invoice");
 
     // Create escrow with commitment
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &payer,
-        &amount,
-        &amount,
-        &1000000,
-        &payment_token.address,
-        &inv_token_id,
-        &commitment,
+    escrow_client.create_escrow(&invoice_id, &seller, &payer, &amount, &amount, &1000000, &payment_token.address, &inv_token_id, &commitment,
+        &soroban_sdk::vec![&env, payment_token.address.clone()]
     );
 
     // Verify commitment after creation
@@ -2074,7 +1764,7 @@ fn test_commitment_persists_through_lifecycle() {
     assert_eq!(escrow_data.commitment, commitment);
 
     // Fund escrow
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token.address);
 
     // Verify commitment persists after funding
     let escrow_data = escrow_client.get_escrow(&invoice_id);
@@ -2112,16 +1802,8 @@ fn test_create_escrow_due_date_in_past_rejected() {
 
     // Try to create escrow with due_date in the past
     let past_due_date = current_timestamp - 1000;
-    let result = escrow_client.try_create_escrow(
-        &Symbol::new(&env, "INV_PAST"),
-        &seller,
-        &seller,
-        &1000,
-        &950,
-        &past_due_date,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "past_due_test"),
+    let result = escrow_client.try_create_escrow(&Symbol::new(&env, "INV_PAST"), &seller, &seller, &1000, &950, &past_due_date, &payment_token, &inv_token, &test_commitment(&env, "past_due_test"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
 }
@@ -2146,16 +1828,8 @@ fn test_create_escrow_due_date_equal_to_current_timestamp_rejected() {
     let current_timestamp = env.ledger().timestamp();
 
     // Try to create escrow with due_date equal to current timestamp
-    let result = escrow_client.try_create_escrow(
-        &Symbol::new(&env, "INV_EQUAL"),
-        &seller,
-        &seller,
-        &1000,
-        &950,
-        &current_timestamp,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "equal_timestamp_test"),
+    let result = escrow_client.try_create_escrow(&Symbol::new(&env, "INV_EQUAL"), &seller, &seller, &1000, &950, &current_timestamp, &payment_token, &inv_token, &test_commitment(&env, "equal_timestamp_test"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
 }
@@ -2176,16 +1850,8 @@ fn test_create_escrow_due_date_zero_rejected() {
     escrow_client.initialize(&admin, &300);
 
     // Try to create escrow with due_date = 0
-    let result = escrow_client.try_create_escrow(
-        &Symbol::new(&env, "INV_ZERO"),
-        &seller,
-        &seller,
-        &1000,
-        &950,
-        &0,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "zero_due_date_test"),
+    let result = escrow_client.try_create_escrow(&Symbol::new(&env, "INV_ZERO"), &seller, &seller, &1000, &950, &0, &payment_token, &inv_token, &test_commitment(&env, "zero_due_date_test"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
     assert_eq!(result, Err(Ok(Error::InvalidDueDate)));
 }
@@ -2212,20 +1878,370 @@ fn test_create_escrow_due_date_in_future_accepted() {
     // Create escrow with due_date in the future - should succeed
     let future_due_date = current_timestamp + 1000000;
     let invoice_id = Symbol::new(&env, "INV_FUTURE");
-    escrow_client.create_escrow(
-        &invoice_id,
-        &seller,
-        &seller,
-        &1000,
-        &950,
-        &future_due_date,
-        &payment_token,
-        &inv_token,
-        &test_commitment(&env, "future_due_test"),
+    escrow_client.create_escrow(&invoice_id, &seller, &seller, &1000, &950, &future_due_date, &payment_token, &inv_token, &test_commitment(&env, "future_due_test"),
+        &soroban_sdk::vec![&env, payment_token.clone()]
     );
 
     // Verify escrow was created successfully
     let escrow_data = escrow_client.get_escrow(&invoice_id);
     assert_eq!(escrow_data.due_dt, future_due_date);
     assert_eq!(escrow_data.status, EscrowStatus::Created);
+}
+
+// ========== Multi-Token Escrow Tests ==========
+
+#[test]
+fn test_create_escrow_with_multiple_accepted_tokens() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let token_c = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_MULTI");
+
+    escrow_client.initialize(&admin, &300);
+
+    let accepted = soroban_sdk::vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &1000000,
+        &token_a,
+        &inv_token,
+        &test_commitment(&env, "multi_token_test"),
+        &accepted,
+    );
+
+    let data = escrow_client.get_escrow(&invoice_id);
+    assert_eq!(data.accepted_tokens.len(), 3);
+    assert_eq!(data.status, EscrowStatus::Created);
+}
+
+#[test]
+fn test_create_escrow_payment_token_not_in_accepted_list_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let unlisted = Address::generate(&env); // NOT in accepted list
+    let inv_token = Address::generate(&env);
+
+    escrow_client.initialize(&admin, &300);
+
+    // payment_token = unlisted but accepted_tokens = [token_a, token_b]
+    let result = escrow_client.try_create_escrow(
+        &Symbol::new(&env, "INV_BAD"),
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &1000000,
+        &unlisted,
+        &inv_token,
+        &test_commitment(&env, "bad_token_test"),
+        &soroban_sdk::vec![&env, token_a.clone(), token_b.clone()],
+    );
+    assert_eq!(result, Err(Ok(Error::TokenNotAccepted)));
+}
+
+#[test]
+fn test_create_escrow_empty_accepted_tokens_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+
+    escrow_client.initialize(&admin, &300);
+
+    let result = escrow_client.try_create_escrow(
+        &Symbol::new(&env, "INV_EMPTY"),
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &1000000,
+        &token_a,
+        &inv_token,
+        &test_commitment(&env, "empty_tokens_test"),
+        &soroban_sdk::vec![&env], // empty!
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+}
+
+#[test]
+fn test_fund_with_accepted_token_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    // Register two payment tokens
+    let token_a_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_b_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_a = soroban_sdk::token::Client::new(&env, &token_a_id.address());
+    let token_b_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_b_id.address());
+    let token_b = soroban_sdk::token::Client::new(&env, &token_b_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_FUNDA");
+    let amount = 1000i128;
+
+    token_b_asset.mint(&buyer, &amount);
+
+    // Create with both token_a and token_b accepted; canonical = token_a
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &amount,
+        &amount,
+        &9_999_999,
+        &token_a_id.address(), // canonical
+        &inv_token_id,
+        &test_commitment(&env, "fund_accepted"),
+        &soroban_sdk::vec![&env, token_a_id.address().clone(), token_b_id.address().clone()],
+    );
+
+    // Fund using token_b (a non-canonical but accepted token)
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &token_b_id.address());
+
+    assert_eq!(escrow_client.get_escrow_status(&invoice_id), EscrowStatus::Funded);
+    // token_b should have been transferred from buyer to escrow
+    assert_eq!(token_b.balance(&buyer), 0);
+    assert_eq!(token_b.balance(&escrow_id), amount);
+    // token_a should be untouched
+    assert_eq!(token_a.balance(&buyer), 0);
+    // Escrow's locked token is now token_b
+    let data = escrow_client.get_escrow(&invoice_id);
+    assert_eq!(data.token, token_b_id.address());
+}
+
+#[test]
+fn test_fund_with_rejected_token_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    let token_a_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_bad = Address::generate(&env); // not in accepted list
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_FUNDREJ");
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &9_999_999,
+        &token_a_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "fund_rejected"),
+        &soroban_sdk::vec![&env, token_a_id.address().clone()],
+    );
+
+    // Try to fund with an unaccepted token
+    let result = escrow_client.try_fund_escrow(&invoice_id, &buyer, &1000, &token_bad);
+    assert_eq!(result, Err(Ok(Error::TokenNotAccepted)));
+}
+
+#[test]
+fn test_payment_uses_locked_funding_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    // token_b will be used for funding; payment must also use token_b
+    let token_a_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_b_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_b_asset = soroban_sdk::token::StellarAssetClient::new(&env, &token_b_id.address());
+    let token_b = soroban_sdk::token::Client::new(&env, &token_b_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &0); // 0% fee for simple math
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_PAYMT");
+    let amount = 500i128;
+
+    token_b_asset.mint(&buyer, &amount);
+    token_b_asset.mint(&payer, &amount);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &amount,
+        &amount,
+        &9_999_999,
+        &token_a_id.address(), // canonical = token_a
+        &inv_token_id,
+        &test_commitment(&env, "payment_token_locked"),
+        &soroban_sdk::vec![&env, token_a_id.address().clone(), token_b_id.address().clone()],
+    );
+
+    // Fund with token_b — this locks token_b as the escrow's payment token
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &token_b_id.address());
+    assert_eq!(escrow_client.get_escrow(&invoice_id).token, token_b_id.address());
+
+    // Record payment — payer pays with token_b (the locked token)
+    escrow_client.record_payment(&invoice_id, &payer, &amount);
+
+    assert_eq!(escrow_client.get_escrow_status(&invoice_id), EscrowStatus::Settled);
+    // With 0% fee: buyer gets full amount, seller gets collateral back
+    assert_eq!(token_b.balance(&buyer), amount);
+    assert_eq!(token_b.balance(&seller), amount);
+    assert_eq!(token_b.balance(&escrow_id), 0);
+}
+
+#[test]
+fn test_single_token_backwards_compat() {
+    // Passing a single-element accepted_tokens list should work exactly like the old behavior.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = soroban_sdk::token::StellarAssetClient::new(&env, &pt_id.address());
+    let pt = soroban_sdk::token::Client::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300); // 3%
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_COMPAT");
+    let amount = 1000i128;
+
+    pt_asset.mint(&buyer, &amount);
+    pt_asset.mint(&payer, &amount);
+
+    // Single-token list — identical to old single-token create_escrow
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &amount,
+        &amount,
+        &9_999_999,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "compat_test"),
+        &soroban_sdk::vec![&env, pt_id.address().clone()],
+    );
+
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &pt_id.address());
+    escrow_client.record_payment(&invoice_id, &payer, &amount);
+
+    assert_eq!(escrow_client.get_escrow_status(&invoice_id), EscrowStatus::Settled);
+    assert_eq!(pt.balance(&buyer), 970);   // 1000 - 3% fee
+    assert_eq!(pt.balance(&admin), 30);    // 3% fee
+    assert_eq!(pt.balance(&seller), 1000); // collateral released
+    assert_eq!(pt.balance(&payer), 0);
+    assert_eq!(pt.balance(&escrow_id), 0);
+}
+
+#[test]
+fn test_accepted_tokens_emitted_in_escrow_created_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let inv_token = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EVTMT");
+
+    escrow_client.initialize(&admin, &300);
+
+    let accepted = soroban_sdk::vec![&env, token_a.clone(), token_b.clone()];
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &1000,
+        &1000000,
+        &token_a,
+        &inv_token,
+        &test_commitment(&env, "event_multi_token"),
+        &accepted,
+    );
+
+    let events = env.events().all();
+    let (_addr, topics, data) = events.last().unwrap();
+
+    let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "escrow_created"));
+
+    // Decode the 10-element event tuple; field 9 is accepted_tokens as Val
+    let event_data: (
+        Symbol,
+        Address,
+        Address,
+        i128,
+        i128,
+        u64,
+        Address,
+        Address,
+        BytesN<32>,
+        soroban_sdk::Val,
+    ) = data.try_into_val(&env).unwrap();
+
+    assert_eq!(event_data.0, invoice_id);
+    // Decode the accepted_tokens Vec from the Val
+    let decoded_tokens: soroban_sdk::Vec<Address> =
+        event_data.9.try_into_val(&env).unwrap();
+    assert_eq!(decoded_tokens.len(), 2);
+    assert_eq!(decoded_tokens.get(0).unwrap(), token_a);
+    assert_eq!(decoded_tokens.get(1).unwrap(), token_b);
 }

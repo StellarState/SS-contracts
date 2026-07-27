@@ -66,7 +66,10 @@ pub struct EscrowData {
     pub funder: Option<soroban_sdk::Address>,
     /// Due date (ledger timestamp).
     pub due_dt: u64,
-    /// Payment token contract address.
+    /// Payment token contract address used to actually fund/pay this escrow.
+    /// For multi-token escrows this is set to the first token in `accepted_tokens`
+    /// when the escrow is created, and updated to the actual funding token when
+    /// `fund_escrow` is called.
     pub token: soroban_sdk::Address,
     /// Invoice token contract address (ownership/claim).
     pub inv_token: soroban_sdk::Address,
@@ -77,4 +80,10 @@ pub struct EscrowData {
     /// Commitment hash: immutable on-chain anchor for off-chain invoice data (PDF hash, ERP ID, etc.).
     /// Set at creation, cannot be modified. SHA-256 hash (32 bytes).
     pub commitment: soroban_sdk::BytesN<32>,
+    /// Accepted payment tokens: the set of token addresses that may be used
+    /// to fund and pay this escrow.  Must be non-empty.
+    /// The first element is the canonical / default token.
+    /// All funders must use a token from this list; all payments must use the
+    /// same token that was used to fund (stored in `token` once funded).
+    pub accepted_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
 }

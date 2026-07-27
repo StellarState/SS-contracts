@@ -72,10 +72,11 @@ fn test_integration_escrow_lifecycle_happy_path() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()],
     );
 
     // 8. Fund Escrow (Buyer buys the invoice)
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token_id.address());
 
     // Verify buyer received invoice tokens and paid payment tokens
     assert_eq!(inv_token_client.balance(&buyer), amount);
@@ -160,9 +161,10 @@ fn test_integration_refund_lifecycle() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()],
     );
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token_id.address());
 
     // Attempt refund before due date (should fail)
     let res = escrow_client.try_refund(&invoice_id);
@@ -231,12 +233,13 @@ fn test_integration_token_locked_during_active_escrow() {
         &payment_token_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &soroban_sdk::vec![&env, payment_token_id.address().clone()],
     );
 
     // Token is locked even before funding (initialized locked)
     assert!(inv_token_client.transfer_locked());
 
-    escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
+    escrow_client.fund_escrow(&invoice_id, &buyer, &amount, &payment_token_id.address());
 
     // Token is still locked after funding — transfers are blocked while invoice is active
     assert!(inv_token_client.transfer_locked());
