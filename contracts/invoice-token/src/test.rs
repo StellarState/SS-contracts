@@ -1094,3 +1094,139 @@ fn test_approve_positive_amount_invalid_expiration_rejected() {
     // Verify no allowance was set
     assert_eq!(client.allowance(&admin, &spender), 0);
 }
+
+// ========== Allowance Expiration — Missing Edge Cases (#141) ==============
+
+#[test]
+fn test_allowance_expired_on_transfer_from_locked_still_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 1;
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // Advance ledger past expiration
+    env.ledger().with_mut(|li| li.sequence_number += 2);
+
+    // transfer_from should return AllowanceExpired (not TransferLocked)
+    let result = client.try_transfer_from(&spender, &admin, &Address::generate(&env), &200);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+
+    // burn_from should also return AllowanceExpired
+    let burn_result = client.try_burn_from(&spender, &admin, &200);
+    assert_eq!(burn_result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+}
+
+#[test]
+fn test_expired_allowance_checked_before_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let current = env.ledger().sequence();
+
+    client.approve(&admin, &spender, &500, &(current + 1));
+    env.ledger().with_mut(|li| li.sequence_number += 2);
+
+    // Expiration checked BEFORE balance — admin has 0 balance
+    let result = client.try_transfer_from(&spender, &admin, &Address::generate(&env), &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+}
+
+#[test]
+fn test_paused_rejects_transfer_from_and_burn_from() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    client.set_paused(&admin, &true);
+
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // transfer_from should fail when paused
+    let result = client.try_transfer_from(&spender, &admin, &Address::generate(&env), &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Paused)));
+
+    // burn_from should fail when paused
+    let burn_result = client.try_burn_from(&spender, &admin, &100);
+    assert_eq!(burn_result, Err(Ok(crate::errors::Error::Paused)));
+}
+
+#[test]
+fn test_paused_rejects_transfer_and_burn() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    client.set_paused(&admin, &true);
+
+    let result = client.try_transfer(&admin, &Address::generate(&env), &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Paused)));
+
+    let burn_result = client.try_burn(&admin, &100);
+    assert_eq!(burn_result, Err(Ok(crate::errors::Error::Paused)));
+    assert_eq!(client.balance(&admin), 1000);
+}
+
+#[test]
+fn test_approve_survives_pause_unpause_cycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // Pause then unpause
+    client.set_paused(&admin, &true);
+    client.set_paused(&admin, &false);
+
+    // Allowance should still be valid after unpause
+    let recipient = Address::generate(&env);
+    client.transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(client.balance(&recipient), 100);
+    assert_eq!(client.allowance(&admin, &spender), 400);
+}
+
+#[test]
+fn test_burn_from_with_expired_allowance_after_partial_use() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+
+    let spender = Address::generate(&env);
+    let current = env.ledger().sequence();
+
+    // Short expiration
+    client.approve(&admin, &spender, &500, &(current + 1));
+
+    // Use part of allowance before expiration
+    client.burn_from(&spender, &admin, &200);
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.total_supply(), 800);
+
+    // Advance past expiration
+    env.ledger().with_mut(|li| li.sequence_number += 2);
+
+    // Remaining 300 is expired
+    let result = client.try_burn_from(&spender, &admin, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+    assert_eq!(client.balance(&admin), 800);
+}
