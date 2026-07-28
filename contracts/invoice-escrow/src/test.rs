@@ -374,7 +374,7 @@ fn test_escrow_refunded_event() {
     escrow_client.fund_escrow(&invoice_id, &buyer, &amount);
 
     // Set ledger timestamp past due date to allow refund
-    env.ledger().with_mut(|li| li.timestamp = due_date + 1);
+    env.ledger().with_mut(|li| li.timestamp = due_date + 604800 + 1);
 
     escrow_client.refund(&invoice_id);
 
@@ -949,6 +949,95 @@ fn test_refund_not_funded() {
     assert_eq!(result, Err(Ok(Error::RefundNotAllowed)));
 }
 
+
+#[test]
+fn test_record_payment_within_overdue_grace_period_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let payment_token_asset = AssetClient::new(&env, &payment_token_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "GRACE1");
+    let due_date = 10000u64;
+
+    payment_token_asset.mint(&buyer, &1000);
+    payment_token_asset.mint(&payer, &1000);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &1000,
+        &1000,
+        &due_date,
+        &payment_token_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "grace_payment_test"),
+    );
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+
+    env.ledger().with_mut(|li| li.timestamp = due_date + 604800);
+
+    escrow_client.record_payment(&invoice_id, &payer, &1000);
+    assert_eq!(escrow_client.get_escrow_status(&invoice_id), EscrowStatus::Settled);
+}
+
+#[test]
+fn test_record_payment_after_grace_period_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let payment_token_asset = AssetClient::new(&env, &payment_token_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "GRACE2");
+    let due_date = 10000u64;
+
+    payment_token_asset.mint(&buyer, &1000);
+    payment_token_asset.mint(&payer, &1000);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &1000,
+        &1000,
+        &due_date,
+        &payment_token_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "expired_payment_test"),
+    );
+    escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
+
+    env.ledger().with_mut(|li| li.timestamp = due_date + 604800 + 1);
+
+    let result = escrow_client.try_record_payment(&invoice_id, &payer, &1000);
+    assert_eq!(result, Err(Ok(Error::PaymentWindowExpired)));
+}
+
 // ========== Refund Timing Tests ==========
 
 #[test]
@@ -997,7 +1086,7 @@ fn test_refund_before_due_date() {
 }
 
 #[test]
-fn test_refund_at_due_date() {
+fn test_refund_at_due_date_blocked_by_grace_period() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1037,14 +1126,15 @@ fn test_refund_at_due_date() {
     // Set time exactly at due date
     env.ledger().with_mut(|li| li.timestamp = due_date);
 
-    // Refund should succeed
-    escrow_client.refund(&invoice_id);
+    // Refund should fail during the grace period
+    let result = escrow_client.try_refund(&invoice_id);
+    assert_eq!(result, Err(Ok(Error::RefundNotAllowed)));
 
-    // Verify buyer got refund
-    assert_eq!(payment_token.balance(&buyer), 1000);
+    // Verify escrow remains funded while the grace period is open
+    assert_eq!(payment_token.balance(&buyer), 0);
     assert_eq!(
         escrow_client.get_escrow_status(&invoice_id),
-        EscrowStatus::Refunded
+        EscrowStatus::Funded
     );
 }
 
@@ -1086,8 +1176,8 @@ fn test_refund_after_due_date() {
 
     escrow_client.fund_escrow(&invoice_id, &buyer, &1000);
 
-    // Set time after due date
-    env.ledger().with_mut(|li| li.timestamp = due_date + 5000);
+    // Set time after the seven-day grace period
+    env.ledger().with_mut(|li| li.timestamp = due_date + 604800 + 1);
 
     // Refund should succeed
     escrow_client.refund(&invoice_id);
@@ -1533,8 +1623,8 @@ fn test_refund_after_partial_payment() {
     // Balances now: Contract 700, Seller 300, Buyer 291, Admin 9.
     assert_eq!(payment_token.balance(&escrow_id), 700);
 
-    // Advance time
-    env.ledger().with_mut(|li| li.timestamp = due_date + 1);
+    // Advance time beyond the overdue grace period
+    env.ledger().with_mut(|li| li.timestamp = due_date + 604800 + 1);
 
     // Refund
     escrow_client.refund(&invoice_id);
