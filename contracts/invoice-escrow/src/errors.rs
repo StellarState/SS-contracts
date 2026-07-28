@@ -48,4 +48,7 @@ pub enum Error {
     NotWhitelisted = 20,
     /// Off-chain signature has expired (timestamp too old).
     SignatureExpired = 21,
+    /// Escrow has received partial funding from an investor and can no longer
+    /// be cancelled by the seller (funds already committed to the escrow).
+    EscrowPartiallyFunded = 22,
 }
