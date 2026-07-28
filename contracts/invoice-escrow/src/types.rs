@@ -66,6 +66,8 @@ pub struct EscrowData {
     pub funder: Option<soroban_sdk::Address>,
     /// Due date (ledger timestamp).
     pub due_dt: u64,
+    /// Last ledger timestamp at which overdue payment is still accepted.
+    pub grace_end: u64,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
     /// Invoice token contract address (ownership/claim).

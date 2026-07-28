@@ -21,6 +21,8 @@ use errors::Error;
 const MAX_BPS: u32 = 10_000;
 const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
 const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
+/// Overdue invoices may still be settled for seven days after the due date.
+const PAYMENT_GRACE_PERIOD_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 #[contract]
 pub struct InvoiceEscrow;
@@ -92,6 +94,9 @@ impl InvoiceEscrow {
             funded_amt: 0,
             funder: None,
             due_dt: due_date,
+            grace_end: due_date
+                .checked_add(PAYMENT_GRACE_PERIOD_SECONDS)
+                .ok_or(Error::Overflow)?,
             token: payment_token.clone(),
             inv_token: invoice_token.clone(),
             paid_amt: 0,
@@ -241,6 +246,11 @@ impl InvoiceEscrow {
             return Err(Error::AlreadySettled);
         }
 
+        let ledger_ts = env.ledger().timestamp();
+        if ledger_ts > data.grace_end {
+            return Err(Error::PaymentWindowExpired);
+        }
+
         // Remaining balance toward face_value
         let remaining = data
             .face_value
@@ -337,6 +347,9 @@ impl InvoiceEscrow {
             );
         }
 
+        if ledger_ts > data.due_dt {
+            events::payment_grace_used(&env, invoice_id.clone(), ledger_ts, data.grace_end);
+        }
         events::payment_settled(&env, invoice_id, amount, platform_fee, investor_amount);
         Ok(())
     }
@@ -352,7 +365,7 @@ impl InvoiceEscrow {
             return Err(Error::RefundNotAllowed);
         }
         let ledger_ts = env.ledger().timestamp();
-        if ledger_ts < data.due_dt {
+        if ledger_ts <= data.grace_end {
             return Err(Error::RefundNotAllowed);
         }
 

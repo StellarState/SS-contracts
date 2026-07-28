@@ -60,6 +60,14 @@ pub fn payment_settled(
     );
 }
 
+/// Publish grace-period settlement event.
+pub fn payment_grace_used(env: &Env, inv_id: Symbol, paid_at: u64, grace_end: u64) {
+    env.events().publish(
+        (Symbol::new(env, "grace_pay"),),
+        (inv_id, paid_at, grace_end),
+    );
+}
+
 /// Publish refund event.
 pub fn escrow_refunded(env: &Env, inv_id: Symbol, amount: i128) {
     env.events()
