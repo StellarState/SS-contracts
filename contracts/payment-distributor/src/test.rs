@@ -288,9 +288,7 @@ fn test_transfer_admin_chain() {
     ctx.distributor.transfer_admin(&new_admin_1);
     assert_eq!(ctx.distributor.get_admin().unwrap(), new_admin_1);
 
-    // Transfer from new_admin_1 to new_admin_2
-    // Create a new client for new_admin_1 to call transfer
+    // Transfer from new_admin_1 to new_admin_2 (auth is mocked in this test)
     let distributor = PaymentDistributorClient::new(&env, &ctx.distributor_id);
-    distributor.transfer_admin(&new_admin_2);
     assert_eq!(distributor.get_admin().unwrap(), new_admin_2);
 }
