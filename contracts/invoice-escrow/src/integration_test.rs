@@ -1233,3 +1233,439 @@ fn test_integration_get_config_returns_correct_values() {
     assert!(!cfg.paused);
     assert!(cfg.payment_distributor.is_none());
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Issue #170: Multi-Currency Escrow Settlement Integration Tests
+//
+// These tests validate that the InvoiceEscrow contract correctly handles
+// escrows denominated in different payment tokens.  Each test uses the real
+// InvoiceToken and Stellar-asset-contract instances so cross-contract calls
+// (mint, transfer, set_transfer_locked) execute as they would on-chain.
+//
+// Coverage:
+//   26. Two simultaneous escrows in different tokens settle independently.
+//   27. Token balances are fully isolated between currency A and currency B.
+//   28. Refund returns the correct token to the funder.
+//   29. Platform fee is calculated and collected in the correct token.
+//   30. Persistent state for each currency-specific escrow is independent.
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Helper: register a second InvoiceToken and Stellar asset for multi-currency tests.
+/// Returns (invoice_token_id, invoice_token_client, payment_token_id, token_client, asset_client).
+fn register_currency<'a>(
+    env: &'a Env,
+    admin: &Address,
+    escrow_id: &Address,
+    token_name: &str,
+    token_symbol: &str,
+    inv_id: &Symbol,
+) -> (
+    Address,
+    invoice_token::InvoiceTokenClient<'a>,
+    Address,
+    TokenClient<'a>,
+    AssetClient<'a>,
+) {
+    use soroban_sdk::String as SorobanString;
+
+    let inv_token_id = env.register(InvoiceToken, ());
+    let inv_token = invoice_token::InvoiceTokenClient::new(env, &inv_token_id);
+    inv_token.initialize(
+        admin,
+        &SorobanString::from_str(env, token_name),
+        &SorobanString::from_str(env, token_symbol),
+        &7,
+        inv_id,
+        escrow_id,
+    );
+
+    let token_admin = Address::generate(env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let payment_token = TokenClient::new(env, &token_contract.address());
+    let payment_asset = AssetClient::new(env, &token_contract.address());
+
+    (
+        inv_token_id,
+        inv_token,
+        token_contract.address(),
+        payment_token,
+        payment_asset,
+    )
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 26. Two simultaneous escrows in different tokens settle independently
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_integration_multi_currency_two_escrows_settle_independently() {
+    let env = Env::default();
+    env.mock_all_auths();
+    use soroban_sdk::String as SorobanString;
+
+    // Shared escrow contract and participants.
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    escrow.initialize(&admin, &300); // 3% fee
+
+    // Currency A setup.
+    let inv_a = Symbol::new(&env, "INVMC26A");
+    let (inv_tok_a_id, inv_tok_a, pay_tok_a_id, pay_tok_a, pay_ast_a) =
+        register_currency(&env, &admin, &escrow_id, "Invoice A Token", "ITKA", &inv_a);
+
+    // Currency B setup.
+    let inv_b = Symbol::new(&env, "INVMC26B");
+    let (inv_tok_b_id, inv_tok_b, pay_tok_b_id, pay_tok_b, pay_ast_b) =
+        register_currency(&env, &admin, &escrow_id, "Invoice B Token", "ITKB", &inv_b);
+
+    // Participants.
+    let seller = Address::generate(&env);
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+    let payer_a = Address::generate(&env);
+    let payer_b = Address::generate(&env);
+
+    // Mint tokens for each currency.
+    pay_ast_a.mint(&buyer_a, &1_000);
+    pay_ast_a.mint(&payer_a, &1_000);
+    pay_ast_b.mint(&buyer_b, &500);
+    pay_ast_b.mint(&payer_b, &500);
+
+    // Create both escrows.
+    escrow.create_escrow(
+        &inv_a,
+        &seller,
+        &payer_a,
+        &1_000,
+        &1_000,
+        &99_999,
+        &pay_tok_a_id,
+        &inv_tok_a_id,
+        &test_commitment(&env, "mc_a"),
+        &None,
+    );
+    escrow.create_escrow(
+        &inv_b,
+        &seller,
+        &payer_b,
+        &500,
+        &500,
+        &99_999,
+        &pay_tok_b_id,
+        &inv_tok_b_id,
+        &test_commitment(&env, "mc_b"),
+        &None,
+    );
+
+    // Fund both escrows.
+    escrow.fund_escrow(&inv_a, &buyer_a, &1_000);
+    escrow.fund_escrow(&inv_b, &buyer_b, &500);
+
+    assert_eq!(escrow.get_escrow_status(&inv_a), EscrowStatus::Funded);
+    assert_eq!(escrow.get_escrow_status(&inv_b), EscrowStatus::Funded);
+
+    // Settle A.
+    escrow.record_payment(&inv_a, &payer_a, &1_000);
+    assert_eq!(escrow.get_escrow_status(&inv_a), EscrowStatus::Settled);
+    // B must still be Funded.
+    assert_eq!(escrow.get_escrow_status(&inv_b), EscrowStatus::Funded);
+
+    // Settle B.
+    escrow.record_payment(&inv_b, &payer_b, &500);
+    assert_eq!(escrow.get_escrow_status(&inv_b), EscrowStatus::Settled);
+
+    // Invoice tokens unlocked independently after each settlement.
+    assert!(!inv_tok_a.transfer_locked());
+    assert!(!inv_tok_b.transfer_locked());
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 27. Token balances are fully isolated — currency A payment never touches B
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_integration_multi_currency_settlement_token_isolation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    escrow.initialize(&admin, &300);
+
+    let inv_a = Symbol::new(&env, "INVMC27A");
+    let inv_b = Symbol::new(&env, "INVMC27B");
+
+    let (inv_tok_a_id, _inv_tok_a, pay_tok_a_id, pay_tok_a, pay_ast_a) =
+        register_currency(&env, &admin, &escrow_id, "Token A", "TKNA", &inv_a);
+    let (inv_tok_b_id, _inv_tok_b, pay_tok_b_id, pay_tok_b, pay_ast_b) =
+        register_currency(&env, &admin, &escrow_id, "Token B", "TKNB", &inv_b);
+
+    let seller = Address::generate(&env);
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+    let payer_a = Address::generate(&env);
+    let payer_b = Address::generate(&env);
+
+    pay_ast_a.mint(&buyer_a, &1_000);
+    pay_ast_a.mint(&payer_a, &1_000);
+    pay_ast_b.mint(&buyer_b, &800);
+    pay_ast_b.mint(&payer_b, &800);
+
+    escrow.create_escrow(
+        &inv_a, &seller, &payer_a, &1_000, &1_000, &99_999,
+        &pay_tok_a_id, &inv_tok_a_id, &test_commitment(&env, "iso_a"), &None,
+    );
+    escrow.create_escrow(
+        &inv_b, &seller, &payer_b, &800, &800, &99_999,
+        &pay_tok_b_id, &inv_tok_b_id, &test_commitment(&env, "iso_b"), &None,
+    );
+
+    escrow.fund_escrow(&inv_a, &buyer_a, &1_000);
+    escrow.fund_escrow(&inv_b, &buyer_b, &800);
+
+    // Settle A only.
+    escrow.record_payment(&inv_a, &payer_a, &1_000);
+
+    // Token A: distributed to buyer_a (970 after 3% fee) and seller_a.
+    assert_eq!(pay_tok_a.balance(&buyer_a), 970);
+    assert_eq!(pay_tok_a.balance(&seller), 1_000);
+    assert_eq!(pay_tok_a.balance(&admin), 30);
+    assert_eq!(pay_tok_a.balance(&escrow_id), 0);
+
+    // Token B: completely untouched — still in escrow.
+    assert_eq!(pay_tok_b.balance(&escrow_id), 800);
+    assert_eq!(pay_tok_b.balance(&buyer_b), 0);
+    assert_eq!(pay_tok_b.balance(&seller), 0);
+
+    // Settle B.
+    escrow.record_payment(&inv_b, &payer_b, &800);
+
+    // 3% of 800 = 24 fee.
+    assert_eq!(pay_tok_b.balance(&buyer_b), 800 - 24);
+    assert_eq!(pay_tok_b.balance(&admin), 24);
+    assert_eq!(pay_tok_b.balance(&escrow_id), 0);
+
+    // Token A balances must be unchanged after B settlement.
+    assert_eq!(pay_tok_a.balance(&buyer_a), 970);
+    assert_eq!(pay_tok_a.balance(&admin), 30);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 28. Refund returns the correct token to the funder
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_integration_multi_currency_refund_returns_correct_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(0);
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    escrow.initialize(&admin, &300);
+
+    let inv_a = Symbol::new(&env, "INVMC28A");
+    let inv_b = Symbol::new(&env, "INVMC28B");
+    let due_date = 5_000u64;
+
+    let (inv_tok_a_id, _inv_tok_a, pay_tok_a_id, pay_tok_a, pay_ast_a) =
+        register_currency(&env, &admin, &escrow_id, "Refund A", "REFA", &inv_a);
+    let (inv_tok_b_id, _inv_tok_b, pay_tok_b_id, pay_tok_b, pay_ast_b) =
+        register_currency(&env, &admin, &escrow_id, "Refund B", "REFB", &inv_b);
+
+    let seller = Address::generate(&env);
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+    let payer_a = Address::generate(&env);
+    let payer_b = Address::generate(&env);
+
+    pay_ast_a.mint(&buyer_a, &1_000);
+    pay_ast_b.mint(&buyer_b, &600);
+
+    escrow.create_escrow(
+        &inv_a, &seller, &payer_a, &1_000, &1_000, &due_date,
+        &pay_tok_a_id, &inv_tok_a_id, &test_commitment(&env, "refund_a"), &None,
+    );
+    escrow.create_escrow(
+        &inv_b, &seller, &payer_b, &600, &600, &due_date,
+        &pay_tok_b_id, &inv_tok_b_id, &test_commitment(&env, "refund_b"), &None,
+    );
+
+    escrow.fund_escrow(&inv_a, &buyer_a, &1_000);
+    escrow.fund_escrow(&inv_b, &buyer_b, &600);
+
+    // Settle escrow A so it is no longer refundable.
+    pay_ast_a.mint(&payer_a, &1_000);
+    escrow.record_payment(&inv_a, &payer_a, &1_000);
+    assert_eq!(escrow.get_escrow_status(&inv_a), EscrowStatus::Settled);
+
+    // Advance past due_date for escrow B.
+    env.ledger().set_timestamp(due_date + 1);
+    escrow.refund(&inv_b);
+    assert_eq!(escrow.get_escrow_status(&inv_b), EscrowStatus::Refunded);
+
+    // buyer_b gets back 600 in token B — not token A.
+    assert_eq!(pay_tok_b.balance(&buyer_b), 600);
+    assert_eq!(pay_tok_b.balance(&escrow_id), 0);
+
+    // Token A is unaffected by the B refund.
+    assert_eq!(pay_tok_a.balance(&escrow_id), 0); // already settled
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 29. Platform fee is calculated and collected in the correct token per escrow
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_integration_multi_currency_fee_collected_in_correct_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    escrow.initialize(&admin, &500); // 5% fee
+
+    let inv_a = Symbol::new(&env, "INVMC29A");
+    let inv_b = Symbol::new(&env, "INVMC29B");
+
+    let (inv_tok_a_id, _inv_tok_a, pay_tok_a_id, pay_tok_a, pay_ast_a) =
+        register_currency(&env, &admin, &escrow_id, "Fee A Token", "FEEA", &inv_a);
+    let (inv_tok_b_id, _inv_tok_b, pay_tok_b_id, pay_tok_b, pay_ast_b) =
+        register_currency(&env, &admin, &escrow_id, "Fee B Token", "FEEB", &inv_b);
+
+    let seller = Address::generate(&env);
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+    let payer_a = Address::generate(&env);
+    let payer_b = Address::generate(&env);
+
+    // Escrow A: 2_000 in token A; escrow B: 1_000 in token B.
+    pay_ast_a.mint(&buyer_a, &2_000);
+    pay_ast_a.mint(&payer_a, &2_000);
+    pay_ast_b.mint(&buyer_b, &1_000);
+    pay_ast_b.mint(&payer_b, &1_000);
+
+    escrow.create_escrow(
+        &inv_a, &seller, &payer_a, &2_000, &2_000, &99_999,
+        &pay_tok_a_id, &inv_tok_a_id, &test_commitment(&env, "fee_a"), &None,
+    );
+    escrow.create_escrow(
+        &inv_b, &seller, &payer_b, &1_000, &1_000, &99_999,
+        &pay_tok_b_id, &inv_tok_b_id, &test_commitment(&env, "fee_b"), &None,
+    );
+
+    escrow.fund_escrow(&inv_a, &buyer_a, &2_000);
+    escrow.fund_escrow(&inv_b, &buyer_b, &1_000);
+
+    // Settle both.
+    escrow.record_payment(&inv_a, &payer_a, &2_000);
+    escrow.record_payment(&inv_b, &payer_b, &1_000);
+
+    // 5% of 2000 = 100 in token A to admin.
+    // 5% of 1000 = 50  in token B to admin.
+    assert_eq!(pay_tok_a.balance(&admin), 100, "admin must receive 100 token A");
+    assert_eq!(pay_tok_b.balance(&admin), 50,  "admin must receive 50 token B");
+
+    // Investors receive the net amount in their respective tokens.
+    assert_eq!(pay_tok_a.balance(&buyer_a), 2_000 - 100);
+    assert_eq!(pay_tok_b.balance(&buyer_b), 1_000 - 50);
+
+    // Escrow contract must be empty for both currencies.
+    assert_eq!(pay_tok_a.balance(&escrow_id), 0);
+    assert_eq!(pay_tok_b.balance(&escrow_id), 0);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 30. Persistent state for each currency-specific escrow is fully independent
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_integration_multi_currency_state_persists_independently() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    escrow.initialize(&admin, &300);
+
+    let inv_a = Symbol::new(&env, "INVMC30A");
+    let inv_b = Symbol::new(&env, "INVMC30B");
+
+    let (inv_tok_a_id, _inv_tok_a, pay_tok_a_id, _pay_tok_a, pay_ast_a) =
+        register_currency(&env, &admin, &escrow_id, "State A", "STKA", &inv_a);
+    let (inv_tok_b_id, _inv_tok_b, pay_tok_b_id, _pay_tok_b, pay_ast_b) =
+        register_currency(&env, &admin, &escrow_id, "State B", "STKB", &inv_b);
+
+    let seller = Address::generate(&env);
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+    let payer_a = Address::generate(&env);
+    let payer_b = Address::generate(&env);
+
+    let commitment_a = test_commitment(&env, "state_a");
+    let commitment_b = test_commitment(&env, "state_b");
+
+    pay_ast_a.mint(&buyer_a, &1_200);
+    pay_ast_a.mint(&payer_a, &1_200);
+    pay_ast_b.mint(&buyer_b, &700);
+    pay_ast_b.mint(&payer_b, &700);
+
+    escrow.create_escrow(
+        &inv_a, &seller, &payer_a, &1_200, &1_200, &88_888,
+        &pay_tok_a_id, &inv_tok_a_id, &commitment_a, &None,
+    );
+    escrow.create_escrow(
+        &inv_b, &seller, &payer_b, &700, &700, &77_777,
+        &pay_tok_b_id, &inv_tok_b_id, &commitment_b, &None,
+    );
+
+    // Verify initial state for both escrows from storage.
+    let data_a = escrow.get_escrow(&inv_a);
+    let data_b = escrow.get_escrow(&inv_b);
+
+    assert_eq!(data_a.face_value, 1_200);
+    assert_eq!(data_a.purchase_price, 1_200);
+    assert_eq!(data_a.status, EscrowStatus::Created);
+    assert_eq!(data_a.token, pay_tok_a_id);
+    assert_eq!(data_a.commitment, commitment_a);
+    assert_eq!(data_a.due_dt, 88_888);
+
+    assert_eq!(data_b.face_value, 700);
+    assert_eq!(data_b.purchase_price, 700);
+    assert_eq!(data_b.status, EscrowStatus::Created);
+    assert_eq!(data_b.token, pay_tok_b_id);
+    assert_eq!(data_b.commitment, commitment_b);
+    assert_eq!(data_b.due_dt, 77_777);
+
+    // Fund only escrow A — B must remain Created.
+    escrow.fund_escrow(&inv_a, &buyer_a, &1_200);
+    assert_eq!(escrow.get_escrow_status(&inv_a), EscrowStatus::Funded);
+    assert_eq!(escrow.get_escrow_status(&inv_b), EscrowStatus::Created);
+
+    // Check A's stored funded_amt and funder without touching B.
+    let data_a_after_fund = escrow.get_escrow(&inv_a);
+    assert_eq!(data_a_after_fund.funded_amt, 1_200);
+    assert_eq!(data_a_after_fund.funder, Some(buyer_a.clone()));
+
+    let data_b_after_fund = escrow.get_escrow(&inv_b);
+    assert_eq!(data_b_after_fund.funded_amt, 0);
+    assert!(data_b_after_fund.funder.is_none());
+
+    // Settle A — B must remain unaffected.
+    escrow.record_payment(&inv_a, &payer_a, &1_200);
+    assert_eq!(escrow.get_escrow_status(&inv_a), EscrowStatus::Settled);
+    assert_eq!(escrow.get_escrow_status(&inv_b), EscrowStatus::Created);
+
+    let data_a_settled = escrow.get_escrow(&inv_a);
+    assert_eq!(data_a_settled.paid_amt, 1_200);
+
+    // B's paid_amt must still be 0.
+    let data_b_settled = escrow.get_escrow(&inv_b);
+    assert_eq!(data_b_settled.paid_amt, 0);
+    assert_eq!(data_b_settled.commitment, commitment_b); // commitment is immutable
+}

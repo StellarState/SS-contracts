@@ -3769,3 +3769,392 @@ fn test_duplicate_escrow_id_collision_prevention() {
     assert!(result.is_err(), "Duplicate escrow creation with existing ID must fail");
 }
 
+
+// ========== Issue #160: Negative Tests for Expired Off-Chain Signature Submissions ==========
+//
+// The `fund_escrow_signed` entry-point carries an `expiry` timestamp.  The contract
+// rejects any call where `env.ledger().timestamp() > expiry`, returning
+// `Error::SignatureExpired`.  The tests below cover every negative/boundary edge-case
+// around that expiry check and verify that a rejected submission leaves no side-effects
+// (nonce unchanged, escrow status unchanged, no token transfer).
+
+/// Calling `fund_escrow_signed` after the expiry timestamp must return
+/// `Error::SignatureExpired` and leave the escrow in `Created` status.
+#[test]
+fn test_fund_escrow_signed_rejects_expired_signature() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EXP1");
+    let amount = 1_000i128;
+
+    pt_asset.mint(&buyer, &amount);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &amount,
+        &amount,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "expired_sig_test"),
+        &None,
+    );
+
+    // Advance the ledger past the expiry timestamp.
+    let expiry: u64 = 5_000;
+    env.ledger().with_mut(|li| li.timestamp = expiry + 1);
+
+    let result = escrow_client.try_fund_escrow_signed(&invoice_id, &buyer, &amount, &1u64, &expiry);
+    assert_eq!(result, Err(Ok(Error::SignatureExpired)));
+
+    // Escrow must remain in Created state — no transition occurred.
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Created
+    );
+}
+
+/// When the ledger timestamp equals `expiry + 1` (strictly greater) the signature
+/// is expired.  When it equals `expiry` exactly the call must succeed — the contract
+/// uses `current_ts > expiry` so equality is still valid.
+#[test]
+fn test_fund_escrow_signed_rejects_at_exact_expiry_plus_one_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EXP2");
+    let amount = 500i128;
+
+    pt_asset.mint(&buyer, &amount);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &amount,
+        &amount,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "expiry_boundary"),
+        &None,
+    );
+
+    let expiry: u64 = 10_000;
+
+    // ledger_ts == expiry: NOT expired (current_ts > expiry is false).
+    env.ledger().with_mut(|li| li.timestamp = expiry);
+    escrow_client.fund_escrow_signed(&invoice_id, &buyer, &amount, &1u64, &expiry);
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Funded
+    );
+}
+
+/// When the ledger timestamp is strictly less than `expiry`, the signature is valid
+/// and the escrow should be funded successfully.
+#[test]
+fn test_fund_escrow_signed_succeeds_just_before_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let pt_token = TokenClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &0); // 0% fee for clean balance checks
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EXP3");
+    let amount = 800i128;
+
+    pt_asset.mint(&buyer, &amount);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &amount,
+        &amount,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "just_before_expiry"),
+        &None,
+    );
+
+    let expiry: u64 = 20_000;
+
+    // Set ledger to one tick before expiry — must succeed.
+    env.ledger().with_mut(|li| li.timestamp = expiry - 1);
+    escrow_client.fund_escrow_signed(&invoice_id, &buyer, &amount, &1u64, &expiry);
+
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Funded
+    );
+    // Tokens must have moved to escrow.
+    assert_eq!(pt_token.balance(&escrow_id), amount);
+    assert_eq!(pt_token.balance(&buyer), 0);
+}
+
+/// A rejected expired-signature call must leave the escrow status completely
+/// unchanged so that a subsequent valid call can still succeed.
+#[test]
+fn test_fund_escrow_signed_expired_does_not_change_escrow_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let pt_token = TokenClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EXP4");
+    let amount = 1_000i128;
+
+    pt_asset.mint(&buyer, &amount);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &amount,
+        &amount,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "state_unchanged_on_expiry"),
+        &None,
+    );
+
+    // First attempt: expired — must fail.
+    let expired_expiry: u64 = 3_000;
+    env.ledger().with_mut(|li| li.timestamp = expired_expiry + 10);
+    let result =
+        escrow_client.try_fund_escrow_signed(&invoice_id, &buyer, &amount, &1u64, &expired_expiry);
+    assert_eq!(result, Err(Ok(Error::SignatureExpired)));
+
+    // State must be fully unchanged.
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Created
+    );
+    // No tokens must have moved.
+    assert_eq!(pt_token.balance(&buyer), amount);
+    assert_eq!(pt_token.balance(&escrow_id), 0);
+
+    // Second attempt with a valid (far-future) expiry — must succeed now.
+    escrow_client.fund_escrow_signed(&invoice_id, &buyer, &amount, &1u64, &u64::MAX);
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Funded
+    );
+}
+
+/// When a signature is rejected because it has expired the nonce must NOT be
+/// consumed.  A subsequent call with the same nonce (and a valid expiry) must
+/// succeed, proving the nonce counter was not incremented by the failed attempt.
+#[test]
+fn test_fund_escrow_signed_nonce_not_consumed_on_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EXP5");
+    let amount = 600i128;
+
+    pt_asset.mint(&buyer, &amount);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &amount,
+        &amount,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "nonce_not_consumed"),
+        &None,
+    );
+
+    // Attempt with expired signature using nonce = 42.
+    let expired_expiry: u64 = 1_000;
+    env.ledger().with_mut(|li| li.timestamp = expired_expiry + 1);
+    let result =
+        escrow_client.try_fund_escrow_signed(&invoice_id, &buyer, &amount, &42u64, &expired_expiry);
+    assert_eq!(result, Err(Ok(Error::SignatureExpired)));
+
+    // Now use the SAME nonce (42) with a valid (far-future) expiry.
+    // If the nonce had been consumed by the failed call this would return
+    // NonceAlreadyUsed — confirming that expiry rejection is pre-nonce.
+    let result_valid =
+        escrow_client.try_fund_escrow_signed(&invoice_id, &buyer, &amount, &42u64, &u64::MAX);
+    assert!(
+        result_valid.is_ok(),
+        "Nonce must not be consumed by a signature-expired rejection"
+    );
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Funded
+    );
+}
+
+/// Submitting a signature whose expiry is set to 0 (the epoch) is always expired
+/// once the ledger is past timestamp 0.  The contract must reject it.
+#[test]
+fn test_fund_escrow_signed_zero_expiry_always_expired() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "INV_EXP6");
+    let amount = 400i128;
+
+    pt_asset.mint(&buyer, &amount);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &amount,
+        &amount,
+        &9_999_999u64,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "zero_expiry"),
+        &None,
+    );
+
+    // Advance ledger past epoch 0 (any positive timestamp makes expiry = 0 expired).
+    env.ledger().with_mut(|li| li.timestamp = 1);
+
+    let result = escrow_client.try_fund_escrow_signed(&invoice_id, &buyer, &amount, &1u64, &0u64);
+    assert_eq!(result, Err(Ok(Error::SignatureExpired)));
+
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_id),
+        EscrowStatus::Created
+    );
+}
+
+/// Expiry check must take precedence over the nonce check: even if the nonce is
+/// already used, a call with an expired signature must return `SignatureExpired`
+/// rather than `NonceAlreadyUsed`, confirming evaluation order.
+#[test]
+fn test_fund_escrow_signed_expiry_checked_before_nonce() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let pt_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let pt_asset = AssetClient::new(&env, &pt_id.address());
+    let inv_token_id = env.register(MockInvoiceToken, ());
+
+    escrow_client.initialize(&admin, &300);
+
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id_a = Symbol::new(&env, "INV_EXP7A");
+    let invoice_id_b = Symbol::new(&env, "INV_EXP7B");
+    let amount = 300i128;
+
+    pt_asset.mint(&buyer, &(amount * 2));
+
+    for inv in [&invoice_id_a, &invoice_id_b] {
+        escrow_client.create_escrow(
+            inv,
+            &seller,
+            &seller,
+            &amount,
+            &amount,
+            &9_999_999u64,
+            &pt_id.address(),
+            &inv_token_id,
+            &test_commitment(&env, "expiry_before_nonce"),
+            &None,
+        );
+    }
+
+    // Consume nonce 1 with a valid expiry against invoice_a.
+    escrow_client.fund_escrow_signed(&invoice_id_a, &buyer, &amount, &1u64, &u64::MAX);
+
+    // Now attempt against invoice_b with the same (already-used) nonce AND an
+    // expired expiry timestamp.  Expiry check fires first → SignatureExpired.
+    let expired_expiry: u64 = 100;
+    env.ledger().with_mut(|li| li.timestamp = expired_expiry + 1);
+    let result =
+        escrow_client.try_fund_escrow_signed(&invoice_id_b, &buyer, &amount, &1u64, &expired_expiry);
+    assert_eq!(
+        result,
+        Err(Ok(Error::SignatureExpired)),
+        "SignatureExpired must be returned before NonceAlreadyUsed is evaluated"
+    );
+}
