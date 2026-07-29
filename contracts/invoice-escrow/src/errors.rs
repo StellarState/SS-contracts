@@ -52,4 +52,8 @@ pub enum Error {
     SignatureExpired = 22,
     /// Funding amount does not meet the required milestone threshold.
     InvalidMilestoneAmount = 23,
+    /// Escrow duration is shorter than the minimum allowed window.
+    EscrowDurationTooShort = 24,
+    /// Escrow duration is longer than the maximum allowed window.
+    EscrowDurationTooLong = 25,
 }

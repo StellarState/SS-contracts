@@ -20,6 +20,8 @@ use types::{Config, EscrowData};
 use errors::Error;
 
 const MAX_BPS: u32 = 10_000;
+const MIN_ESCROW_DURATION: u64 = 86_400; // 1 day
+const MAX_ESCROW_DURATION: u64 = 31_536_000; // 365 days
 const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
 const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
 
@@ -114,6 +116,13 @@ impl InvoiceEscrow {
         let current_timestamp = env.ledger().timestamp();
         if due_date <= current_timestamp {
             return Err(Error::InvalidDueDate);
+        }
+        let duration = due_date.saturating_sub(current_timestamp);
+        if duration < MIN_ESCROW_DURATION {
+            return Err(Error::EscrowDurationTooShort);
+        }
+        if duration > MAX_ESCROW_DURATION {
+            return Err(Error::EscrowDurationTooLong);
         }
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
@@ -261,8 +270,7 @@ impl InvoiceEscrow {
             return Err(Error::NotWhitelisted);
         }
 
-        let mut data =
-            storage::get_escrow(env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let mut data = storage::get_escrow(env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.status == EscrowStatus::Cancelled {
             return Err(Error::EscrowCancelled);
         }
@@ -278,8 +286,11 @@ impl InvoiceEscrow {
 
         // Validate milestone constraints if a milestone is set
         if let Some(milestone) = data.funding_milestone {
-            let remaining_to_fund = data.purchase_price.checked_sub(data.funded_amt).ok_or(Error::Overflow)?;
-            
+            let remaining_to_fund = data
+                .purchase_price
+                .checked_sub(data.funded_amt)
+                .ok_or(Error::Overflow)?;
+
             // Funder is always allowed to just fund exactly the remaining amount to complete the escrow.
             // If they are not completing the escrow, the amount must be at least the milestone and a multiple of it.
             if amount != remaining_to_fund {
@@ -297,12 +308,7 @@ impl InvoiceEscrow {
         env.invoke_contract::<()>(
             &data.inv_token,
             &Symbol::new(env, "mint"),
-            soroban_sdk::vec![
-                env,
-                buyer.to_val(),
-                amount.into_val(env),
-                contract.to_val()
-            ],
+            soroban_sdk::vec![env, buyer.to_val(), amount.into_val(env), contract.to_val()],
         );
 
         // Track this funder's contribution
