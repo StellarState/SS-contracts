@@ -239,14 +239,9 @@ impl InvoiceEscrow {
             return Err(Error::SignatureExpired);
         }
 
-        let last_nonce = storage::get_nonce(&env, &buyer);
-        if nonce <= last_nonce {
-            return Err(Error::NonceAlreadyUsed);
-        }
-
         Self::fund_escrow_core(&env, invoice_id.clone(), &buyer, amount)?;
 
-        storage::set_nonce(&env, &buyer, nonce);
+        storage::set_nonce(&env, &buyer, nonce)?;
         events::escrow_funded_signed(&env, invoice_id, &buyer, amount, nonce);
         Ok(())
     }
@@ -312,7 +307,7 @@ impl InvoiceEscrow {
         let new_funder_amt = current_funder_amt
             .checked_add(amount)
             .ok_or(Error::Overflow)?;
-        storage::set_funder_amount(env, invoice_id.clone(), buyer, new_funder_amt);
+        storage::set_funder_amount(env, invoice_id.clone(), buyer, new_funder_amt)?;
 
         data.funded_amt = new_funded;
 
@@ -660,7 +655,7 @@ impl InvoiceEscrow {
             _ => return Err(Error::EscrowNotSettled),
         }
         if let Some(funder) = &data.funder {
-            storage::set_funder_amount(&env, invoice_id.clone(), funder, 0);
+            storage::set_funder_amount(&env, invoice_id.clone(), funder, 0)?;
         }
         storage::remove_escrow(&env, invoice_id.clone());
         events::escrow_cleaned_up(&env, invoice_id);

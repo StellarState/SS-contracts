@@ -3364,11 +3364,394 @@ fn test_fund_escrow_allows_remainder_below_milestone() {
 fn test_initialize_not_authorized() {
     let env = Env::default();
     // Do NOT mock_all_auths() here so that admin.require_auth() fails.
-    
+
     let escrow_id = env.register(InvoiceEscrow, ());
     let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
     let admin = Address::generate(&env);
-    
+
     // This should panic because the test environment doesn't provide auth for `admin`
     escrow_client.initialize(&admin, &300);
+}
+
+// ========== Security: Storage TTL & Defensive Checks ==========
+
+fn setup_storage_test(env: &Env) -> (Address, InvoiceEscrowClient<'_>, Address, Address, Symbol) {
+    env.mock_all_auths();
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(env, &escrow_id);
+    let admin = Address::generate(env);
+    let buyer = Address::generate(env);
+    let invoice_id = Symbol::new(env, "SEC_STOR");
+    escrow_client.initialize(&admin, &300);
+    (escrow_id, escrow_client, admin, buyer, invoice_id)
+}
+
+#[test]
+fn test_storage_nonce_monotonic_enforced_cannot_rollback() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, _invoice_id) = setup_storage_test(&env);
+
+    assert_eq!(storage::get_nonce(&env, &buyer), 0);
+
+    storage::set_nonce(&env, &buyer, 5).unwrap();
+    assert_eq!(storage::get_nonce(&env, &buyer), 5);
+
+    let rollback_equal = storage::set_nonce(&env, &buyer, 5);
+    assert_eq!(rollback_equal, Err(Error::NonceAlreadyUsed));
+    assert_eq!(storage::get_nonce(&env, &buyer), 5);
+
+    let rollback_less = storage::set_nonce(&env, &buyer, 3);
+    assert_eq!(rollback_less, Err(Error::NonceAlreadyUsed));
+    assert_eq!(storage::get_nonce(&env, &buyer), 5);
+
+    let rollback_zero = storage::set_nonce(&env, &buyer, 0);
+    assert_eq!(rollback_zero, Err(Error::NonceAlreadyUsed));
+    assert_eq!(storage::get_nonce(&env, &buyer), 5);
+
+    storage::set_nonce(&env, &buyer, 6).unwrap();
+    assert_eq!(storage::get_nonce(&env, &buyer), 6);
+
+    storage::set_nonce(&env, &buyer, 100).unwrap();
+    assert_eq!(storage::get_nonce(&env, &buyer), 100);
+}
+
+#[test]
+fn test_storage_nonce_monotonic_large_gaps_accepted() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, _invoice_id) = setup_storage_test(&env);
+
+    storage::set_nonce(&env, &buyer, 1).unwrap();
+    assert_eq!(storage::get_nonce(&env, &buyer), 1);
+
+    storage::set_nonce(&env, &buyer, u64::MAX).unwrap();
+    assert_eq!(storage::get_nonce(&env, &buyer), u64::MAX);
+}
+
+#[test]
+fn test_storage_nonce_first_set_zero_rejected() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, _invoice_id) = setup_storage_test(&env);
+
+    assert_eq!(storage::get_nonce(&env, &buyer), 0);
+    let result = storage::set_nonce(&env, &buyer, 0);
+    assert_eq!(result, Err(Error::NonceAlreadyUsed));
+    assert_eq!(storage::get_nonce(&env, &buyer), 0);
+}
+
+#[test]
+fn test_storage_funder_amount_negative_rejected() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, invoice_id) = setup_storage_test(&env);
+
+    let result = storage::set_funder_amount(&env, invoice_id.clone(), &buyer, -1);
+    assert_eq!(result, Err(Error::InvalidAmount));
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &buyer), 0);
+
+    let result = storage::set_funder_amount(&env, invoice_id.clone(), &buyer, i128::MIN);
+    assert_eq!(result, Err(Error::InvalidAmount));
+    assert_eq!(storage::get_funder_amount(&env, invoice_id, &buyer), 0);
+}
+
+#[test]
+fn test_storage_funder_amount_zero_cleans_up_entry() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, invoice_id) = setup_storage_test(&env);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &buyer, 500).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &buyer), 500);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &buyer, 0).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id, &buyer), 0);
+}
+
+#[test]
+fn test_storage_funder_amount_positive_persists() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, invoice_id) = setup_storage_test(&env);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &buyer, 1).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &buyer), 1);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &buyer, 1_000_000).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &buyer), 1_000_000);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &buyer, i128::MAX).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id, &buyer), i128::MAX);
+}
+
+#[test]
+fn test_storage_multiple_funders_independent() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, _buyer, invoice_id) = setup_storage_test(&env);
+
+    let funder1 = Address::generate(&env);
+    let funder2 = Address::generate(&env);
+    let funder3 = Address::generate(&env);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &funder1, 100).unwrap();
+    storage::set_funder_amount(&env, invoice_id.clone(), &funder2, 200).unwrap();
+    storage::set_funder_amount(&env, invoice_id.clone(), &funder3, 300).unwrap();
+
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &funder1), 100);
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &funder2), 200);
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &funder3), 300);
+
+    let result_neg = storage::set_funder_amount(&env, invoice_id.clone(), &funder2, -50);
+    assert_eq!(result_neg, Err(Error::InvalidAmount));
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &funder2), 200);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &funder2, 0).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &funder2), 0);
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &funder1), 100);
+    assert_eq!(storage::get_funder_amount(&env, invoice_id, &funder3), 300);
+}
+
+#[test]
+fn test_storage_whitelist_set_and_clear_persists() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, _invoice_id) = setup_storage_test(&env);
+
+    assert!(!storage::is_whitelisted(&env, &buyer));
+
+    storage::set_whitelisted(&env, &buyer, true);
+    assert!(storage::is_whitelisted(&env, &buyer));
+
+    let stranger = Address::generate(&env);
+    assert!(!storage::is_whitelisted(&env, &stranger));
+
+    storage::set_whitelisted(&env, &buyer, false);
+    assert!(!storage::is_whitelisted(&env, &buyer));
+}
+
+#[test]
+fn test_storage_whitelist_multiple_buyers_independent() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, _buyer, _invoice_id) = setup_storage_test(&env);
+
+    let b1 = Address::generate(&env);
+    let b2 = Address::generate(&env);
+    let b3 = Address::generate(&env);
+
+    storage::set_whitelisted(&env, &b1, true);
+    storage::set_whitelisted(&env, &b3, true);
+
+    assert!(storage::is_whitelisted(&env, &b1));
+    assert!(!storage::is_whitelisted(&env, &b2));
+    assert!(storage::is_whitelisted(&env, &b3));
+
+    storage::set_whitelisted(&env, &b1, false);
+    assert!(!storage::is_whitelisted(&env, &b1));
+    assert!(storage::is_whitelisted(&env, &b3));
+}
+
+#[test]
+fn test_storage_has_escrow_bumps_ttl_if_exists() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "TTL_HAS");
+
+    escrow_client.initialize(&admin, &300);
+
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let inv_token_id = env.register_contract(None, MockInvoiceToken);
+    let payment_asset = AssetClient::new(&env, &payment_token_id.address());
+    payment_asset.mint(&buyer, &1000);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &1000,
+        &1000,
+        &1_000_000,
+        &payment_token_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "ttl_test"),
+        &None,
+    );
+
+    assert!(storage::has_escrow(&env, invoice_id.clone()));
+
+    let ghost_invoice = Symbol::new(&env, "NOPE");
+    assert!(!storage::has_escrow(&env, ghost_invoice));
+}
+
+#[test]
+fn test_storage_config_get_and_set_roundtrip_persists() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, admin, _buyer, _invoice_id) = setup_storage_test(&env);
+
+    let config = storage::get_config(&env).unwrap();
+    assert_eq!(config.admin, admin);
+    assert_eq!(config.fee_bps, 300);
+    assert!(!config.paused);
+    assert!(!config.whitelist_enabled);
+
+    let mut new_config = config.clone();
+    new_config.fee_bps = 500;
+    new_config.paused = true;
+    new_config.whitelist_enabled = true;
+    let distributor = Address::generate(&env);
+    new_config.payment_distributor = Some(distributor.clone());
+    storage::set_config(&env, &new_config);
+
+    let fetched = storage::get_config(&env).unwrap();
+    assert_eq!(fetched.fee_bps, 500);
+    assert!(fetched.paused);
+    assert!(fetched.whitelist_enabled);
+    assert_eq!(fetched.payment_distributor, Some(distributor));
+}
+
+#[test]
+fn test_storage_escrow_remove_idempotent_on_missing() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, _buyer, invoice_id) = setup_storage_test(&env);
+
+    assert!(!storage::has_escrow(&env, invoice_id.clone()));
+    storage::remove_escrow(&env, invoice_id.clone());
+    storage::remove_escrow(&env, invoice_id);
+}
+
+#[test]
+fn test_storage_nonces_isolated_per_buyer() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, _buyer, _invoice_id) = setup_storage_test(&env);
+
+    let b1 = Address::generate(&env);
+    let b2 = Address::generate(&env);
+    let b3 = Address::generate(&env);
+
+    storage::set_nonce(&env, &b1, 10).unwrap();
+    storage::set_nonce(&env, &b2, 20).unwrap();
+
+    assert_eq!(storage::get_nonce(&env, &b1), 10);
+    assert_eq!(storage::get_nonce(&env, &b2), 20);
+    assert_eq!(storage::get_nonce(&env, &b3), 0);
+
+    let rollback_b1 = storage::set_nonce(&env, &b1, 5);
+    assert_eq!(rollback_b1, Err(Error::NonceAlreadyUsed));
+    assert_eq!(storage::get_nonce(&env, &b1), 10);
+
+    storage::set_nonce(&env, &b3, 5).unwrap();
+    assert_eq!(storage::get_nonce(&env, &b3), 5);
+    assert_eq!(storage::get_nonce(&env, &b2), 20);
+}
+
+#[test]
+fn test_storage_funder_amounts_isolated_per_invoice() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, _buyer, inv1) = setup_storage_test(&env);
+    let inv2 = Symbol::new(&env, "INV_SEC2");
+    let inv3 = Symbol::new(&env, "INV_SEC3");
+    let funder = Address::generate(&env);
+
+    storage::set_funder_amount(&env, inv1.clone(), &funder, 111).unwrap();
+    storage::set_funder_amount(&env, inv2.clone(), &funder, 222).unwrap();
+
+    assert_eq!(storage::get_funder_amount(&env, inv1.clone(), &funder), 111);
+    assert_eq!(storage::get_funder_amount(&env, inv2.clone(), &funder), 222);
+    assert_eq!(storage::get_funder_amount(&env, inv3.clone(), &funder), 0);
+
+    let result = storage::set_funder_amount(&env, inv2.clone(), &funder, -1);
+    assert_eq!(result, Err(Error::InvalidAmount));
+    assert_eq!(storage::get_funder_amount(&env, inv2, &funder), 222);
+
+    storage::set_funder_amount(&env, inv1.clone(), &funder, 0).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, inv1, &funder), 0);
+    assert_eq!(storage::get_funder_amount(&env, inv3, &funder), 0);
+}
+
+#[test]
+fn test_storage_nonce_through_signed_fund_flow_rejects_replay() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow_client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "NONCE_RP");
+
+    escrow_client.initialize(&admin, &0);
+
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let inv_token_id = env.register_contract(None, MockInvoiceToken);
+    let payment_asset = AssetClient::new(&env, &payment_token_id.address());
+    payment_asset.mint(&buyer, &3000);
+
+    escrow_client.create_escrow(
+        &invoice_id,
+        &seller,
+        &payer,
+        &3000,
+        &1000,
+        &1_000_000,
+        &payment_token_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "nonce_replay"),
+        &Some(500),
+    );
+
+    let deadline = env.ledger().timestamp() + 1000;
+
+    escrow_client
+        .fund_escrow_signed(&invoice_id, &buyer, &500, &1, &deadline, &buyer);
+    assert_eq!(storage::get_nonce(&env, &buyer), 1);
+
+    let replay_same = escrow_client.try_fund_escrow_signed(
+        &invoice_id,
+        &buyer,
+        &500,
+        &1,
+        &deadline,
+        &buyer,
+    );
+    assert_eq!(replay_same, Err(Ok(Error::NonceAlreadyUsed)));
+    assert_eq!(storage::get_nonce(&env, &buyer), 1);
+
+    let replay_lower = escrow_client.try_fund_escrow_signed(
+        &invoice_id,
+        &buyer,
+        &500,
+        &0,
+        &deadline,
+        &buyer,
+    );
+    assert_eq!(replay_lower, Err(Ok(Error::NonceAlreadyUsed)));
+
+    escrow_client
+        .fund_escrow_signed(&invoice_id, &buyer, &500, &5, &deadline, &buyer);
+    assert_eq!(storage::get_nonce(&env, &buyer), 5);
+}
+
+#[test]
+fn test_storage_defense_in_depth_negative_set_funder_through_cleanup() {
+    let env = Env::default();
+    let (_escrow_id, _escrow_client, _admin, buyer, invoice_id) = setup_storage_test(&env);
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &buyer, 9999).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id.clone(), &buyer), 9999);
+
+    for bad in [-1i128, -100, i128::MIN] {
+        let result = storage::set_funder_amount(&env, invoice_id.clone(), &buyer, bad);
+        assert_eq!(result, Err(Error::InvalidAmount));
+        assert_eq!(
+            storage::get_funder_amount(&env, invoice_id.clone(), &buyer),
+            9999
+        );
+    }
+
+    storage::set_funder_amount(&env, invoice_id.clone(), &buyer, 0).unwrap();
+    assert_eq!(storage::get_funder_amount(&env, invoice_id, &buyer), 0);
 }
