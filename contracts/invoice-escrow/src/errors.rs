@@ -52,4 +52,12 @@ pub enum Error {
     SignatureExpired = 22,
     /// Funding amount does not meet the required milestone threshold.
     InvalidMilestoneAmount = 23,
+    /// Caller is not authorized as an emergency admin for this escrow
+    NotEmergencyAdmin,
+    // Emergency release is not configured or not available for this invoice
+    EmergencyReleaseNotAllowed,
+    // Invoice funds have already been released (either normally or via emergency)
+    InvoiceAlreadyReleased,
+    // Invoice is not in a locked escrow state and cannot be emergency released
+    InvoiceNotInEscrow,
 }

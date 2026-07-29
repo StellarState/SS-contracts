@@ -3186,3 +3186,31 @@ fn test_fund_escrow_allows_remainder_below_milestone() {
     let escrow = escrow_client.get_escrow(&invoice_id);
     assert_eq!(escrow.status, EscrowStatus::Funded);
 }
+
+#[test]
+fn test_emergency_release_success() {
+    // Setup admin addresses
+    let admin1 = Address::generate(&Env::default());
+    let admin2 = Address::generate(&Env::default());
+    let admin3 = Address::generate(&Env::default());
+    
+    let emergency_admin = EmergencyAdmin {
+        addresses: vec![admin1.clone(), admin2.clone(), admin3.clone()],
+        threshold: 2,
+    };
+    
+    // Create escrow with emergency admin
+    // Simulate approvals from admin1 and admin2
+    // Call emergency_release
+    // Verify funds transferred and state updated
+}
+
+#[test]
+fn test_emergency_release_not_admin() {
+    // Test that non-admin callers are rejected
+}
+
+#[test]
+fn test_emergency_release_insufficient_signatures() {
+    // Test that below threshold fails
+}

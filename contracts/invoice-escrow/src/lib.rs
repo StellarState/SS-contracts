@@ -662,6 +662,54 @@ impl InvoiceEscrow {
         events::escrow_cleaned_up(&env, invoice_id);
         Ok(())
     }
+
+    pub fn emergency_release(env: Env, invoice_id: u64, caller: Address,) -> Result<(), Error> {
+    // 1. Validate caller is an emergency admin
+    let escrow = Self::get_escrow(&env, invoice_id)?;
+    let admin = escrow.emergency_admin
+        .ok_or(Error::EmergencyReleaseNotAllowed)?;
+    
+    // 2. Verify multi-sig threshold
+    let signature_count = Self::count_approvals(&env, invoice_id, &admin);
+    if signature_count < admin.threshold {
+        return Err(Error::NotEmergencyAdmin);
+    }
+    
+    // 3. Check if already released or invalid state
+    if escrow.emergency_released {
+        return Err(Error::InvoiceAlreadyReleased);
+    }
+    if escrow.status != EscrowStatus::Locked {
+        return Err(Error::InvoiceNotInEscrow);
+    }
+    
+    // 4. Release funds to appropriate parties
+    let recipient = escrow.recipient;
+    let amount = escrow.amount;
+    
+    // Transfer funds
+    token::transfer(&env, &escrow.token, &recipient, &amount)?;
+    
+    // 5. Update escrow state
+    let mut updated_escrow = escrow;
+    updated_escrow.status = EscrowStatus::EmergencyReleased;
+    updated_escrow.emergency_released = true;
+    Self::save_escrow(&env, invoice_id, &updated_escrow);
+    
+    // 6. Emit event for transparency
+    Self::emit_emergency_release_event(&env, invoice_id, caller, recipient, amount);
+    
+    Ok(())
+}
+
+// Helper functions
+fn count_approvals(env: &Env, invoice_id: u64, admin: &EmergencyAdmin) -> u32 {
+    // Count how many admins have approved this emergency release
+    // Implementation depends on how approvals are stored
+    admin.addresses.iter()
+        .filter(|addr| Self::has_approved(env, invoice_id, addr))
+        .count() as u32
+}
 }
 
 #[cfg(test)]

@@ -88,3 +88,18 @@ pub struct EscrowData {
     /// Set at creation, cannot be modified. SHA-256 hash (32 bytes).
     pub commitment: soroban_sdk::BytesN<32>,
 }
+
+// Add admin multi-sig structure
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmergencyAdmin {
+    pub addresses: Vec<Address>,
+    pub threshold: u32,
+}
+
+// Update Invoice escrow state
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvoiceEscrow {
+    // ... existing fields ...
+    pub emergency_admin: Option<EmergencyAdmin>,
+    pub emergency_released: bool,
+}
