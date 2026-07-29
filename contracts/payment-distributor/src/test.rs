@@ -10,6 +10,7 @@ use soroban_sdk::{
 };
 
 struct TestContext<'a> {
+    env: Env,
     admin: Address,
     seller: Address,
     buyer: Address,
@@ -61,6 +62,7 @@ fn setup(env: &Env, fee_bps: u32, configure_distributor: bool) -> TestContext<'_
     }
 
     TestContext {
+        env: env.clone(),
         admin,
         seller,
         buyer,
@@ -81,12 +83,15 @@ fn create_and_fund(ctx: &TestContext<'_>, amount: i128, due_date: u64) {
     ctx.escrow.create_escrow(
         &ctx.invoice_id,
         &ctx.seller,
+        &ctx.payer,
+        &amount,
         &amount,
         &due_date,
         &ctx.payment_token.address,
         &ctx.inv_token.address,
+        &soroban_sdk::BytesN::from_array(&ctx.env, &[0u8; 32]),
     );
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer);
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
 }
 
 #[test]
@@ -358,9 +363,10 @@ fn test_distribute_payment_fanout_splits_platform_fee() {
 
     // Manually invoke distribute_payment with a fanout recipient splitting
     // the 5% (50) platform fee: referral gets 20, admin keeps the remaining 30.
-    ctx.payment_asset.mint(&ctx.escrow_id, &1_000);
+    // Distributor needs seller(1000) + funder(950) + admin(30) + referral(20) = 2000.
+    ctx.payment_asset.mint(&ctx.escrow_id, &2_000);
     ctx.payment_token
-        .transfer(&ctx.escrow_id, &ctx.distributor_id, &1_000);
+        .transfer(&ctx.escrow_id, &ctx.distributor_id, &2_000);
     let result = ctx.distributor.try_distribute_payment(
         &ctx.escrow_id,
         &ctx.invoice_id,

@@ -79,7 +79,8 @@ impl InvoiceEscrow {
         if due_date <= current_timestamp {
             return Err(Error::InvalidDueDate);
         }
-        storage::get_config(&env).ok_or(Error::NotInit)?;
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
@@ -278,9 +279,13 @@ impl InvoiceEscrow {
         let funder_opt = data.funder.clone();
 
         if let Some(distributor) = config.payment_distributor.as_ref() {
-            // Forward the full payment amount to the distributor contract.
-            // Fix: was `amount + amount` (double-counting); correct is investor_amount + platform_fee == amount.
-            let total_to_distributor = investor_amount
+            // The distributor pays out two separate pools sized `amount` each:
+            // `amount` released to the seller from the purchase-price collateral,
+            // and `investor_amount + platform_fee` (== `amount`) split from the
+            // debtor's incoming payment. Both pools must be forwarded here.
+            let total_to_distributor = amount
+                .checked_add(investor_amount)
+                .ok_or(Error::Overflow)?
                 .checked_add(platform_fee)
                 .ok_or(Error::Overflow)?;
             token.transfer(&contract, distributor, &total_to_distributor);
@@ -295,7 +300,7 @@ impl InvoiceEscrow {
                         &env,
                         data.token.clone(),
                         data.seller.clone(),
-                        funder_opt.clone().into_val(&env),
+                        funder_opt.clone().ok_or(Error::EscrowNotFunded)?,
                         config.admin.clone()
                     ]
                     .into_val(&env),
@@ -311,8 +316,7 @@ impl InvoiceEscrow {
             // 3. Pro-rata investor distribution
             if let Some(funder) = &funder_opt {
                 if data.funded_amt > 0 && investor_amount > 0 {
-                    let funder_amt =
-                        storage::get_funder_amount(&env, invoice_id.clone(), funder);
+                    let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), funder);
                     let pro_rata_share = investor_amount
                         .checked_mul(funder_amt)
                         .ok_or(Error::Overflow)?
@@ -384,7 +388,7 @@ impl InvoiceEscrow {
                         soroban_sdk::vec![
                             &env,
                             data.token.clone(),
-                            funder_opt.clone().into_val(&env)
+                            funder_opt.clone().ok_or(Error::EscrowNotFunded)?
                         ]
                         .into_val(&env),
                         soroban_sdk::vec![&env, amount_to_refund].into_val(&env),
