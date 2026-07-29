@@ -37,7 +37,19 @@ pub enum Error {
     /// Contract is paused and the requested operation is temporarily disabled.
     Paused = 15,
     /// Payer is not the authorized debtor for this invoice.
-    InvalidPayer = 17,
+    InvalidPayer = 16,
     /// Due date is invalid (e.g., in the past or zero).
-    InvalidDueDate = 16,
+    InvalidDueDate = 17,
+    /// Asset decimals for payment token and invoice token do not align.
+    InvalidAssetDecimals = 18,
+    /// Nonce has already been consumed by a prior signed off-chain approval (replay attempt).
+    NonceAlreadyUsed = 19,
+    /// Escrow is not yet in a terminal state (Settled, Refunded, or Cancelled) and cannot be cleaned up.
+    EscrowNotSettled = 20,
+    /// Buyer is not whitelisted to fund escrows.
+    NotWhitelisted = 21,
+    /// Off-chain signature has expired (timestamp too old).
+    SignatureExpired = 22,
+    /// Funding amount does not meet the required milestone threshold.
+    InvalidMilestoneAmount = 23,
 }

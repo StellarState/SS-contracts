@@ -2,7 +2,19 @@
 
 use soroban_sdk::{Address, Env, Symbol};
 
-/// Publish escrow_created event.
+use crate::types::EscrowStatus;
+
+/// Publish a lifecycle transition event carrying the new status and ledger
+/// timestamp, in addition to the narrower per-action events below. Lets
+/// off-chain indexers reconstruct full escrow lifecycle history/metadata
+/// from a single event stream instead of correlating five separate events.
+pub fn escrow_status_changed(env: &Env, inv_id: Symbol, status: EscrowStatus, timestamp: u64) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_status_changed"),),
+        (inv_id, status as u32, timestamp),
+    );
+}
+
 pub fn escrow_created(
     env: &Env,
     inv_id: Symbol,
@@ -14,6 +26,7 @@ pub fn escrow_created(
     token: &Address,
     inv_token: &Address,
     commitment: &soroban_sdk::BytesN<32>,
+    funding_milestone: Option<i128>,
 ) {
     env.events().publish(
         (Symbol::new(env, "escrow_created"),),
@@ -27,6 +40,7 @@ pub fn escrow_created(
             token,
             inv_token,
             commitment,
+            funding_milestone,
         ),
     );
 }
@@ -70,6 +84,26 @@ pub fn escrow_refunded(env: &Env, inv_id: Symbol, amount: i128) {
 pub fn escrow_cancelled(env: &Env, inv_id: Symbol, seller: &Address) {
     env.events()
         .publish((Symbol::new(env, "escrow_cancelled"),), (inv_id, seller));
+}
+
+/// Publish escrow_funded event for a signed off-chain approval, including the consumed nonce.
+pub fn escrow_funded_signed(
+    env: &Env,
+    inv_id: Symbol,
+    buyer: &Address,
+    amount: i128,
+    nonce: u64,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_fund_sig"),),
+        (inv_id, buyer, amount, nonce),
+    );
+}
+
+/// Publish escrow_cleaned_up event once a terminal escrow's storage has been reclaimed.
+pub fn escrow_cleaned_up(env: &Env, inv_id: Symbol) {
+    env.events()
+        .publish((Symbol::new(env, "escrow_cleaned"),), inv_id);
 }
 
 /// Publish platform fee update event with old and new basis points.
