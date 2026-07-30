@@ -1413,3 +1413,157 @@ fn test_extend_allowance_fails_after_expiry() {
     let result = client.try_extend_allowance(&admin, &spender, &(expiration + 100));
     assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
 }
+
+// ========== Uninitialized Contract Method Rejection Tests ==========
+
+#[test]
+fn test_uninitialized_methods_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let role = Symbol::new(&env, "admin");
+    let amount: i128 = 100;
+    let expiration = env.ledger().sequence() + 100;
+    let mut ids = Vec::new(&env);
+    ids.push_back(user.clone());
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(amount);
+
+    // SEP-41 view functions
+    assert_eq!(client.try_name(), Err(Ok(crate::errors::Error::NotInit)));
+    assert_eq!(client.try_symbol(), Err(Ok(crate::errors::Error::NotInit)));
+    assert_eq!(
+        client.try_decimals(),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_total_supply(),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_balance(&user),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_allowance(&user, &spender),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_get_nonce(&user),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+
+    // Metadata / admin view functions
+    assert_eq!(
+        client.try_invoice_id(),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_transfer_locked(),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(client.try_paused(), Err(Ok(crate::errors::Error::NotInit)));
+    assert_eq!(
+        client.try_get_fee_bps(),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_get_role_admin(&role),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_has_role(&role, &user),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_get_token_history(&user),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+
+    // Write: transfer / burn / mint functions
+    assert_eq!(
+        client.try_transfer(&user, &spender, &amount),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_approve(&user, &spender, &amount, &expiration),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_extend_allowance(&user, &spender, &expiration),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_revoke_approval(&user, &spender),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_transfer_from(&spender, &user, &user, &amount),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_burn(&user, &amount),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_burn_from(&spender, &user, &amount),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_mint(&user, &amount, &spender),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_mint_batch(&ids, &amounts, &spender),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+
+    // Write: admin / config functions
+    assert_eq!(
+        client.try_set_transfer_locked(&user, &false),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_set_minter(&user),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_set_decimals(&7u32),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_set_paused(&true),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_set_fee_bps(&user, &250),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_set_role_admin(&user, &role, &spender),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_grant_role(&user, &role, &spender),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+    assert_eq!(
+        client.try_revoke_role(&user, &role, &spender),
+        Err(Ok(crate::errors::Error::NotInit))
+    );
+
+    // State persistence: initialize must still succeed (no AlreadyInit),
+    // proving that none of the rejected calls wrote to storage.
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let name = SorobanString::from_str(&env, "Invoice INV-001");
+    let symbol = SorobanString::from_str(&env, "INV001");
+    let invoice_id = Symbol::new(&env, "inv_001");
+    assert!(client
+        .try_initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter)
+        .is_ok());
+}
