@@ -21,3 +21,7 @@ This document catalogues all contract error codes, root cause failure conditions
 | 13 | `Overflow` | Checked math arithmetic overflow/underflow. | Verify transaction amounts fit within standard i128 range. |
 | 14 | `InvalidDueDate` | Due date timestamp is in the past or zero. | Provide Unix timestamp strictly greater than current ledger time. |
 | 15 | `InvalidPayer` | Payer address does not match authorized debtor. | Execute payment using debtor account. |
+
+
+<!-- ledger time. |
+| 15 | `InvalidPayer` | Payer address does not match authorized debtor. | Execute payment using debtor account. | -->

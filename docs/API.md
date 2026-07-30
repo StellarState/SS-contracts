@@ -129,3 +129,14 @@ Records a full or partial payment for a funded invoice.
 - `platform_fee_updated`
 - `distributor_updated`
 - `paused_updated`
+
+
+<!-- ### Events
+- `escrow_created`
+- `escrow_funded`
+- `payment_settled`
+- `escrow_refunded`
+- `escrow_cancelled`
+- `platform_fee_updated`
+- `distributor_updated`
+- `paused_updated` -->

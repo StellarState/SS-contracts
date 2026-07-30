@@ -81,3 +81,11 @@ This document describes the multi-contract architecture powering the StellarSett
 - Error codes: [`docs/error_catalog.md`](error_catalog.md)
 - Gas benchmarks: [`docs/benchmarks.md`](benchmarks.md)
 - Threat model: [`docs/threat_model.md`](threat_model.md)
+
+
+<!-- ## References
+
+- State transitions: [`docs/state-machine.md`](state-machine.md)
+- Error codes: [`docs/error_catalog.md`](error_catalog.md)
+- Gas benchmarks: [`docs/benchmarks.md`](benchmarks.md)
+- Threat model: [`docs/threat_model.md`](threat_model.md) -->
