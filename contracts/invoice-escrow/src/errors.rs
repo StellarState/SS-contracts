@@ -52,4 +52,6 @@ pub enum Error {
     SignatureExpired = 22,
     /// Funding amount does not meet the required milestone threshold.
     InvalidMilestoneAmount = 23,
+    /// Escrow has received partial payment and cannot be cancelled.
+    EscrowPartiallyFunded = 24,
 }

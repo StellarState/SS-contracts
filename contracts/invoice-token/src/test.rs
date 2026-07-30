@@ -1567,6 +1567,8 @@ fn test_uninitialized_methods_rejected() {
     assert!(client
         .try_initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter)
         .is_ok());
+}
+
 // ========== Storage Key Serialization Tests (Issue #161) ==========
 
 /// Helper: assert a StorageKey roundtrips losslessly through Val.

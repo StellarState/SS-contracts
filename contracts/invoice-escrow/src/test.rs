@@ -352,7 +352,8 @@ fn test_two_token_escrow_different_tokens() {
     escrow_client.fund_escrow(&invoice_a, &buyer, &1000);
     escrow_client.record_payment(&invoice_a, &payer, &1000);
 
-
+    assert_eq!(
+        escrow_client.get_escrow_status(&invoice_a),
         EscrowStatus::Settled
     );
     // Token A balances
@@ -2410,6 +2411,7 @@ fn test_cancel_escrow_partially_funded_rejected() {
         &pt_id.address(),
         &inv_token_id,
         &test_commitment(&env, "test_invoice_data"),
+        &None,
     );
 
     // Partial funding: status stays Created, but funds have already moved into escrow.
@@ -3543,7 +3545,11 @@ fn test_set_whitelist_enabled_requires_admin_auth() {
 
     let admin = Address::generate(&env);
     let non_admin = Address::generate(&env);
-    escrow_client.initialize(&admin, &300);
+    env.invoke_contract::<()>(
+        &escrow_id,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, admin.to_val(), 300u32.into_val(&env)],
+    );
 
     let result = escrow_client.try_set_whitelist_enabled(&non_admin, &true);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
@@ -3600,7 +3606,11 @@ fn test_set_buyer_whitelisted_requires_admin_auth() {
     let admin = Address::generate(&env);
     let non_admin = Address::generate(&env);
     let buyer = Address::generate(&env);
-    escrow_client.initialize(&admin, &300);
+    env.invoke_contract::<()>(
+        &escrow_id,
+        &Symbol::new(&env, "initialize"),
+        soroban_sdk::vec![&env, admin.to_val(), 300u32.into_val(&env)],
+    );
 
     let result = escrow_client.try_set_buyer_whitelisted(&non_admin, &buyer, &true);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
@@ -5155,14 +5165,14 @@ fn test_settlement_at_exact_due_date_state_persistence() {
     let payment_token_asset = AssetClient::new(&env, &payment_token_id.address());
     let inv_token_id = env.register(MockInvoiceToken, ());
 
-    escrow_client.initialize(&admin, &300);
+    escrow_client.initialize(&admin, &0);
 
     let seller = Address::generate(&env);
     let buyer = Address::generate(&env);
     let payer = Address::generate(&env);
     let invoice_id = Symbol::new(&env, "INV_STATE_DT");
     let amount = 2000i128;
-    let purchase_price = 1800i128;
+    let purchase_price = 2000i128;
     let due_date = 60000u64;
 
     env.ledger().with_mut(|li| li.timestamp = 10000);

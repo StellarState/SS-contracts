@@ -17,6 +17,10 @@ pub enum StorageKey {
     RoleAdmin(soroban_sdk::Symbol),
     /// Role grant flag for a given (role, account) pair (Issue #182).
     RoleGrant(soroban_sdk::Symbol, soroban_sdk::Address),
+    /// Platform fee tier configuration (Issue #124).
+    FeeTiers,
+    /// Investor yield bonus in basis points (Issue #132).
+    InvestorBonusBps,
 }
 
 #[contracttype]
@@ -24,6 +28,14 @@ pub enum StorageKey {
 pub struct DistributionState {
     pub paid_distributed: i128,
     pub refund_distributed: bool,
+}
+
+/// A fee tier configuration: a recipient address and its fee basis points. Issue #124.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTier {
+    pub recipient: Address,
+    pub fee_bps: u32,
 }
 
 /// Maximum allowed fee in basis points (100% = 10,000 BPS). Issue #124.
