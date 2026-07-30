@@ -1413,3 +1413,194 @@ fn test_extend_allowance_fails_after_expiry() {
     let result = client.try_extend_allowance(&admin, &spender, &(expiration + 100));
     assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
 }
+
+// ========== Mint Error Path Tests ==========
+
+#[test]
+fn test_mint_unauthorized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _minter) = setup_token(&env);
+
+    let stranger = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let result = client.try_mint(&recipient, &100, &stranger);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Unauthorized)));
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(client.total_supply(), 0);
+}
+
+#[test]
+fn test_mint_zero_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    let recipient = Address::generate(&env);
+    let result = client.try_mint(&recipient, &0, &minter);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAmount)));
+
+    let result = client.try_mint(&recipient, &0, &admin);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAmount)));
+    assert_eq!(client.balance(&recipient), 0);
+}
+
+#[test]
+fn test_mint_negative_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    let recipient = Address::generate(&env);
+    let result = client.try_mint(&recipient, &(-50i128), &minter);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAmount)));
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(client.total_supply(), 0);
+}
+
+#[test]
+fn test_mint_while_paused_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    client.set_paused(&true);
+
+    let recipient = Address::generate(&env);
+    let result = client.try_mint(&recipient, &100, &minter);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Paused)));
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(client.total_supply(), 0);
+}
+
+#[test]
+fn test_mint_by_admin_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let recipient = Address::generate(&env);
+    client.mint(&recipient, &500, &admin);
+
+    assert_eq!(client.balance(&recipient), 500);
+    assert_eq!(client.total_supply(), 500);
+}
+
+#[test]
+fn test_mint_overflow_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    let recipient = Address::generate(&env);
+    client.mint(&recipient, &i128::MAX, &minter);
+
+    let result = client.try_mint(&recipient, &1, &minter);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Overflow)));
+    assert_eq!(client.balance(&recipient), i128::MAX);
+}
+
+// ========== mint_batch Error Path Tests ==========
+
+#[test]
+fn test_mint_batch_length_mismatch_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    let recipient = Address::generate(&env);
+    let mut to = Vec::new(&env);
+    to.push_back(recipient.clone());
+
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(100i128);
+    amounts.push_back(200i128);
+
+    let result = client.try_mint_batch(&to, &amounts, &minter);
+    assert_eq!(result, Err(Ok(crate::errors::Error::BatchLengthMismatch)));
+    assert_eq!(client.balance(&recipient), 0);
+}
+
+#[test]
+fn test_mint_batch_unauthorized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _minter) = setup_token(&env);
+
+    let stranger = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let mut to = Vec::new(&env);
+    to.push_back(recipient.clone());
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(100i128);
+
+    let result = client.try_mint_batch(&to, &amounts, &stranger);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Unauthorized)));
+    assert_eq!(client.balance(&recipient), 0);
+}
+
+#[test]
+fn test_mint_batch_while_paused_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    client.set_paused(&true);
+
+    let recipient = Address::generate(&env);
+    let mut to = Vec::new(&env);
+    to.push_back(recipient.clone());
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(100i128);
+
+    let result = client.try_mint_batch(&to, &amounts, &minter);
+    assert_eq!(result, Err(Ok(crate::errors::Error::Paused)));
+    assert_eq!(client.balance(&recipient), 0);
+}
+
+#[test]
+fn test_mint_batch_succeeds_and_preserves_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+
+    let mut to = Vec::new(&env);
+    to.push_back(first.clone());
+    to.push_back(second.clone());
+
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(300i128);
+    amounts.push_back(700i128);
+
+    client.mint_batch(&to, &amounts, &minter);
+
+    assert_eq!(client.balance(&first), 300);
+    assert_eq!(client.balance(&second), 700);
+    assert_eq!(client.total_supply(), 1000);
+}
+
+// ========== TransferLocked Error Assertion ==========
+
+#[test]
+fn test_transfer_fails_with_transfer_locked_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    let user = Address::generate(&env);
+    client.mint(&user, &1000, &minter);
+
+    // transfer_locked defaults to true (per test_no_transfer_event_on_locked_failure)
+    assert!(client.transfer_locked());
+
+    let recipient = Address::generate(&env);
+    let result = client.try_transfer(&user, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::TransferLocked)));
+    assert_eq!(client.balance(&user), 1000);
+    assert_eq!(client.balance(&recipient), 0);
+}
