@@ -5,7 +5,7 @@ use invoice_escrow::{EscrowStatus, InvoiceEscrow, InvoiceEscrowClient};
 use invoice_token::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as AssetClient};
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, Ledger as _},
+    testutils::{Address as _, Ledger as _},
     Address, BytesN, Env, String as SorobanString, Symbol,
 };
 
@@ -29,6 +29,7 @@ fn test_commitment(env: &Env) -> BytesN<32> {
 }
 
 struct FlowContext<'a> {
+    env: Env,
     admin: Address,
     seller: Address,
     buyer: Address,
@@ -81,6 +82,7 @@ fn setup(env: &Env, fee_bps: u32, configure_distributor: bool) -> FlowContext<'_
     }
 
     FlowContext {
+        env: env.clone(),
         admin,
         seller,
         buyer,
@@ -227,6 +229,15 @@ fn test_integration_verify_auth_distribution_invocations() {
     );
 
     // Verify distributor state was updated by the settlement flow.
+    // Verify auth records show the correct contract invocations.
+    let auths = env.auths();
+    assert!(
+        !auths.is_empty(),
+        "Expected auth invocations, got {}",
+        auths.len()
+    );
+
+    // Verify that payment distribution completed and state was recorded.
     let state = ctx
         .distributor
         .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id);
@@ -461,6 +472,11 @@ fn test_integration_refund_distribution_invocation_verified() {
 
     env.ledger().set_timestamp(10_001);
     ctx.escrow.refund(&ctx.invoice_id);
+
+    let state = ctx
+        .distributor
+        .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id);
+    assert!(state.refund_distributed);
 
     // Verify final state.
     assert_eq!(
