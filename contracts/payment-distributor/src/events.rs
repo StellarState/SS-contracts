@@ -1,4 +1,8 @@
+#![allow(deprecated)]
+
 use soroban_sdk::{Address, Env, Symbol, Vec};
+
+use crate::types::FeeTier;
 
 pub fn initialized(env: &Env, admin: &Address) {
     let topics = (Symbol::new(env, "initialized"),);
@@ -60,15 +64,26 @@ pub fn refund_distributed(
     env: &Env,
     escrow: &Address,
     invoice_id: &Symbol,
-    funder: &Address,
-    amount: i128,
+    recipients: &Vec<Address>,
+    amounts: &Vec<i128>,
 ) {
     let topics = (
         Symbol::new(env, "refund_distributed"),
         escrow.clone(),
         invoice_id.clone(),
     );
-    env.events().publish(topics, (funder, amount));
+    env.events()
+        .publish(topics, (recipients.clone(), amounts.clone()));
+}
+
+pub fn platform_fee_updated(env: &Env, admin: &Address, tiers: &Vec<FeeTier>) {
+    let topics = (Symbol::new(env, "platform_fee_updated"),);
+    env.events().publish(topics, (admin.clone(), tiers.clone()));
+}
+
+pub fn investor_bonus_rate_updated(env: &Env, admin: &Address, bonus_bps: u32) {
+    let topics = (Symbol::new(env, "investor_bonus_rate_updated"),);
+    env.events().publish(topics, (admin.clone(), bonus_bps));
 }
 
 /// Issue #130: Referral fee cut payout event.
@@ -92,14 +107,6 @@ pub fn asset_distributed(
         .publish(topics, (recipients.clone(), amounts.clone(), total));
 }
 
-/// Issue #121: Whitelisted escrow contract binding updated event.
-/// Topics: (escrow_contract_updated,); Data: (old_escrow, new_escrow).
-pub fn escrow_contract_updated(env: &Env, old_escrow: Option<Address>, new_escrow: &Address) {
-    let topics = (Symbol::new(env, "escrow_contract_updated"),);
-    env.events()
-        .publish(topics, (old_escrow, new_escrow.clone()));
-}
-
 /// Issue #125: Emergency withdrawal audit event.
 /// Topics: (EmergencyWithdrawal, token); Data: (admin, to, amount).
 pub fn emergency_withdrawal(
@@ -115,20 +122,19 @@ pub fn emergency_withdrawal(
 }
 
 /// Issue #182: Role grant/revoke event.
+#[allow(dead_code)]
 pub fn role_grant_updated(env: &Env, role: &Symbol, account: &Address, granted: bool) {
-    let topics = (Symbol::new(env, "role_grant_updated"), role.clone(), account.clone());
+    let topics = (
+        Symbol::new(env, "role_grant_updated"),
+        role.clone(),
+        account.clone(),
+    );
     env.events().publish(topics, granted);
 }
 
 /// Issue #119: Dust amount swept event.
 /// Topics: (DustSwept, token); Data: (admin, to, amount).
-pub fn dust_swept(
-    env: &Env,
-    admin: &Address,
-    token: &Address,
-    to: &Address,
-    amount: i128,
-) {
+pub fn dust_swept(env: &Env, admin: &Address, token: &Address, to: &Address, amount: i128) {
     let topics = (Symbol::new(env, "DustSwept"), token.clone());
     env.events()
         .publish(topics, (admin.clone(), to.clone(), amount));

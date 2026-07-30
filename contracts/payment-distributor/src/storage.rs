@@ -1,6 +1,6 @@
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
-use crate::types::{DistributionState, StorageKey};
+use crate::types::{DistributionState, FeeTier, StorageKey};
 
 /// Ledgers below which a `Distribution` persistent entry's TTL is extended
 /// (~7 days at 5s/ledger). Issue #128.
@@ -89,23 +89,13 @@ pub fn set_distribution(
     extend_ttl(env, escrow, invoice_id);
 }
 
-/// Set the whitelisted escrow contract address authorized to invoke
-/// distribution entrypoints. Admin-only. Issue #121.
-pub fn set_escrow_contract(env: &Env, escrow_contract: &Address) {
-    env.storage()
-        .instance()
-        .set(&StorageKey::EscrowContract, escrow_contract);
-}
-
-/// Get the whitelisted escrow contract address, if configured. Issue #121.
-pub fn get_escrow_contract(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&StorageKey::EscrowContract)
-}
-
 // ==================== Role-based access control (Issue #182) ====================
 
+#[allow(dead_code)]
 pub fn get_role_admin(env: &Env, role: &Symbol) -> Option<Address> {
-    env.storage().instance().get(&StorageKey::RoleAdmin(role.clone()))
+    env.storage()
+        .instance()
+        .get(&StorageKey::RoleAdmin(role.clone()))
 }
 
 pub fn has_role(env: &Env, role: &Symbol, account: &Address) -> bool {
@@ -115,6 +105,7 @@ pub fn has_role(env: &Env, role: &Symbol, account: &Address) -> bool {
         .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 pub fn set_role_grant(env: &Env, role: &Symbol, account: &Address, granted: bool) {
     let key = StorageKey::RoleGrant(role.clone(), account.clone());
     if granted {
@@ -122,4 +113,25 @@ pub fn set_role_grant(env: &Env, role: &Symbol, account: &Address, granted: bool
     } else {
         env.storage().instance().remove(&key);
     }
+}
+
+pub fn get_fee_tiers(env: &Env) -> Option<Vec<FeeTier>> {
+    env.storage().instance().get(&StorageKey::FeeTiers)
+}
+
+pub fn set_fee_tiers(env: &Env, tiers: &Vec<FeeTier>) {
+    env.storage().instance().set(&StorageKey::FeeTiers, tiers);
+}
+
+pub fn get_investor_bonus_bps(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&StorageKey::InvestorBonusBps)
+        .unwrap_or(0)
+}
+
+pub fn set_investor_bonus_bps(env: &Env, bonus_bps: u32) {
+    env.storage()
+        .instance()
+        .set(&StorageKey::InvestorBonusBps, &bonus_bps);
 }
