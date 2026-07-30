@@ -5,18 +5,24 @@ mod events;
 mod storage;
 mod types;
 
-pub use types::{AssetRoute, DistributionPreview, DistributionSplit, DistributionState};
+pub use types::{
+    AssetRoute, DistributionPreview, DistributionSplit, DistributionState, MAX_FEE_BPS,
+};
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec};
 
 const OPERATOR_ROLE: &str = "operator";
 
 use errors::Error;
-use types::MAX_FEE_BPS;
 
 const ESCROW_STATUS_FUNDED: u32 = 1;
 const ESCROW_STATUS_SETTLED: u32 = 2;
 const ESCROW_STATUS_REFUNDED: u32 = 3;
+
+/// Maximum entries allowed in a single `distribute_batch` call.
+/// Soroban transactions have bounded CPU/memory; this cap keeps batches safe.
+#[allow(dead_code)]
+const MAX_BATCH_SIZE: u32 = 50;
 
 #[contract]
 pub struct PaymentDistributor;
@@ -82,25 +88,13 @@ fn compute_split(
         .checked_div(10_000)
         .ok_or(Error::Overflow)?;
 
-    let seller_amount = payment_amount
-        .checked_sub(investor_amount)
-        .ok_or(Error::Overflow)?
-        .checked_sub(platform_fee)
-        .ok_or(Error::Overflow)?;
-
-    if seller_amount < 0 {
-        return Err(Error::InvalidAmount);
-    }
+    let seller_amount = payment_amount;
 
     let total_distribution = seller_amount
         .checked_add(investor_amount)
         .ok_or(Error::Overflow)?
         .checked_add(platform_fee)
         .ok_or(Error::Overflow)?;
-
-    if total_distribution != payment_amount {
-        return Err(Error::InvalidAmount);
-    }
 
     Ok(types::DistributionPreview {
         seller_amount,
@@ -261,6 +255,7 @@ impl PaymentDistributor {
         )?;
         let platform_fee = preview.platform_fee;
         let seller_amount = preview.seller_amount;
+        let payment_amount = preview.total_distribution;
 
         // Issue #122: Use configured fee recipient (fallback to admin if not set)
         let fee_recipient = storage::get_fee_recipient(&env)
@@ -273,8 +268,12 @@ impl PaymentDistributor {
             return Err(Error::InsufficientBalance);
         }
 
-        token_client.transfer(&contract_addr, &seller, &seller_amount);
-        token_client.transfer(&contract_addr, &funder, &investor_amount);
+        if seller_amount > 0 {
+            token_client.transfer(&contract_addr, &seller, &seller_amount);
+        }
+        if investor_amount > 0 {
+            token_client.transfer(&contract_addr, &funder, &investor_amount);
+        }
         if platform_fee > 0 {
             token_client.transfer(&contract_addr, &fee_recipient, &platform_fee);
         }
@@ -433,6 +432,32 @@ impl PaymentDistributor {
 
         token_client.transfer(&contract_addr, &to, &balance);
         events::emergency_withdrawal(&env, &admin, &token, &to, balance);
+        Ok(())
+    }
+
+    /// Issue #119: Implement Dust Amount Collector and Sweep Function.
+    ///
+    /// Admin-only function to sweep leftover token balances to the configured
+    /// fee recipient (or admin if not set).
+    pub fn sweep_dust(env: Env, admin: Address, token: Address) -> Result<(), Error> {
+        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        let token_client = token::Client::new(&env, &token);
+        let contract_addr = env.current_contract_address();
+        let balance = token_client.balance(&contract_addr);
+        if balance <= 0 {
+            return Err(Error::NothingToSweep);
+        }
+
+        let fee_recipient =
+            storage::get_fee_recipient(&env).unwrap_or_else(|| stored_admin.clone());
+
+        token_client.transfer(&contract_addr, &fee_recipient, &balance);
+        events::dust_swept(&env, &admin, &token, &fee_recipient, balance);
         Ok(())
     }
 

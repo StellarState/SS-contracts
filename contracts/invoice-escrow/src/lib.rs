@@ -37,6 +37,7 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
 impl InvoiceEscrow {
     /// Initialize the contract with admin and platform fee (basis points, e.g. 300 = 3%).
     pub fn initialize(env: Env, admin: Address, platform_fee_bps: u32) -> Result<(), Error> {
+        admin.require_auth();
         if storage::get_config(&env).is_some() {
             return Err(Error::AlreadyInit);
         }
@@ -102,6 +103,7 @@ impl InvoiceEscrow {
         payment_token: Address,
         invoice_token: Address,
         commitment: soroban_sdk::BytesN<32>,
+        funding_milestone: Option<i128>,
     ) -> Result<(), Error> {
         seller.require_auth();
         if face_value <= 0 || purchase_price <= 0 {
@@ -119,6 +121,29 @@ impl InvoiceEscrow {
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
+        // Ensure the payment token and invoice token use the same decimals to avoid
+        // settlement/rounding mismatches during distribution and fee calculations.
+        let inv_decimals: Option<u32> = env
+            .try_invoke_contract::<u32, soroban_sdk::Error>(
+                &invoice_token,
+                &Symbol::new(&env, "decimals"),
+                soroban_sdk::vec![&env],
+            )
+            .ok()
+            .and_then(|r| r.ok());
+        let pay_decimals: Option<u32> = env
+            .try_invoke_contract::<u32, soroban_sdk::Error>(
+                &payment_token,
+                &Symbol::new(&env, "decimals"),
+                soroban_sdk::vec![&env],
+            )
+            .ok()
+            .and_then(|r| r.ok());
+        if let (Some(inv_d), Some(pay_d)) = (inv_decimals, pay_decimals) {
+            if inv_d != pay_d {
+                return Err(Error::InvalidAssetDecimals);
+            }
+        }
         let data = EscrowData {
             inv_id: invoice_id.clone(),
             seller: seller.clone(),
@@ -132,6 +157,7 @@ impl InvoiceEscrow {
             inv_token: invoice_token.clone(),
             paid_amt: 0,
             status: EscrowStatus::Created,
+            funding_milestone,
             commitment: commitment.clone(),
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
@@ -146,6 +172,7 @@ impl InvoiceEscrow {
             &payment_token,
             &invoice_token,
             &commitment,
+            data.funding_milestone,
         );
         events::escrow_status_changed(&env, invoice_id, EscrowStatus::Created, current_timestamp);
         Ok(())
@@ -247,12 +274,11 @@ impl InvoiceEscrow {
         }
         let config = storage::get_config(env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
-        if config.whitelist_enabled && !storage::is_whitelisted(&env, &buyer) {
+        if config.whitelist_enabled && !storage::is_whitelisted(env, buyer) {
             return Err(Error::NotWhitelisted);
         }
 
-        let mut data =
-            storage::get_escrow(env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let mut data = storage::get_escrow(env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.status == EscrowStatus::Cancelled {
             return Err(Error::EscrowCancelled);
         }
@@ -266,6 +292,20 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
 
+        // Validate milestone constraints if a milestone is set
+        if let Some(milestone) = data.funding_milestone {
+            let remaining_to_fund = data
+                .purchase_price
+                .checked_sub(data.funded_amt)
+                .ok_or(Error::Overflow)?;
+
+            // Funder is always allowed to just fund exactly the remaining amount to complete the escrow.
+            // If they are not completing the escrow, the amount must be at least the milestone and a multiple of it.
+            if amount != remaining_to_fund && (amount < milestone || amount % milestone != 0) {
+                return Err(Error::InvalidMilestoneAmount);
+            }
+        }
+
         let token = token::Client::new(env, &data.token);
         let contract = env.current_contract_address();
         token.transfer(buyer, &contract, &amount);
@@ -274,12 +314,7 @@ impl InvoiceEscrow {
         env.invoke_contract::<()>(
             &data.inv_token,
             &Symbol::new(env, "mint"),
-            soroban_sdk::vec![
-                env,
-                buyer.to_val(),
-                amount.into_val(env),
-                contract.to_val()
-            ],
+            soroban_sdk::vec![env, buyer.to_val(), amount.into_val(env), contract.to_val()],
         );
 
         // Track this funder's contribution
@@ -312,7 +347,7 @@ impl InvoiceEscrow {
         );
         if data.status == EscrowStatus::Funded {
             events::escrow_status_changed(
-                &env,
+                env,
                 invoice_id,
                 EscrowStatus::Funded,
                 env.ledger().timestamp(),
@@ -382,8 +417,7 @@ impl InvoiceEscrow {
 
         storage::set_escrow(&env, invoice_id.clone(), &data);
 
-        // Extract funder address before branching so it is available in both paths.
-        let funder_opt = data.funder.clone();
+        let funder_addr = data.funder.clone().unwrap_or_else(|| data.seller.clone());
 
         if let Some(distributor) = config.payment_distributor.as_ref() {
             // The distributor must pay seller_amount (== amount) plus investor_amount + platform_fee
@@ -402,15 +436,18 @@ impl InvoiceEscrow {
                         &env,
                         <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&data.token, &env),
                         <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&data.seller, &env),
-                        <Option<Address> as IntoVal<Env, soroban_sdk::Val>>::into_val(
-                            &funder_opt,
-                            &env,
-                        ),
+                        <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&funder_addr, &env),
                         <Address as IntoVal<Env, soroban_sdk::Val>>::into_val(&config.admin, &env)
                     ]
                     .into_val(&env),
-                    soroban_sdk::vec![&env, data.paid_amt, amount, investor_amount, platform_fee]
-                        .into_val(&env),
+                    soroban_sdk::vec![
+                        &env,
+                        data.paid_amt,
+                        amount,
+                        investor_amount,
+                        config.fee_bps as i128,
+                    ]
+                    .into_val(&env),
                     (data.status as u32).into_val(&env)
                 ],
             );
@@ -419,7 +456,7 @@ impl InvoiceEscrow {
             token.transfer(&contract, &config.admin, &platform_fee);
 
             // 3. Pro-rata investor distribution
-            if let Some(funder) = &funder_opt {
+            if let Some(funder) = &data.funder {
                 if data.funded_amt > 0 && investor_amount > 0 {
                     let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), funder);
                     let pro_rata_share = investor_amount
@@ -595,7 +632,7 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// View: return escrow data for an invoice, or None if not found.
+    /// View: return escrow data for an invoice, or Err(Error::EscrowNotFound) if not found.
     pub fn get_escrow(env: Env, invoice_id: Symbol) -> Result<EscrowData, Error> {
         storage::get_escrow(&env, invoice_id).ok_or(Error::EscrowNotFound)
     }

@@ -33,4 +33,10 @@ pub enum Error {
     UnauthorizedEscrow = 18,
     /// The contract balance is insufficient to distribute the requested amount. Issue #120.
     InsufficientBalance = 19,
+    /// The contract holds no dust balance to sweep. Issue #119.
+    NothingToSweep = 20,
+    /// Batch must contain at least one entry.
+    EmptyBatch = 21,
+    /// Batch exceeds the maximum allowed number of entries.
+    BatchTooLarge = 22,
 }

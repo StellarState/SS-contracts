@@ -40,15 +40,16 @@ pub enum Error {
     InvalidPayer = 16,
     /// Due date is invalid (e.g., in the past or zero).
     InvalidDueDate = 17,
+    /// Asset decimals for payment token and invoice token do not align.
+    InvalidAssetDecimals = 18,
     /// Nonce has already been consumed by a prior signed off-chain approval (replay attempt).
-    NonceAlreadyUsed = 18,
+    NonceAlreadyUsed = 19,
     /// Escrow is not yet in a terminal state (Settled, Refunded, or Cancelled) and cannot be cleaned up.
-    EscrowNotSettled = 19,
+    EscrowNotSettled = 20,
     /// Buyer is not whitelisted to fund escrows.
-    NotWhitelisted = 20,
+    NotWhitelisted = 21,
     /// Off-chain signature has expired (timestamp too old).
-    SignatureExpired = 21,
-    /// Escrow has received partial funding from an investor and can no longer
-    /// be cancelled by the seller (funds already committed to the escrow).
-    EscrowPartiallyFunded = 22,
+    SignatureExpired = 22,
+    /// Funding amount does not meet the required milestone threshold.
+    InvalidMilestoneAmount = 23,
 }
