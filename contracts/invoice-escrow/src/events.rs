@@ -105,13 +105,7 @@ pub fn paused_updated(env: &Env, old_paused: bool, new_paused: bool) {
 
 /// Publish dispute_raised event.
 /// Data: (invoice_id, raiser, reason, raised_at)
-pub fn dispute_raised(
-    env: &Env,
-    inv_id: Symbol,
-    raiser: &Address,
-    reason: &Bytes,
-    raised_at: u64,
-) {
+pub fn dispute_raised(env: &Env, inv_id: Symbol, raiser: &Address, reason: &Bytes, raised_at: u64) {
     env.events().publish(
         (Symbol::new(env, "dispute_raised"),),
         (inv_id, raiser, reason, raised_at),

@@ -2240,11 +2240,11 @@ fn setup_funded_escrow(
 ) -> (
     Address, // escrow_id
     InvoiceEscrowClient<'_>,
-    Address, // admin
-    Address, // seller
-    Address, // buyer  (funder)
-    Address, // payer  (debtor)
-    Symbol,  // invoice_id
+    Address,                        // admin
+    Address,                        // seller
+    Address,                        // buyer  (funder)
+    Address,                        // payer  (debtor)
+    Symbol,                         // invoice_id
     soroban_sdk::token::Client<'_>, // payment_token
 ) {
     let escrow_id = env.register_contract(None, InvoiceEscrow);
@@ -2281,7 +2281,9 @@ fn setup_funded_escrow(
 
     assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Funded);
 
-    (escrow_id, client, admin, seller, buyer, payer, invoice_id, pt_client)
+    (
+        escrow_id, client, admin, seller, buyer, payer, invoice_id, pt_client,
+    )
 }
 
 // ── raise_dispute ────────────────────────────────────────────────────────────
@@ -2390,10 +2392,7 @@ fn test_resolve_dispute_favour_seller() {
     client.resolve_dispute(&invoice_id, &favour);
 
     // Status must be Settled
-    assert_eq!(
-        client.get_escrow_status(&invoice_id),
-        EscrowStatus::Settled
-    );
+    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Settled);
 
     // Seller should have received the purchase_price (1000)
     assert_eq!(pt.balance(&seller), 1000);
@@ -2601,8 +2600,7 @@ fn test_resolve_dispute_before_timeout_requires_admin_auth() {
     // Do NOT mock_all_auths — we want the auth check to fire
     env.mock_all_auths_allowing_non_root_auth();
 
-    let (_, client, admin, _seller, _buyer, _payer, invoice_id, _pt) =
-        setup_funded_escrow(&env);
+    let (_, client, admin, _seller, _buyer, _payer, invoice_id, _pt) = setup_funded_escrow(&env);
 
     // Set a long timeout so we stay inside it
     env.mock_all_auths();
@@ -2618,10 +2616,7 @@ fn test_resolve_dispute_before_timeout_requires_admin_auth() {
     // This should succeed because admin auth is mocked
     client.resolve_dispute(&invoice_id, &favour);
 
-    assert_eq!(
-        client.get_escrow_status(&invoice_id),
-        EscrowStatus::Settled
-    );
+    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Settled);
     let _ = admin; // suppress unused warning
 }
 

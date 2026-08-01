@@ -333,8 +333,7 @@ impl InvoiceEscrow {
             // 3. Pro-rata investor distribution
             if let Some(funder) = &funder_opt {
                 if data.funded_amt > 0 && investor_amount > 0 {
-                    let funder_amt =
-                        storage::get_funder_amount(&env, invoice_id.clone(), funder);
+                    let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), funder);
                     let pro_rata_share = investor_amount
                         .checked_mul(funder_amt)
                         .ok_or(Error::Overflow)?
@@ -459,11 +458,7 @@ impl InvoiceEscrow {
     /// * `reason`     – a short byte-string reason (e.g. b"delivery_failure").
     ///
     /// Emits `dispute_raised`.
-    pub fn raise_dispute(
-        env: Env,
-        invoice_id: Symbol,
-        reason: Bytes,
-    ) -> Result<(), Error> {
+    pub fn raise_dispute(env: Env, invoice_id: Symbol, reason: Bytes) -> Result<(), Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
         // Only the admin is authorised to raise a dispute.
@@ -517,11 +512,7 @@ impl InvoiceEscrow {
     /// a dispute that is never resolved.  In this path `favour` is ignored.
     ///
     /// Emits `dispute_resolved`.
-    pub fn resolve_dispute(
-        env: Env,
-        invoice_id: Symbol,
-        favour: Symbol,
-    ) -> Result<(), Error> {
+    pub fn resolve_dispute(env: Env, invoice_id: Symbol, favour: Symbol) -> Result<(), Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
 
@@ -541,8 +532,8 @@ impl InvoiceEscrow {
             return Err(Error::NotDisputed);
         }
 
-        let dispute = storage::get_dispute_data(&env, invoice_id.clone())
-            .ok_or(Error::NotDisputed)?;
+        let dispute =
+            storage::get_dispute_data(&env, invoice_id.clone()).ok_or(Error::NotDisputed)?;
 
         let now = env.ledger().timestamp();
         let timeout = effective_dispute_timeout(&config);
