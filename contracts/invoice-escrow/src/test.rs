@@ -4200,6 +4200,11 @@ fn test_error_unauthorized() {
         Err(Ok(Error::Unauthorized))
     );
 
+    let config_after_rejected_admin_calls = escrow_client.get_config();
+    assert!(!config_after_rejected_admin_calls.whitelist_enabled);
+    assert_eq!(config_after_rejected_admin_calls.admin, admin);
+    assert!(!escrow_client.is_buyer_whitelisted(&seller));
+
     let invoice_id = Symbol::new(&env, "UNAUTH");
     escrow_client.create_escrow(
         &invoice_id,
