@@ -13,7 +13,7 @@ mod types;
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, IntoVal, Symbol};
 
-use types::{EmergencyApprovals, MultiSigConfig};
+use types::MultiSigConfig;
 
 // EscrowStatus is re-exported publicly; Config, EscrowData, and InvoiceData are crate-private.
 pub use types::EscrowStatus;

@@ -18,11 +18,6 @@ pub fn bump_persistent(env: &Env, key: &StorageKey) {
         .extend_ttl(key, TTL_THRESHOLD, MIN_TTL_EXTEND);
 }
 
-/// Extend the TTL of an escrow's persistent storage entry so it survives
-/// ledger pruning across the full lifetime of a long-lived invoice.
-pub fn extend_ttl(env: &Env, inv_id: Symbol) {
-    bump_persistent(env, &StorageKey::Escrow(inv_id));
-}
 
 /// Load contract config from instance storage, bumping instance TTL.
 pub fn get_config(env: &Env) -> Option<Config> {
