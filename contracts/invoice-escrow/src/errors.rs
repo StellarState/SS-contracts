@@ -86,4 +86,8 @@ pub enum Error {
     ThresholdNotMet = 35,
     /// Emergency multi-sig config has not been set.
     EmergencyNotConfigured = 36,
+    /// Pagination limit is invalid (zero).
+    InvalidLimit = 37,
+    /// Pagination limit exceeds maximum allowed page size.
+    LimitExceeded = 38,
 }
