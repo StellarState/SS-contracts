@@ -13,15 +13,38 @@ mod types;
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, IntoVal, Symbol};
 
+use types::{EmergencyApprovals, MultiSigConfig};
+
 // EscrowStatus is re-exported publicly; Config and EscrowData are crate-private.
 pub use types::EscrowStatus;
 use types::{Config, EscrowData, FundingInvoice, InvoiceStatus};
 
 use errors::Error;
 
+/// Reject the zero address (all-zero 32-byte Ed25519 key) which is never a valid participant.
+fn ensure_non_zero_address(env: &Env, address: &Address) -> Result<(), Error> {
+    // Convert address to its string representation and check for the well-known
+    // zero account (all 32 bytes are 0x00).  The StrKey encoding of the zero
+    // account is the constant below.
+    let zero_str = soroban_sdk::String::from_str(
+        env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    );
+    let zero = Address::from_string(&zero_str);
+    if *address == zero {
+        return Err(Error::InvalidAddress);
+    }
+    Ok(())
+}
+
 const MAX_BPS: u32 = 10_000;
 const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
 const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
+
+/// Minimum escrow duration: 1 hour (3600 seconds).
+const MIN_ESCROW_DURATION_SECS: u64 = 3_600;
+/// Maximum escrow duration: 365 days (31,536,000 seconds).
+const MAX_ESCROW_DURATION_SECS: u64 = 31_536_000;
 
 #[contract]
 pub struct InvoiceEscrow;
@@ -37,6 +60,7 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
 impl InvoiceEscrow {
     /// Initialize the contract with admin and platform fee (basis points, e.g. 300 = 3%).
     pub fn initialize(env: Env, admin: Address, platform_fee_bps: u32) -> Result<(), Error> {
+        ensure_non_zero_address(&env, &admin)?;
         admin.require_auth();
         if storage::get_config(&env).is_some() {
             return Err(Error::AlreadyInit);
@@ -50,7 +74,24 @@ impl InvoiceEscrow {
             payment_distributor: None,
             paused: false,
             whitelist_enabled: false,
+            min_investment: 0,
         };
+        storage::set_config(&env, &config);
+        Ok(())
+    }
+
+    /// Admin-only: set the minimum investment amount for `fund_escrow`.
+    /// Pass `0` to disable the floor (deposits must still be strictly positive).
+    pub fn set_min_investment(env: Env, admin: Address, min_investment: i128) -> Result<(), Error> {
+        admin.require_auth();
+        if min_investment < 0 {
+            return Err(Error::InvalidAmount);
+        }
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        config.min_investment = min_investment;
         storage::set_config(&env, &config);
         Ok(())
     }
@@ -115,6 +156,10 @@ impl InvoiceEscrow {
         let current_timestamp = env.ledger().timestamp();
         if due_date <= current_timestamp {
             return Err(Error::InvalidDueDate);
+        }
+        let duration = due_date.saturating_sub(current_timestamp);
+        if duration < MIN_ESCROW_DURATION_SECS || duration > MAX_ESCROW_DURATION_SECS {
+            return Err(Error::InvalidDuration);
         }
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
@@ -323,7 +368,10 @@ impl InvoiceEscrow {
         amount: i128,
     ) -> Result<(), Error> {
         // Fail fast: validate amount before hitting storage.
-        if amount <= 0 {
+        if amount == 0 {
+            return Err(Error::ZeroAmount);
+        }
+        if amount < 0 {
             return Err(Error::InvalidAmount);
         }
         let config = storage::get_config(env).ok_or(Error::NotInit)?;
@@ -346,13 +394,22 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
 
+        let remaining_to_fund = data
+            .purchase_price
+            .checked_sub(data.funded_amt)
+            .ok_or(Error::Overflow)?;
+
+        // Enforce global minimum investment to prevent dust deposits, except when
+        // the funder is completing the exact remaining capacity.
+        if config.min_investment > 0
+            && amount != remaining_to_fund
+            && amount < config.min_investment
+        {
+            return Err(Error::AmountBelowMinimum);
+        }
+
         // Validate milestone constraints if a milestone is set
         if let Some(milestone) = data.funding_milestone {
-            let remaining_to_fund = data
-                .purchase_price
-                .checked_sub(data.funded_amt)
-                .ok_or(Error::Overflow)?;
-
             // Funder is always allowed to just fund exactly the remaining amount to complete the escrow.
             // If they are not completing the escrow, the amount must be at least the milestone and a multiple of it.
             if amount != remaining_to_fund && (amount < milestone || amount % milestone != 0) {
@@ -716,6 +773,94 @@ impl InvoiceEscrow {
     pub fn paused(env: Env) -> Result<bool, Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         Ok(config.paused)
+    }
+
+    /// Admin-only: configure the emergency multi-sig admin set and threshold.
+    pub fn set_emergency_config(
+        env: Env,
+        admin: Address,
+        config: MultiSigConfig,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let stored_config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if stored_config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        if config.threshold == 0 || config.threshold > config.admins.len() as u32 {
+            return Err(Error::InvalidFeeBps); // reuse for invalid threshold
+        }
+        storage::set_emergency_config(&env, &config);
+        Ok(())
+    }
+
+    /// Emergency multi-sig release: an admin approves releasing funds for an invoice.
+    /// When the threshold is reached, funds are paid out to the seller and the escrow
+    /// is marked as Settled.
+    pub fn emergency_release(env: Env, caller: Address, invoice_id: Symbol) -> Result<(), Error> {
+        caller.require_auth();
+        let config = storage::get_emergency_config(&env).ok_or(Error::EmergencyNotConfigured)?;
+
+        // Verify caller is an emergency admin
+        let mut is_admin = false;
+        for admin in config.admins.iter() {
+            if admin == caller {
+                is_admin = true;
+                break;
+            }
+        }
+        if !is_admin {
+            return Err(Error::NotEmergencyAdmin);
+        }
+
+        let mut approvals = storage::get_emergency_approvals(&env, &invoice_id);
+
+        // Check for duplicate approval
+        for addr in approvals.approvals.iter() {
+            if addr == caller {
+                return Err(Error::AlreadyApproved);
+            }
+        }
+
+        approvals.approvals.push_back(caller.clone());
+        storage::set_emergency_approvals(&env, &invoice_id, &approvals);
+
+        if approvals.approvals.len() as u32 < config.threshold {
+            return Err(Error::ThresholdNotMet);
+        }
+
+        // Threshold reached — execute emergency release
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+
+        if data.status == EscrowStatus::Settled
+            || data.status == EscrowStatus::Refunded
+            || data.status == EscrowStatus::Cancelled
+        {
+            return Err(Error::AlreadySettled);
+        }
+
+        let token = token::Client::new(&env, &data.token);
+        let contract = env.current_contract_address();
+        let remaining = data
+            .purchase_price
+            .checked_sub(data.paid_amt)
+            .ok_or(Error::Overflow)?;
+
+        // Pay remaining to seller
+        if remaining > 0 {
+            token.transfer(&contract, &data.seller, &remaining);
+        }
+
+        data.status = EscrowStatus::Settled;
+        storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        events::escrow_status_changed(
+            &env,
+            invoice_id.clone(),
+            EscrowStatus::Settled,
+            env.ledger().timestamp(),
+        );
+        Ok(())
     }
 
     /// Reclaim persistent storage for an escrow that has reached a terminal state

@@ -21,6 +21,10 @@ pub enum StorageKey {
     Invoice(soroban_sdk::BytesN<32>),
     /// Persistent: investor position by (invoice_id BytesN<32>, investor address).
     InvestorPosition(soroban_sdk::BytesN<32>, soroban_sdk::Address),
+    /// Instance: emergency multi-sig admin configuration.
+    EmergencyConfig,
+    /// Persistent: approvals collected for a given invoice's emergency release.
+    EmergencyApprovals(soroban_sdk::Symbol),
 }
 
 /// Global contract configuration.
@@ -39,6 +43,10 @@ pub struct Config {
     /// Defaults to false (opt-in) so existing deployments/tests are unaffected
     /// until an admin explicitly enables it.
     pub whitelist_enabled: bool,
+    /// Minimum investment amount (stroops) accepted by `fund_escrow`.
+    /// `0` disables the floor (only `amount > 0` is required). Completing the
+    /// remaining capacity below this floor is always allowed.
+    pub min_investment: i128,
 }
 
 /// Lifecycle status of an escrow.
@@ -127,4 +135,20 @@ pub struct FundingInvoice {
     pub status: InvoiceStatus,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
+/// Multi-signature configuration for emergency releases.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiSigConfig {
+    /// Set of admin addresses authorized to approve emergency releases.
+    pub admins: soroban_sdk::Vec<soroban_sdk::Address>,
+    /// Number of approvals required to trigger the emergency release (N-of-M).
+    pub threshold: u32,
+}
+
+/// Tracks which admins have approved an emergency release for a given invoice.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmergencyApprovals {
+    /// List of admin addresses that have already approved this release.
+    pub approvals: soroban_sdk::Vec<soroban_sdk::Address>,
 }
