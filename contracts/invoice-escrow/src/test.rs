@@ -2641,7 +2641,8 @@ fn test_create_escrow_with_commitment() {
         &inv_token,
         &commitment,
         &None,
-    );
+            &None,
+        );
 
     // Verify escrow was created with commitment
     let escrow_data = escrow_client.get_escrow(&invoice_id);
@@ -2716,7 +2717,8 @@ fn test_commitment_included_in_created_event() {
         &inv_token,
         &commitment,
         &None,
-    );
+            &None,
+        );
 
     // Assert escrow_created event was emitted with commitment
     let events = env.events().all();
@@ -2855,7 +2857,8 @@ fn test_commitment_persists_through_lifecycle() {
         &inv_token_id,
         &commitment,
         &None,
-    );
+            &None,
+        );
 
     // Verify commitment after creation
     let escrow_data = escrow_client.get_escrow(&invoice_id);
@@ -5246,7 +5249,8 @@ fn test_settlement_at_exact_due_date_state_persistence() {
         &inv_token_id,
         &commitment,
         &None,
-    );
+            &None,
+        );
     escrow_client.fund_escrow(&invoice_id, &buyer, &purchase_price);
 
     env.ledger().with_mut(|li| li.timestamp = due_date);
@@ -7785,7 +7789,8 @@ fn test_invoice_id_and_optional_metadata_event_encoding() {
         &inv_token_id,
         &commitment,
         &None,
-    );
+            &None,
+        );
 
     let events = env.events().all();
     let mut decoded: Option<(Symbol, soroban_sdk::BytesN<32>, Option<i128>)> = None;

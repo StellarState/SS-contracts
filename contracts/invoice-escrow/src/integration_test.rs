@@ -636,7 +636,8 @@ fn test_integration_duplicate_invoice_id_rejected() {
         &ctx.inv_token_id,
         &commitment,
         &None,
-    );
+            &None,
+        );
 
     let result = ctx.escrow.try_create_escrow(
         &ctx.invoice_id,
@@ -649,7 +650,8 @@ fn test_integration_duplicate_invoice_id_rejected() {
         &ctx.inv_token_id,
         &commitment,
         &None,
-    );
+            &None,
+        );
     assert_eq!(result, Err(Ok(errors::Error::EscrowExists)));
 }
 
@@ -756,7 +758,8 @@ fn test_integration_state_persistence_after_create() {
         &ctx.inv_token_id,
         &commitment,
         &None,
-    );
+            &None,
+        );
 
     let data = ctx.escrow.get_escrow(&ctx.invoice_id);
     assert_eq!(data.inv_id, ctx.invoice_id);
@@ -985,7 +988,8 @@ fn test_integration_escrow_created_event_emitted() {
         &ctx.inv_token_id,
         &commitment,
         &None,
-    );
+            &None,
+        );
 
     let evts = env.events().all();
     let evt = evts
