@@ -6,6 +6,7 @@ use crate::errors::Error;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StorageKey {
     Admin,
+    PendingAdmin,
     Distribution(soroban_sdk::Address, soroban_sdk::Symbol),
     /// Ordered platform fee tiers.
     FeeTiers,
