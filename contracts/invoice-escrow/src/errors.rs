@@ -90,4 +90,10 @@ pub enum Error {
     InvalidLimit = 37,
     /// Pagination limit exceeds maximum allowed page size.
     LimitExceeded = 38,
+    /// Escrow is not currently disputed.
+    NotDisputed = 39,
+    /// Dispute is already resolved.
+    AlreadyResolved = 40,
+    /// Dispute resolution period has timed out.
+    DisputeTimedOut = 41,
 }

@@ -195,3 +195,19 @@ pub fn funding_finalised(env: &Env, invoice_id: BytesN<32>, total_raised: i128, 
         (total_raised, seller.clone()),
     );
 }
+
+/// Publish dispute raised event.
+pub fn dispute_raised(env: &Env, inv_id: Symbol, raiser: &Address, reason: &soroban_sdk::Bytes) {
+    env.events().publish(
+        (Symbol::new(env, "DisputeRaised"),),
+        (inv_id, raiser.clone(), reason.clone()),
+    );
+}
+
+/// Publish dispute resolved event.
+pub fn dispute_resolved(env: &Env, inv_id: Symbol, admin: &Address, favour: Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "DisputeResolved"),),
+        (inv_id, admin.clone(), favour),
+    );
+}

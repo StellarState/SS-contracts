@@ -29,6 +29,8 @@ pub enum StorageKey {
     EscrowCount,
     /// Persistent: invoice_id indexed by sequential creation order.
     EscrowIdByIndex(u32),
+    /// Persistent: dispute data for an escrow by invoice_id.
+    Dispute(soroban_sdk::Symbol),
 }
 
 /// Global contract configuration.
@@ -51,6 +53,8 @@ pub struct Config {
     /// `0` disables the floor (only `amount > 0` is required). Completing the
     /// remaining capacity below this floor is always allowed.
     pub min_investment: i128,
+    /// Dispute timeout in seconds before default fallback triggers (default: 604800s / 7 days).
+    pub dispute_timeout_secs: u64,
 }
 
 /// Lifecycle status of an escrow.
@@ -70,6 +74,18 @@ pub enum EscrowStatus {
     /// Cancelled by seller while still in Created state and never funded
     /// (locked out once any investor contribution has been received).
     Cancelled = 4,
+    /// Dispute raised by buyer or seller, awaiting admin resolution.
+    Disputed = 5,
+}
+
+/// Metadata for a raised dispute.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeData {
+    pub raiser: soroban_sdk::Address,
+    pub reason: soroban_sdk::Bytes,
+    pub raised_at: u64,
+    pub resolved: bool,
 }
 
 /// Per-invoice escrow data stored in persistent storage.

@@ -8617,3 +8617,203 @@ fn test_fund_escrow_signed_future_timestamp_succeeds() {
     let result = c.fund_escrow_signed(&Symbol::new(&env, "inv1"), &buyer, &500, &1, &(now + 3600));
     assert!(result.is_ok());
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// DISPUTE RESOLUTION TESTS
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_dispute_raise_by_buyer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    
+    let pt = create_token(&env, &admin);
+    let inv_token = create_invoice_token(&env, &admin);
+    
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    c.initialize(&admin, &300);
+    
+    pt.asset.mint(&buyer, &1000);
+    let now = env.ledger().timestamp();
+    let invoice_id = Symbol::new(&env, "inv_disp");
+    
+    c.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &900,
+        &(now + 7200),
+        &pt.address,
+        &inv_token,
+        &test_commitment(&env, "disp1"),
+        &None,
+    );
+    
+    c.fund_escrow(&invoice_id, &buyer, &900);
+    
+    assert_eq!(c.get_escrow_status(&invoice_id), EscrowStatus::Funded);
+    
+    let reason = soroban_sdk::Bytes::from_slice(&env, b"Quality issue");
+    c.raise_dispute(&buyer, &invoice_id, &reason);
+    
+    assert_eq!(c.get_escrow_status(&invoice_id), EscrowStatus::Disputed);
+}
+
+#[test]
+fn test_dispute_resolution_in_favor_of_seller() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    
+    let pt = create_token(&env, &admin);
+    let inv_token = create_invoice_token(&env, &admin);
+    
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    c.initialize(&admin, &300);
+    
+    pt.asset.mint(&buyer, &1000);
+    let now = env.ledger().timestamp();
+    let invoice_id = Symbol::new(&env, "inv_disp_s");
+    
+    c.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &900,
+        &(now + 7200),
+        &pt.address,
+        &inv_token,
+        &test_commitment(&env, "disp2"),
+        &None,
+    );
+    
+    c.fund_escrow(&invoice_id, &buyer, &900);
+    let reason = soroban_sdk::Bytes::from_slice(&env, b"Quality issue");
+    c.raise_dispute(&buyer, &invoice_id, &reason);
+    
+    // Resolve in favor of seller
+    c.resolve_dispute(&admin, &invoice_id, &Symbol::new(&env, "seller"));
+    
+    assert_eq!(c.get_escrow_status(&invoice_id), EscrowStatus::Settled);
+    // Seller should receive the funded amount (900)
+    assert_eq!(pt.asset.balance(&seller), 900);
+}
+
+#[test]
+fn test_dispute_resolution_in_favor_of_buyer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    
+    let pt = create_token(&env, &admin);
+    let inv_token = create_invoice_token(&env, &admin);
+    
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    c.initialize(&admin, &300);
+    
+    pt.asset.mint(&buyer, &1000);
+    let now = env.ledger().timestamp();
+    let invoice_id = Symbol::new(&env, "inv_disp_b");
+    
+    c.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &900,
+        &(now + 7200),
+        &pt.address,
+        &inv_token,
+        &test_commitment(&env, "disp3"),
+        &None,
+    );
+    
+    c.fund_escrow(&invoice_id, &buyer, &900);
+    
+    let buyer_balance_after_fund = pt.asset.balance(&buyer);
+    assert_eq!(buyer_balance_after_fund, 100);
+    
+    let reason = soroban_sdk::Bytes::from_slice(&env, b"Quality issue");
+    c.raise_dispute(&buyer, &invoice_id, &reason);
+    
+    // Resolve in favor of buyer
+    c.resolve_dispute(&admin, &invoice_id, &Symbol::new(&env, "buyer"));
+    
+    assert_eq!(c.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    // Buyer should receive the refund (900), bringing balance back to 1000
+    assert_eq!(pt.asset.balance(&buyer), 1000);
+}
+
+#[test]
+fn test_dispute_timeout_triggering_default_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    
+    let pt = create_token(&env, &admin);
+    let inv_token = create_invoice_token(&env, &admin);
+    
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    c.initialize(&admin, &300);
+    
+    pt.asset.mint(&buyer, &1000);
+    let now = env.ledger().timestamp();
+    let invoice_id = Symbol::new(&env, "inv_disp_to");
+    
+    c.create_escrow(
+        &invoice_id,
+        &seller,
+        &seller,
+        &1000,
+        &900,
+        &(now + 7200),
+        &pt.address,
+        &inv_token,
+        &test_commitment(&env, "disp4"),
+        &None,
+    );
+    
+    c.fund_escrow(&invoice_id, &buyer, &900);
+    
+    let reason = soroban_sdk::Bytes::from_slice(&env, b"Quality issue");
+    c.raise_dispute(&buyer, &invoice_id, &reason);
+    
+    // Fast-forward past the default 7-day timeout (604800 seconds)
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        timestamp: now + 604801,
+        protocol_version: 20,
+        sequence_number: 1000,
+        network_id: [0; 32],
+        base_reserve: 10,
+        min_temp_entry_ttl: 1,
+        min_persistent_entry_ttl: 1,
+        max_entry_ttl: 10,
+    });
+    
+    // Resolve, pass any favor. It should fallback to buyer because of timeout.
+    c.resolve_dispute(&admin, &invoice_id, &Symbol::new(&env, "seller"));
+    
+    assert_eq!(c.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    // Buyer should get the refund
+    assert_eq!(pt.asset.balance(&buyer), 1000);
+}
+
