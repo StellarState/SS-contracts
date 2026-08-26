@@ -17,7 +17,7 @@ use types::{EmergencyApprovals, MultiSigConfig};
 
 // EscrowStatus is re-exported publicly; Config and EscrowData are crate-private.
 pub use types::EscrowStatus;
-use types::{Config, EscrowData, FundingInvoice, InvoiceStatus};
+use types::{CategoryFeeSchedule, Config, EscrowData, FundingInvoice, InvoiceCategory, InvoiceStatus};
 
 use errors::Error;
 
@@ -145,6 +145,7 @@ impl InvoiceEscrow {
         invoice_token: Address,
         commitment: soroban_sdk::BytesN<32>,
         funding_milestone: Option<i128>,
+        category: Option<InvoiceCategory>,
     ) -> Result<(), Error> {
         seller.require_auth();
         if face_value <= 0 || purchase_price <= 0 {
@@ -191,6 +192,7 @@ impl InvoiceEscrow {
         }
         let data = EscrowData {
             inv_id: invoice_id.clone(),
+            category: category.unwrap_or(InvoiceCategory::Standard),
             seller: seller.clone(),
             debtor: debtor.clone(),
             face_value,
@@ -521,7 +523,12 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        let fee_bps = i128::from(config.fee_bps);
+        let fee_bps = if let Some(cat_fee) = storage::get_category_fee(&env, data.category) {
+            i128::from(cat_fee.fee_bps)
+        } else {
+            i128::from(config.fee_bps)
+        };
+
         // Fee is calculated on the payment amount (not face_value)
         let platform_fee = amount
             .checked_mul(fee_bps)
@@ -732,6 +739,26 @@ impl InvoiceEscrow {
         config.fee_bps = new_fee_bps;
         storage::set_config(&env, &config);
         events::platform_fee_updated(&env, old_fee_bps, new_fee_bps);
+        Ok(())
+    }
+
+    /// Admin-only: set the fee schedule for a specific invoice category.
+    pub fn set_category_fee(
+        env: Env,
+        admin: Address,
+        category: InvoiceCategory,
+        fee_bps: u32,
+    ) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+        if fee_bps > MAX_BPS {
+            return Err(Error::InvalidFeeBps);
+        }
+        let schedule = CategoryFeeSchedule { fee_bps };
+        storage::set_category_fee(&env, category, &schedule);
         Ok(())
     }
 

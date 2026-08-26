@@ -2,7 +2,7 @@
 
 use soroban_sdk::{Address, Symbol};
 
-use crate::types::{Config, EmergencyApprovals, EscrowData, MultiSigConfig, StorageKey};
+use crate::types::{CategoryFeeSchedule, Config, EmergencyApprovals, EscrowData, InvoiceCategory, MultiSigConfig, StorageKey};
 
 /// Ledgers below which a persistent entry's TTL is extended (~7 days at 5s/ledger).
 const TTL_THRESHOLD: u32 = 120_960;
@@ -246,4 +246,18 @@ pub fn set_escrow_id_by_index(env: &soroban_sdk::Env, index: u32, invoice_id: &S
     env.storage()
         .persistent()
         .set(&StorageKey::EscrowIdByIndex(index), invoice_id);
+}
+
+/// Load the category fee schedule for a given category.
+pub fn get_category_fee(env: &soroban_sdk::Env, category: InvoiceCategory) -> Option<CategoryFeeSchedule> {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::CategoryFee(category))
+}
+
+/// Save the category fee schedule for a given category.
+pub fn set_category_fee(env: &soroban_sdk::Env, category: InvoiceCategory, schedule: &CategoryFeeSchedule) {
+    env.storage()
+        .persistent()
+        .set(&StorageKey::CategoryFee(category), schedule);
 }

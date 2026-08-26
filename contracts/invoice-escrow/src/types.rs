@@ -29,6 +29,26 @@ pub enum StorageKey {
     EscrowCount,
     /// Persistent: invoice_id indexed by sequential creation order.
     EscrowIdByIndex(u32),
+    /// Persistent: fee bps by category.
+    CategoryFee(InvoiceCategory),
+}
+
+/// Category of commercial invoice.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum InvoiceCategory {
+    Standard = 0,
+    Factoring = 1,
+    Reverse = 2,
+    Government = 3,
+}
+
+/// Persistent fee schedule for a specific invoice category.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CategoryFeeSchedule {
+    pub fee_bps: u32,
 }
 
 /// Global contract configuration.
@@ -78,6 +98,8 @@ pub enum EscrowStatus {
 pub struct EscrowData {
     /// Invoice identifier (Symbol, ≤10 chars when used as key).
     pub inv_id: soroban_sdk::Symbol,
+    /// Invoice category (determines fee schedule).
+    pub category: InvoiceCategory,
     /// Seller (invoice owner).
     pub seller: soroban_sdk::Address,
     /// Debtor (authorized payer of the invoice).
