@@ -62,4 +62,12 @@ pub enum Error {
     InvalidInvoiceToken = 27,
     /// Payment token and invoice token must be different contracts.
     IdenticalTokens = 28,
+    /// Investor has no position for this invoice.
+    NoPositionFound = 29,
+    /// Invoice status does not allow this operation.
+    InvalidInvoiceStatus = 30,
+    /// Remaining position after withdrawal is below the minimum investment floor.
+    BelowMinimumInvestment = 31,
+    /// Funding target has not yet been reached.
+    FundingTargetNotReached = 32,
 }

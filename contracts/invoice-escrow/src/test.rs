@@ -5796,8 +5796,7 @@ fn test_fund_escrow_signed_emits_event() {
             topics
                 .get(0)
                 .map(|t| {
-                    Symbol::try_from_val(&env, &t).unwrap()
-                        == Symbol::new(&env, "escrow_fund_sig")
+                    Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_fund_sig")
                 })
                 .unwrap_or(false)
         })
@@ -5947,18 +5946,14 @@ fn test_fund_escrow_signed_nonce_stored_and_readable() {
     );
 
     // Before any signed fund, nonce should be 0
-    let nonce_before = env.as_contract(&escrow_id, || {
-        storage::get_nonce(&env, &buyer)
-    });
+    let nonce_before = env.as_contract(&escrow_id, || storage::get_nonce(&env, &buyer));
     assert_eq!(nonce_before, 0);
 
     let used_nonce: u64 = 77;
     escrow_client.fund_escrow_signed(&invoice_id, &buyer, &2000, &used_nonce, &u64::MAX);
 
     // After signed fund, nonce should be stored as 77
-    let nonce_after = env.as_contract(&escrow_id, || {
-        storage::get_nonce(&env, &buyer)
-    });
+    let nonce_after = env.as_contract(&escrow_id, || storage::get_nonce(&env, &buyer));
     assert_eq!(nonce_after, used_nonce);
 }
 
@@ -6085,7 +6080,10 @@ fn test_cancel_escrow_already_cancelled_rejected() {
 
     // First cancel
     client.cancel_escrow(&invoice_id, &seller);
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Cancelled);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Cancelled
+    );
 
     // Second cancel must fail
     let result = client.try_cancel_escrow(&invoice_id, &seller);
@@ -6176,14 +6174,20 @@ fn test_cancel_escrow_on_refunded_escrow_rejected() {
     client.fund_escrow(&invoice_id, &buyer, &1000);
     env.ledger().with_mut(|li| li.timestamp = due_date + 1);
     client.refund(&invoice_id);
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Refunded
+    );
 
     // Attempt to cancel a refunded escrow
     let result = client.try_cancel_escrow(&invoice_id, &seller);
     assert_eq!(result, Err(Ok(Error::CancelNotAllowed)));
 
     // State must remain Refunded
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Refunded
+    );
 }
 
 // ── 11. cancel_escrow while contract is paused → Paused ──────────────────────
@@ -6264,14 +6268,20 @@ fn test_refund_on_already_refunded_escrow_rejected() {
     client.fund_escrow(&invoice_id, &buyer, &1000);
     env.ledger().with_mut(|li| li.timestamp = due_date + 1);
     client.refund(&invoice_id);
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Refunded
+    );
 
     // Second refund must be rejected
     let result = client.try_refund(&invoice_id);
     assert_eq!(result, Err(Ok(Error::RefundNotAllowed)));
 
     // State must still be Refunded (not changed by failed call)
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Refunded
+    );
 }
 
 // ── 13. cleanup_escrow on Funded escrow → EscrowNotSettled ───────────────────
@@ -6360,8 +6370,7 @@ fn test_cleanup_escrow_emits_event() {
             topics
                 .get(0)
                 .map(|t| {
-                    Symbol::try_from_val(&env, &t).unwrap()
-                        == Symbol::new(&env, "escrow_cleaned")
+                    Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_cleaned")
                 })
                 .unwrap_or(false)
         })
@@ -6733,7 +6742,10 @@ fn test_multi_funder_partial_funding_then_refund() {
 
     env.ledger().with_mut(|li| li.timestamp = due_date + 1);
     client.refund(&invoice_id);
-    assert_eq!(client.get_escrow_status(&invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        client.get_escrow_status(&invoice_id),
+        EscrowStatus::Refunded
+    );
 
     // MVP direct path: refund amount = purchase_price - paid_amt = 1000.
     // Pro-rata share for primary funder (buyer_a):
