@@ -2944,3 +2944,60 @@ fn test_storage_key_ttl_after_multiple_operations() {
     let allowance = client.allowance(&recipient, &other);
     assert_eq!(allowance, 500);
 }
+// ========== Uninitialized Contract Tests (#381) ==========
+
+#[test]
+fn test_uninitialized_methods_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    // Instantiate without initialize()
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+    
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+    let expiration = env.ledger().sequence() + 100;
+    
+    macro_rules! assert_not_init {
+        ($result:expr) => {
+            assert_eq!($result, Err(Ok(crate::errors::Error::NotInit)));
+        };
+    }
+    
+    // Read methods
+    assert_not_init!(client.try_name());
+    assert_not_init!(client.try_symbol());
+    assert_not_init!(client.try_decimals());
+    assert_not_init!(client.try_total_supply());
+    assert_not_init!(client.try_balance(&user1));
+    
+    let ids = soroban_sdk::vec![&env, user1.clone()];
+    assert_not_init!(client.try_balance_batch(&ids));
+    
+    assert_not_init!(client.try_allowance(&user1, &user2));
+    assert_not_init!(client.try_get_nonce(&user1));
+    assert_not_init!(client.try_invoice_id());
+    assert_not_init!(client.try_transfer_locked());
+    assert_not_init!(client.try_paused());
+
+    // Write methods
+    assert_not_init!(client.try_transfer(&user1, &user2, &100));
+    assert_not_init!(client.try_transfer_from(&user1, &user2, &user3, &100));
+    assert_not_init!(client.try_approve(&user1, &user2, &100, &expiration));
+    assert_not_init!(client.try_extend_allowance(&user1, &user2, &expiration));
+    assert_not_init!(client.try_revoke_approval(&user1, &user2));
+    assert_not_init!(client.try_burn(&user1, &100));
+    assert_not_init!(client.try_burn_from(&user1, &user2, &100));
+    assert_not_init!(client.try_mint(&user1, &100, &user2));
+    
+    let amounts = soroban_sdk::vec![&env, 100i128];
+    assert_not_init!(client.try_mint_batch(&ids, &amounts, &user2));
+    
+    assert_not_init!(client.try_set_transfer_locked(&user1, &true));
+    assert_not_init!(client.try_set_minter(&user1));
+    assert_not_init!(client.try_set_decimals(&10));
+    assert_not_init!(client.try_set_paused(&true));
+}
+
