@@ -90,4 +90,8 @@ pub enum Error {
     InvalidLimit = 37,
     /// Pagination limit exceeds maximum allowed page size.
     LimitExceeded = 38,
+    /// Escrow payment attempted after grace period has expired.
+    EscrowOverdue = 39,
+    /// Escrow refund attempted before grace period has expired.
+    EscrowNotOverdue = 40,
 }

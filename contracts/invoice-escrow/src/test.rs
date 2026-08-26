@@ -8617,3 +8617,74 @@ fn test_fund_escrow_signed_future_timestamp_succeeds() {
     let result = c.fund_escrow_signed(&Symbol::new(&env, "inv1"), &buyer, &500, &1, &(now + 3600));
     assert!(result.is_ok());
 }
+#[test]
+fn test_grace_period_settlement_succeeds() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.escrow_client.set_grace_period(&test_env.admin, &86400); // 24 hours
+    test_env.fund(1000);
+
+    // Get the due date
+    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id);
+    
+    // Set timestamp to exactly grace period end (within grace period)
+    env.ledger().with_mut(|li| li.timestamp = data.due_dt + 86400);
+
+    test_env.record_payment(1000);
+    assert_eq!(
+        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        EscrowStatus::Settled
+    );
+}
+
+#[test]
+fn test_grace_period_settlement_rejected() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.escrow_client.set_grace_period(&test_env.admin, &86400); // 24 hours
+    test_env.fund(1000);
+
+    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id);
+    
+    // Set timestamp to after grace period
+    env.ledger().with_mut(|li| li.timestamp = data.due_dt + 86401);
+
+    let res = test_env.escrow_client.try_record_payment(&test_env.invoice_id, &test_env.payer, &1000);
+    assert_eq!(res.unwrap_err().unwrap(), Error::EscrowOverdue);
+}
+
+#[test]
+fn test_grace_period_refund_rejected_before_expiration() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.escrow_client.set_grace_period(&test_env.admin, &86400); // 24 hours
+    test_env.fund(1000);
+
+    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id);
+    
+    // Set timestamp to exactly grace period end (not yet expired)
+    env.ledger().with_mut(|li| li.timestamp = data.due_dt + 86400);
+
+    let res = test_env.escrow_client.try_refund(&test_env.invoice_id);
+    assert_eq!(res.unwrap_err().unwrap(), Error::EscrowNotOverdue);
+}
+
+#[test]
+fn test_grace_period_refund_succeeds_after_expiration() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.escrow_client.set_grace_period(&test_env.admin, &86400); // 24 hours
+    test_env.fund(1000);
+
+    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id);
+    
+    // Set timestamp to after grace period
+    env.ledger().with_mut(|li| li.timestamp = data.due_dt + 86401);
+
+    test_env.escrow_client.refund(&test_env.invoice_id);
+    assert_eq!(
+        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        EscrowStatus::Refunded
+    );
+}
+

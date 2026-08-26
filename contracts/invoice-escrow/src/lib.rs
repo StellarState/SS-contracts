@@ -75,7 +75,20 @@ impl InvoiceEscrow {
             paused: false,
             whitelist_enabled: false,
             min_investment: 0,
+            grace_period_seconds: 0,
         };
+        storage::set_config(&env, &config);
+        Ok(())
+    }
+
+    /// Admin-only: set the grace period window for overdue invoice settlement.
+    pub fn set_grace_period(env: Env, admin: Address, grace_period_seconds: u64) -> Result<(), Error> {
+        admin.require_auth();
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        config.grace_period_seconds = grace_period_seconds;
         storage::set_config(&env, &config);
         Ok(())
     }
@@ -512,6 +525,12 @@ impl InvoiceEscrow {
             return Err(Error::AlreadySettled);
         }
 
+        let ledger_ts = env.ledger().timestamp();
+        let final_deadline = data.due_dt.checked_add(config.grace_period_seconds).unwrap_or(u64::MAX);
+        if ledger_ts > final_deadline {
+            return Err(Error::EscrowOverdue);
+        }
+
         // Remaining balance toward face_value
         let remaining = data
             .face_value
@@ -639,8 +658,9 @@ impl InvoiceEscrow {
             return Err(Error::RefundNotAllowed);
         }
         let ledger_ts = env.ledger().timestamp();
-        if ledger_ts < data.due_dt {
-            return Err(Error::RefundNotAllowed);
+        let final_deadline = data.due_dt.checked_add(config.grace_period_seconds).unwrap_or(u64::MAX);
+        if ledger_ts <= final_deadline {
+            return Err(Error::EscrowNotOverdue);
         }
 
         // Refund the remaining collateral (purchase_price minus already released partial payments)
@@ -710,6 +730,7 @@ impl InvoiceEscrow {
             soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
         );
 
+        events::grace_period_expired(&env, invoice_id.clone());
         events::escrow_refunded(&env, invoice_id.clone(), amount_to_refund);
         events::escrow_status_changed(
             &env,

@@ -195,3 +195,9 @@ pub fn funding_finalised(env: &Env, invoice_id: BytesN<32>, total_raised: i128, 
         (total_raised, seller.clone()),
     );
 }
+
+/// Publish grace period expired event.
+pub fn grace_period_expired(env: &Env, inv_id: Symbol) {
+    env.events()
+        .publish((Symbol::new(env, "grace_period_expired"),), inv_id);
+}

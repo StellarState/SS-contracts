@@ -51,6 +51,8 @@ pub struct Config {
     /// `0` disables the floor (only `amount > 0` is required). Completing the
     /// remaining capacity below this floor is always allowed.
     pub min_investment: i128,
+    /// Grace period in seconds for overdue invoice settlement.
+    pub grace_period_seconds: u64,
 }
 
 /// Lifecycle status of an escrow.
