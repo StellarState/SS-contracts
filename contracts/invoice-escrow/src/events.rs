@@ -81,11 +81,11 @@ pub fn escrow_refunded(env: &Env, inv_id: Symbol, amount: i128) {
         .publish((Symbol::new(env, "escrow_refunded"),), (inv_id, amount));
 }
 
-/// Publish invoice_cancelled event (invoice_id, admin).
-pub fn invoice_cancelled(env: &Env, inv_id: BytesN<32>, admin: &Address) {
+/// Publish max_investors_updated event (new_count, admin).
+pub fn max_investors_updated(env: &Env, count: u32, admin: &Address) {
     env.events().publish(
-        (Symbol::new(env, "invoice_cancelled"),),
-        (inv_id, admin),
+        (Symbol::new(env, "max_investors_updated"),),
+        (count, admin),
     );
 }
 

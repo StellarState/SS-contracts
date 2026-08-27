@@ -29,6 +29,8 @@ pub enum StorageKey {
     EscrowCount,
     /// Persistent: invoice_id indexed by sequential creation order.
     EscrowIdByIndex(u32),
+    /// Persistent: investor count per invoice.
+    InvestorCount(soroban_sdk::BytesN<32>),
 }
 
 /// Global contract configuration.
@@ -51,6 +53,15 @@ pub struct Config {
     /// `0` disables the floor (only `amount > 0` is required). Completing the
     /// remaining capacity below this floor is always allowed.
     pub min_investment: i128,
+    /// Maximum number of investors allowed per invoice.
+    pub max_investors: u32,
+}
+
+/// Helper for tracking investor count per invoice.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InvestorCount {
+    pub count: u32,
 }
 
 /// Lifecycle status of an escrow.

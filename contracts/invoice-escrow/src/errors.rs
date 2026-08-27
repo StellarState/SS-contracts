@@ -68,8 +68,10 @@ pub enum Error {
     InvalidInvoiceStatus = 30,
     /// Remaining position after withdrawal is below the minimum investment floor.
     BelowMinimumInvestment = 31,
+    /// Maximum number of investors reached for this invoice.
+    MaxInvestorsReached = 32,
     /// Funding target has not yet been reached.
-    FundingTargetNotReached = 32,
+    FundingTargetNotReached = 33,
     /// Deposit amount is zero (dust prevention: use a positive amount).
     ZeroAmount = 33,
     /// Deposit amount is below the configured minimum investment.

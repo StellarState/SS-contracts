@@ -96,15 +96,16 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// Admin-only: enable/disable buyer whitelist enforcement on `fund_escrow`.
-    pub fn set_whitelist_enabled(env: Env, admin: Address, enabled: bool) -> Result<(), Error> {
+    /// Admin-only: set the maximum number of investors allowed per invoice.
+    pub fn set_max_investors(env: Env, admin: Address, count: u32) -> Result<(), Error> {
         admin.require_auth();
         let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
         if config.admin != admin {
             return Err(Error::Unauthorized);
         }
-        config.whitelist_enabled = enabled;
+        config.max_investors = count;
         storage::set_config(&env, &config);
+        events::max_investors_updated(&env, count, &admin);
         Ok(())
     }
 
@@ -1041,6 +1042,14 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
         let current = storage::get_investor_position(&env, invoice_id.clone(), &investor);
+        if current == 0 {
+            let investor_count = storage::get_investor_count(&env, invoice_id.clone());
+            let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+            if investor_count >= config.max_investors {
+                return Err(Error::MaxInvestorsReached);
+            }
+            storage::increment_investor_count(&env, invoice_id.clone());
+        }
         let new_pos = current.checked_add(amount).ok_or(Error::Overflow)?;
         if let Some(cap) = invoice.per_investor_cap {
             if new_pos > cap {

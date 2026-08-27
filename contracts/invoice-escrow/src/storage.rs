@@ -243,9 +243,18 @@ pub fn get_escrow_id_by_index(env: &soroban_sdk::Env, index: u32) -> Option<Symb
         .get(&StorageKey::EscrowIdByIndex(index))
 }
 
-/// Set the invoice_id at a specific index.
-pub fn set_escrow_id_by_index(env: &soroban_sdk::Env, index: u32, invoice_id: &Symbol) {
+/// Get the count of unique investors for a given invoice.
+pub fn get_investor_count(env: &soroban_sdk::Env, invoice_id: BytesN<32>) -> u32 {
     env.storage()
         .persistent()
-        .set(&StorageKey::EscrowIdByIndex(index), invoice_id);
+        .get(&StorageKey::InvestorCount(invoice_id))
+        .unwrap_or(0)
+}
+
+/// Increment the count of unique investors for a given invoice.
+pub fn increment_investor_count(env: &soroban_sdk::Env, invoice_id: BytesN<32>) {
+    let count = get_investor_count(env, invoice_id.clone());
+    env.storage()
+        .persistent()
+        .set(&StorageKey::InvestorCount(invoice_id), &(count + 1));
 }
