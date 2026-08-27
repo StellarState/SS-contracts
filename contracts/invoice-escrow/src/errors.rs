@@ -88,6 +88,8 @@ pub enum Error {
     ThresholdNotMet = 39,
     /// Emergency multi-sig config has not been set.
     EmergencyNotConfigured = 40,
+    /// Fee configuration is invalid (e.g. rate exceeds maximum).
+    FeeTooHigh = 43,
     /// Pagination limit is invalid (zero).
     InvalidLimit = 41,
     /// Pagination limit exceeds maximum allowed page size.

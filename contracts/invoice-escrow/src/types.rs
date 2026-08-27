@@ -55,6 +55,10 @@ pub struct Config {
     pub min_investment: i128,
     /// Maximum number of investors allowed per invoice.
     pub max_investors: u32,
+    /// Fee (basis points) deducted from repayment before investor distribution.
+    pub settlement_fee_bps: u32,
+    /// Address that receives settlement fees.
+    pub treasury_address: soroban_sdk::Address,
 }
 
 /// Helper for tracking investor count per invoice.

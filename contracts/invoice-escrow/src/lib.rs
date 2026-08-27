@@ -59,13 +59,20 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
 #[contractimpl]
 impl InvoiceEscrow {
     /// Initialize the contract with admin and platform fee (basis points, e.g. 300 = 3%).
-    pub fn initialize(env: Env, admin: Address, platform_fee_bps: u32) -> Result<(), Error> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        platform_fee_bps: u32,
+        settlement_fee_bps: u32,
+        treasury_address: Address,
+    ) -> Result<(), Error> {
         ensure_non_zero_address(&env, &admin)?;
+        ensure_non_zero_address(&env, &treasury_address)?;
         admin.require_auth();
         if storage::get_config(&env).is_some() {
             return Err(Error::AlreadyInit);
         }
-        if platform_fee_bps > MAX_BPS {
+        if platform_fee_bps > MAX_BPS || settlement_fee_bps > 1000 {
             return Err(Error::InvalidFeeBps);
         }
         let config = Config {
@@ -75,6 +82,9 @@ impl InvoiceEscrow {
             paused: false,
             whitelist_enabled: false,
             min_investment: 0,
+            max_investors: 500,
+            settlement_fee_bps,
+            treasury_address,
         };
         storage::set_config(&env, &config);
         Ok(())
@@ -96,16 +106,25 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// Admin-only: set the maximum number of investors allowed per invoice.
-    pub fn set_max_investors(env: Env, admin: Address, count: u32) -> Result<(), Error> {
+    /// Admin-only: set the settlement fee (basis points, 0-1000).
+    pub fn set_settlement_fee(
+        env: Env,
+        admin: Address,
+        fee_bps: u32,
+        treasury_address: Address,
+    ) -> Result<(), Error> {
         admin.require_auth();
+        ensure_non_zero_address(&env, &treasury_address)?;
         let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
         if config.admin != admin {
             return Err(Error::Unauthorized);
         }
-        config.max_investors = count;
+        if fee_bps > 1000 {
+            return Err(Error::FeeTooHigh);
+        }
+        config.settlement_fee_bps = fee_bps;
+        config.treasury_address = treasury_address;
         storage::set_config(&env, &config);
-        events::max_investors_updated(&env, count, &admin);
         Ok(())
     }
 
@@ -523,13 +542,23 @@ impl InvoiceEscrow {
         }
 
         let fee_bps = i128::from(config.fee_bps);
-        // Fee is calculated on the payment amount (not face_value)
+        let settlement_fee_bps = i128::from(config.settlement_fee_bps);
+
+        // Fees are calculated on the payment amount
         let platform_fee = amount
             .checked_mul(fee_bps)
             .ok_or(Error::Overflow)?
             .checked_div(i128::from(MAX_BPS))
             .ok_or(Error::Overflow)?;
-        let investor_amount = amount.checked_sub(platform_fee).ok_or(Error::Overflow)?;
+
+        let settlement_fee = amount
+            .checked_mul(settlement_fee_bps)
+            .ok_or(Error::Overflow)?
+            .checked_div(i128::from(MAX_BPS))
+            .ok_or(Error::Overflow)?;
+
+        let total_fee = platform_fee.checked_add(settlement_fee).ok_or(Error::Overflow)?;
+        let investor_amount = amount.checked_sub(total_fee).ok_or(Error::Overflow)?;
 
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
@@ -583,6 +612,8 @@ impl InvoiceEscrow {
         } else {
             // 2. Platform fee to admin
             token.transfer(&contract, &config.admin, &platform_fee);
+            // 2b. Settlement fee to treasury
+            token.transfer(&contract, &config.treasury_address, &settlement_fee);
 
             // 3. Pro-rata investor distribution
             if let Some(funder) = &data.funder {
@@ -618,6 +649,7 @@ impl InvoiceEscrow {
             platform_fee,
             investor_amount,
         );
+        events::fee_collected(&env, settlement_fee, &config.treasury_address);
         if data.status == EscrowStatus::Settled {
             events::escrow_status_changed(
                 &env,

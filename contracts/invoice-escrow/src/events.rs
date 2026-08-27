@@ -81,6 +81,14 @@ pub fn escrow_refunded(env: &Env, inv_id: Symbol, amount: i128) {
         .publish((Symbol::new(env, "escrow_refunded"),), (inv_id, amount));
 }
 
+/// Publish fee_collected event (amount, treasury_address).
+pub fn fee_collected(env: &Env, amount: i128, treasury: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "fee_collected"),),
+        (amount, treasury),
+    );
+}
+
 /// Publish max_investors_updated event (new_count, admin).
 pub fn max_investors_updated(env: &Env, count: u32, admin: &Address) {
     env.events().publish(
