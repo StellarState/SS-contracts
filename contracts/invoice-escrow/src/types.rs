@@ -117,6 +117,8 @@ pub struct EscrowData {
 pub enum InvoiceStatus {
     Open = 0,
     Funded = 1,
+    Settled = 2,
+    Cancelled = 3,
 }
 
 /// Funding invoice for secondary market position management (BytesN<32> invoices).
@@ -139,6 +141,8 @@ pub struct FundingInvoice {
     pub status: InvoiceStatus,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
+}
+
 /// Multi-signature configuration for emergency releases.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

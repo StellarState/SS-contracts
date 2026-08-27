@@ -81,6 +81,14 @@ pub fn escrow_refunded(env: &Env, inv_id: Symbol, amount: i128) {
         .publish((Symbol::new(env, "escrow_refunded"),), (inv_id, amount));
 }
 
+/// Publish invoice_cancelled event (invoice_id, admin).
+pub fn invoice_cancelled(env: &Env, inv_id: BytesN<32>, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "invoice_cancelled"),),
+        (inv_id, admin),
+    );
+}
+
 /// Publish escrow_cancelled event (invoice_id, seller).
 pub fn escrow_cancelled(env: &Env, inv_id: Symbol, seller: &Address) {
     env.events()

@@ -830,7 +830,7 @@ impl InvoiceEscrow {
         approvals.approvals.push_back(caller.clone());
         storage::set_emergency_approvals(&env, &invoice_id, &approvals);
 
-        if approvals.approvals.len() as u32 < config.threshold {
+        if (approvals.approvals.len() as u32) < config.threshold {
             return Err(Error::ThresholdNotMet);
         }
 
@@ -890,6 +890,31 @@ impl InvoiceEscrow {
     }
 
     // ── Position management: top_up / partial_refund / transfer_position / finalise_funding ──
+
+    /// Admin-only: cancel an open invoice (BytesN<32>), transitioning it to Cancelled.
+    pub fn cancel_invoice(env: Env, admin: Address, invoice_id: BytesN<32>) -> Result<(), Error> {
+        admin.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        let mut invoice =
+            storage::get_invoice(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+
+        if invoice.status == InvoiceStatus::Funded || invoice.status == InvoiceStatus::Settled {
+            return Err(Error::InvalidInvoiceStatus);
+        }
+        if invoice.status == InvoiceStatus::Cancelled {
+            return Err(Error::InvalidInvoiceStatus);
+        }
+
+        invoice.status = InvoiceStatus::Cancelled;
+        storage::set_invoice(&env, invoice_id.clone(), &invoice);
+
+        events::invoice_cancelled(&env, invoice_id, &admin);
+
+        Ok(())
+    }
 
     /// Create a funding invoice (BytesN<32> id) for the new position management flows.
     /// This is the setup entrypoint for tests and admin tooling for the
@@ -1161,6 +1186,8 @@ impl InvoiceEscrow {
             return Err(Error::EscrowNotFound);
         }
         Ok(storage::get_investor_position(&env, invoice_id, &investor))
+    }
+
     /// Paginated query to retrieve multiple escrows by sequential creation order.
     /// Returns a Vec of EscrowData for the requested range [start, start+limit).
     /// Maximum page size is 100. Returns empty Vec if start >= total_count.
@@ -1194,15 +1221,6 @@ impl InvoiceEscrow {
         Ok(results)
     }
 
-    /// Invest function allowing investors to commit funds to an open invoice.
-    /// Validates the invoice is in Created status and within funding deadline.
-    /// This is an alias for fund_escrow for semantic clarity.
-    pub fn invest(env: Env, invoice_id: soroban_sdk::BytesN<32>, investor: Address, amount: i128) -> Result<(), Error> {
-        investor.require_auth();
-        
-        let invoice_symbol = Symbol::new(&env, "temp");
-        Self::fund_escrow_core(&env, invoice_symbol, &investor, amount)
-    }
 }
 
 #[cfg(test)]

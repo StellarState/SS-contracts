@@ -71,23 +71,23 @@ pub enum Error {
     /// Funding target has not yet been reached.
     FundingTargetNotReached = 32,
     /// Deposit amount is zero (dust prevention: use a positive amount).
-    ZeroAmount = 29,
+    ZeroAmount = 33,
     /// Deposit amount is below the configured minimum investment.
-    AmountBelowMinimum = 30,
+    AmountBelowMinimum = 34,
     /// Address is the zero address (all-zero 32-byte key).
-    InvalidAddress = 31,
+    InvalidAddress = 35,
     /// Escrow duration is outside the allowed [MIN, MAX] window.
-    InvalidDuration = 32,
+    InvalidDuration = 36,
     /// Caller is not a member of the emergency admin multi-sig set.
-    NotEmergencyAdmin = 33,
+    NotEmergencyAdmin = 37,
     /// Caller has already approved this emergency release (duplicate).
-    AlreadyApproved = 34,
+    AlreadyApproved = 38,
     /// Emergency release threshold has not been reached yet.
-    ThresholdNotMet = 35,
+    ThresholdNotMet = 39,
     /// Emergency multi-sig config has not been set.
-    EmergencyNotConfigured = 36,
+    EmergencyNotConfigured = 40,
     /// Pagination limit is invalid (zero).
-    InvalidLimit = 37,
+    InvalidLimit = 41,
     /// Pagination limit exceeds maximum allowed page size.
-    LimitExceeded = 38,
+    LimitExceeded = 42,
 }
