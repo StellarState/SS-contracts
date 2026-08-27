@@ -104,19 +104,8 @@ fn setup<'a>(
 
 /// Create and fully fund an escrow using face_value == purchase_price == `amount`.
 fn create_and_fund(ctx: &Ctx<'_>, amount: i128, due_date: u64) {
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &amount,
-        &amount,
-        &due_date,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&ctx.env, "commitment"),
-        &None,
-    );
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &amount, &amount, &due_date, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&ctx.env, "commitment"), &None, &soroban_sdk::vec![&ctx.env, ctx.payment_token.address.clone()]);
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount, &ctx.payment_token.address);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -314,18 +303,7 @@ fn test_integration_cancel_escrow_happy_path() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCAN", 0, 0);
 
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "cancel_test"),
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "cancel_test"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
     assert_eq!(
         ctx.escrow.get_escrow_status(&ctx.invoice_id),
         EscrowStatus::Created
@@ -356,18 +334,7 @@ fn test_integration_cancel_non_seller_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCNR", 0, 0);
 
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "cancel_non_seller"),
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "cancel_non_seller"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
 
     let intruder = Address::generate(&env);
     let result = ctx.escrow.try_cancel_escrow(&ctx.invoice_id, &intruder);
@@ -380,23 +347,12 @@ fn test_integration_fund_cancelled_escrow_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCFC", 1_000, 0);
 
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "fund_cancelled"),
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "fund_cancelled"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
     ctx.escrow.cancel_escrow(&ctx.invoice_id, &ctx.seller);
 
     let result = ctx
         .escrow
-        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000, &ctx.payment_token.address);
     assert_eq!(result, Err(Ok(errors::Error::EscrowCancelled)));
 }
 
@@ -410,18 +366,7 @@ fn test_integration_pause_blocks_fund_and_payment() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVPSE", 1_000, 1_000);
 
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "pause_test"),
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "pause_test"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
 
     ctx.escrow.set_paused(&true);
     assert!(ctx.escrow.paused());
@@ -429,12 +374,12 @@ fn test_integration_pause_blocks_fund_and_payment() {
     // fund_escrow must fail while paused.
     let r = ctx
         .escrow
-        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000, &ctx.payment_token.address);
     assert_eq!(r, Err(Ok(errors::Error::Paused)));
 
     // Unpause and fund.
     ctx.escrow.set_paused(&false);
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000, &ctx.payment_token.address);
 
     // Re-pause and try to record payment.
     ctx.escrow.set_paused(&true);
@@ -561,23 +506,12 @@ fn test_integration_over_funding_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVOVF", 2_000, 0);
 
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "over_fund"),
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "over_fund"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
 
     // Purchase price is 1000; funding 1001 must fail.
     let result = ctx
         .escrow
-        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_001);
+        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_001, &ctx.payment_token.address);
     assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
 }
 
@@ -625,31 +559,9 @@ fn test_integration_duplicate_invoice_id_rejected() {
     let ctx = setup(&env, 300, "INVDUP", 0, 0);
 
     let commitment = test_commitment(&env, "dup");
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &commitment,
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &commitment, &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
 
-    let result = ctx.escrow.try_create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &2_000,
-        &2_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &commitment,
-        &None,
-    );
+    let result = ctx.escrow.try_create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &2_000, &2_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &commitment, &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
     assert_eq!(result, Err(Ok(errors::Error::EscrowExists)));
 }
 
@@ -665,18 +577,7 @@ fn test_integration_past_due_date_rejected() {
     let ctx = setup(&env, 300, "INVPDD", 0, 0);
 
     // due_date = 49_999 < current timestamp (50_000) → must fail.
-    let result = ctx.escrow.try_create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &49_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "past_due"),
-        &None,
-    );
+    let result = ctx.escrow.try_create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &49_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "past_due"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
     assert_eq!(result, Err(Ok(errors::Error::InvalidDueDate)));
 }
 
@@ -686,18 +587,7 @@ fn test_integration_zero_due_date_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVZDD", 0, 0);
 
-    let result = ctx.escrow.try_create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &0,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "zero_due"),
-        &None,
-    );
+    let result = ctx.escrow.try_create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &0, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "zero_due"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
     assert_eq!(result, Err(Ok(errors::Error::InvalidDueDate)));
 }
 
@@ -719,18 +609,7 @@ fn test_integration_create_escrow_not_initialized() {
     let token = Address::generate(&env);
     let inv_token = Address::generate(&env);
 
-    let result = escrow.try_create_escrow(
-        &Symbol::new(&env, "INV"),
-        &seller,
-        &payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &token,
-        &inv_token,
-        &test_commitment(&env, "no_init"),
-        &None,
-    );
+    let result = escrow.try_create_escrow(&Symbol::new(&env, "INV"), &seller, &payer, &1_000, &1_000, &99_999, &token, &inv_token, &test_commitment(&env, "no_init"), &None, &soroban_sdk::vec![&env, token.clone()]);
     assert_eq!(result, Err(Ok(errors::Error::NotInit)));
 }
 
@@ -745,18 +624,7 @@ fn test_integration_state_persistence_after_create() {
     let ctx = setup(&env, 300, "INVPST", 0, 0);
 
     let commitment = test_commitment(&env, "persistence");
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &2_000,
-        &1_800,
-        &88_888,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &commitment,
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &2_000, &1_800, &88_888, &ctx.payment_token.address, &ctx.inv_token_id, &commitment, &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
 
     let data = ctx.escrow.get_escrow(&ctx.invoice_id);
     assert_eq!(data.inv_id, ctx.invoice_id);
@@ -853,21 +721,10 @@ fn test_integration_commitment_immutable_after_lifecycle() {
     let ctx = setup(&env, 300, "INVCMT", 1_000, 1_000);
 
     let original = test_commitment(&env, "original_pdf_hash");
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &original,
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &original, &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
 
     // Fund.
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000, &ctx.payment_token.address);
     assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).commitment, original);
 
     // Settle.
@@ -908,19 +765,8 @@ fn test_integration_two_independent_escrows() {
     ctx_a.payment_asset.mint(&buyer_b, &500);
     ctx_a.payment_asset.mint(&payer_b, &500);
 
-    ctx_a.escrow.create_escrow(
-        &inv_b_id,
-        &ctx_a.seller,
-        &payer_b,
-        &500,
-        &500,
-        &99_999,
-        &ctx_a.payment_token.address,
-        &inv_token_b_id,
-        &test_commitment(&env, "inv_b"),
-        &None,
-    );
-    ctx_a.escrow.fund_escrow(&inv_b_id, &buyer_b, &500);
+    ctx_a.escrow.create_escrow(&inv_b_id, &ctx_a.seller, &payer_b, &500, &500, &99_999, &ctx_a.payment_token.address, &inv_token_b_id, &test_commitment(&env, "inv_b"), &None, &soroban_sdk::vec![&env, ctx_a.payment_token.address.clone()]);
+    ctx_a.escrow.fund_escrow(&inv_b_id, &buyer_b, &500, &ctx_a.payment_token.address);
 
     // Settle A.
     ctx_a
@@ -974,18 +820,7 @@ fn test_integration_escrow_created_event_emitted() {
     let ctx = setup(&env, 300, "INVECE", 0, 0);
 
     let commitment = test_commitment(&env, "event_emitted");
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &900,
-        &55_555,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &commitment,
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &900, &55_555, &ctx.payment_token.address, &ctx.inv_token_id, &commitment, &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
 
     let evts = env.events().all();
     let evt = evts
@@ -1029,18 +864,7 @@ fn test_integration_escrow_cancelled_event_emitted() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCNE", 0, 0);
 
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &1_000,
-        &1_000,
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "cancel_event"),
-        &None,
-    );
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &1_000, &1_000, &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "cancel_event"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
     ctx.escrow.cancel_escrow(&ctx.invoice_id, &ctx.seller);
 
     let evts = env.events().all();
@@ -1140,19 +964,10 @@ fn test_integration_discounted_purchase_price() {
     // Escrow out: 900 (investor, 0% fee) + 900 (seller release) = 1800.
     let ctx = setup(&env, 0, "INVDSC", 900, 900);
 
-    ctx.escrow.create_escrow(
-        &ctx.invoice_id,
-        &ctx.seller,
-        &ctx.payer,
-        &900, // face_value
+    ctx.escrow.create_escrow(&ctx.invoice_id, &ctx.seller, &ctx.payer, &900, // face_value
         &900, // purchase_price
-        &99_999,
-        &ctx.payment_token.address,
-        &ctx.inv_token_id,
-        &test_commitment(&env, "discount"),
-        &None,
-    );
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &900);
+        &99_999, &ctx.payment_token.address, &ctx.inv_token_id, &test_commitment(&env, "discount"), &None, &soroban_sdk::vec![&env, ctx.payment_token.address.clone()]);
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &900, &ctx.payment_token.address);
 
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 0);
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 900);
@@ -1404,13 +1219,8 @@ fn test_integration_refund_restores_capacity() {
 
     // Buyer can fund again after refund
     let ctx2 = setup(&env, 300, "INVREFC2", 1_000, 0);
-    ctx2.escrow.create_escrow(
-        &ctx2.invoice_id, &ctx2.seller, &ctx2.payer,
-        &1_000, &1_000, &200_000,
-        &ctx2.payment_token.address, &ctx2.inv_token_id,
-        &test_commitment(&ctx2.env, "commitment2"), &None,
-    );
-    ctx2.escrow.fund_escrow(&ctx2.invoice_id, &ctx2.buyer, &1_000);
+    ctx2.escrow.create_escrow(&ctx2.invoice_id, &ctx2.seller, &ctx2.payer, &1_000, &1_000, &200_000, &ctx2.payment_token.address, &ctx2.inv_token_id, &test_commitment(&ctx2.env, "commitment2"), &None, &soroban_sdk::vec![&env, ctx2.payment_token.address.clone()]);
+    ctx2.escrow.fund_escrow(&ctx2.invoice_id, &ctx2.buyer, &1_000, &ctx2.payment_token.address);
     assert_eq!(ctx2.payment_token.balance(&ctx2.buyer), 0);
     assert_eq!(ctx2.payment_token.balance(&ctx2.escrow_id), 1_000);
 }

@@ -97,6 +97,8 @@ pub struct EscrowData {
     pub due_dt: u64,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
+    /// Accepted payment tokens.
+    pub accepted_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     /// Invoice token contract address (ownership/claim).
     pub inv_token: soroban_sdk::Address,
     /// Amount already paid by payer.
@@ -139,6 +141,8 @@ pub struct FundingInvoice {
     pub status: InvoiceStatus,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
+}
+
 /// Multi-signature configuration for emergency releases.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

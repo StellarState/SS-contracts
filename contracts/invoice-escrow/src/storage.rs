@@ -187,6 +187,7 @@ pub fn set_investor_position(
     } else {
         env.storage().persistent().set(&key, &amount);
     }
+}
 /// Load the emergency multi-sig admin configuration.
 pub fn get_emergency_config(env: &soroban_sdk::Env) -> Option<MultiSigConfig> {
     env.storage().instance().get(&StorageKey::EmergencyConfig)

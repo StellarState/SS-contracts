@@ -71,13 +71,13 @@ pub enum Error {
     /// Funding target has not yet been reached.
     FundingTargetNotReached = 32,
     /// Deposit amount is zero (dust prevention: use a positive amount).
-    ZeroAmount = 29,
+    ZeroAmount = 40,
     /// Deposit amount is below the configured minimum investment.
-    AmountBelowMinimum = 30,
+    AmountBelowMinimum = 41,
     /// Address is the zero address (all-zero 32-byte key).
-    InvalidAddress = 31,
+    InvalidAddress = 42,
     /// Escrow duration is outside the allowed [MIN, MAX] window.
-    InvalidDuration = 32,
+    InvalidDuration = 43,
     /// Caller is not a member of the emergency admin multi-sig set.
     NotEmergencyAdmin = 33,
     /// Caller has already approved this emergency release (duplicate).
@@ -90,4 +90,6 @@ pub enum Error {
     InvalidLimit = 37,
     /// Pagination limit exceeds maximum allowed page size.
     LimitExceeded = 38,
+    /// Funding token is not accepted for this escrow.
+    TokenNotAccepted = 39,
 }
