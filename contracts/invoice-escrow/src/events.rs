@@ -196,18 +196,50 @@ pub fn funding_finalised(env: &Env, invoice_id: BytesN<32>, total_raised: i128, 
     );
 }
 
-/// Publish dispute raised event.
-pub fn dispute_raised(env: &Env, inv_id: Symbol, raiser: &Address, reason: &soroban_sdk::Bytes) {
+/// Publish invoice_registered event with all parameters.
+pub fn invoice_registered(
+    env: &Env,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    face_value: i128,
+    funding_target: i128,
+    yield_bps: u32,
+    deadline_ledger: u32,
+) {
     env.events().publish(
-        (Symbol::new(env, "DisputeRaised"),),
-        (inv_id, raiser.clone(), reason.clone()),
+        (Symbol::new(env, "invoice_registered"),),
+        (
+            invoice_id.clone(),
+            face_value,
+            funding_target,
+            yield_bps,
+            deadline_ledger,
+        ),
     );
 }
 
-/// Publish dispute resolved event.
-pub fn dispute_resolved(env: &Env, inv_id: Symbol, admin: &Address, favour: Symbol) {
+/// Publish investment_refunded event.
+pub fn investment_refunded(
+    env: &Env,
+    investor: &Address,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    amount_refunded: i128,
+) {
     env.events().publish(
-        (Symbol::new(env, "DisputeResolved"),),
-        (inv_id, admin.clone(), favour),
+        (Symbol::new(env, "investment_refunded"),),
+        (investor.clone(), invoice_id.clone(), amount_refunded),
+    );
+}
+
+/// Publish settlement_paid event per investor.
+pub fn settlement_paid(
+    env: &Env,
+    investor: &Address,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    payout_amount: i128,
+    yield_earned: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_paid"),),
+        (investor.clone(), invoice_id.clone(), payout_amount, yield_earned),
     );
 }
