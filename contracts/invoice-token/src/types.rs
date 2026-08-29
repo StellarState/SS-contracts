@@ -24,25 +24,64 @@ pub fn is_zero_address(env: &Env, address: &Address) -> bool {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StorageKey {
-    /// Instance: token metadata and config.
+    /// Purpose: Stores global token configuration and metadata (admin, symbol, decimals, etc.).
+    /// Storage Type: Instance storage.
+    /// Access Pattern: Read frequently on metadata queries; written during initialization or by admin.
+    /// TTL Policy: Bumped automatically with the contract instance.
     Metadata,
-    /// Instance: total supply.
+    
+    /// Purpose: Tracks the total circulating supply of the token.
+    /// Storage Type: Instance storage.
+    /// Access Pattern: Read on `total_supply` queries; written during minting or burning operations.
+    /// TTL Policy: Bumped automatically with the contract instance.
     TotalSupply,
-    /// Persistent: balance by holder address.
+    
+    /// Purpose: Tracks the token balance for a specific holder address.
+    /// Storage Type: Persistent storage.
+    /// Access Pattern: Read on balance queries and transfers; written during transfers, minting, or burning.
+    /// TTL Policy: Must be explicitly bumped to prevent loss of user funds.
     Balance(soroban_sdk::Address),
-    /// Persistent: allowance (from, spender) -> AllowanceData.
+    
+    /// Purpose: Tracks the delegated spending allowance (`AllowanceData`) from an owner to a spender.
+    /// Storage Type: Persistent storage.
+    /// Access Pattern: Read on `allowance` queries and `transfer_from`; written during `approve`.
+    /// TTL Policy: Explicitly bumped; expires based on the `expiration_ledger` in `AllowanceData`.
     Allowance(soroban_sdk::Address, soroban_sdk::Address),
-    /// Instance: fee basis points.
+    
+    /// Purpose: Stores the fee basis points applied to transfers (if applicable).
+    /// Storage Type: Instance storage.
+    /// Access Pattern: Read during fee-enabled transfers; written by admin.
+    /// TTL Policy: Bumped automatically with the contract instance.
     FeeBps,
-    /// Instance: role admin mapping (role -> admin address).
+    
+    /// Purpose: Maps a specific role (e.g., minter) to its administrator address.
+    /// Storage Type: Instance storage.
+    /// Access Pattern: Read when checking administrative rights; written by super admin.
+    /// TTL Policy: Bumped automatically with the contract instance.
     RoleAdmin(soroban_sdk::Symbol),
-    /// Instance: role grant mapping (role, account) -> bool.
+    
+    /// Purpose: Tracks whether a specific account has been granted a particular role.
+    /// Storage Type: Instance storage.
+    /// Access Pattern: Read during role-restricted operations; written when granting/revoking roles.
+    /// TTL Policy: Bumped automatically with the contract instance.
     RoleGrant(soroban_sdk::Symbol, soroban_sdk::Address),
-    /// Persistent: nonce per address for permit-style transfers.
+    
+    /// Purpose: Tracks the current nonce for permit-style operations or replay protection.
+    /// Storage Type: Persistent storage.
+    /// Access Pattern: Read during signature verification; incremented on successful operation.
+    /// TTL Policy: Explicitly bumped to maintain sequence history.
     Nonce(soroban_sdk::Address),
-    /// Persistent: ownership history records for a token holder.
+    
+    /// Purpose: Stores a list of ownership history records (`OwnershipHistoryRecord`) for an address.
+    /// Storage Type: Persistent storage.
+    /// Access Pattern: Read on history queries; appended to during transfers.
+    /// TTL Policy: Explicitly bumped to preserve historical data.
     History(soroban_sdk::Address),
-    /// Persistent: whether an account is restricted from token operations.
+    
+    /// Purpose: Tracks whether an account is restricted/frozen from token operations.
+    /// Storage Type: Persistent storage.
+    /// Access Pattern: Read before transfers; written by admin to freeze/unfreeze accounts.
+    /// TTL Policy: Explicitly bumped to enforce compliance rules.
     Frozen(soroban_sdk::Address),
 }
 
