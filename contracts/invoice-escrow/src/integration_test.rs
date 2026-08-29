@@ -1414,3 +1414,511 @@ fn test_integration_refund_restores_capacity() {
     assert_eq!(ctx2.payment_token.balance(&ctx2.buyer), 0);
     assert_eq!(ctx2.payment_token.balance(&ctx2.escrow_id), 1_000);
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ISSUE #352: EDGE-CASE INTEGRATION TESTS FOR FAILURE SCENARIOS & STATE PERSISTENCE
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// These tests provide comprehensive coverage of:
+// - Boundary conditions (min/max values, edge amounts)
+// - Error code verification for all failure paths
+// - State persistence after failed transactions
+// - Concurrent operation simulation
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 1. BOUNDARY: Minimum valid amounts (1 stroop)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_minimum_amount_one_stroop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 0, "EDGEMIN", 1, 1);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1, &1, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "min_amt"), &None,
+    );
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Settled);
+
+    // With 0% fee, all amounts preserved
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 1);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 2. BOUNDARY: Large amounts (near i128::MAX / 2)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_large_amounts_near_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let large = i128::MAX / 2;
+    let ctx = setup(&env, 0, "EDGELRG", large, large);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &large, &large, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "large"), &None,
+    );
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &large);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 3. FAILURE: Zero amount funding
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_fund_zero_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGEZ", 0, 0);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "zero"), &None,
+    );
+
+    let result = ctx.escrow.try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &0);
+    assert_eq!(result, Err(Ok(errors::Error::ZeroAmount)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 4. FAILURE: Negative amounts
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_negative_amount_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGENEG", 0, 0);
+
+    let result = ctx.escrow.try_create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &-1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "neg"), &None,
+    );
+    assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 5. STATE PERSISTENCE: Failed fund operation preserves state
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_state_persists_after_failed_fund() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGESPF", 1_000, 0);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "persist"), &None,
+    );
+
+    let data_before = ctx.escrow.get_escrow(&ctx.invoice_id);
+
+    // Attempt over-funding
+    let result = ctx.escrow.try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &2_000);
+    assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
+
+    // State unchanged
+    let data_after = ctx.escrow.get_escrow(&ctx.invoice_id);
+    assert_eq!(data_before, data_after);
+    assert_eq!(data_after.status, EscrowStatus::Created);
+    assert_eq!(data_after.funded_amt, 0);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 6. STATE PERSISTENCE: Failed payment preserves state
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_state_persists_after_failed_payment() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGESPP", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    let data_before = ctx.escrow.get_escrow(&ctx.invoice_id);
+
+    // Attempt overpayment
+    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &2_000);
+    assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
+
+    // State unchanged
+    let data_after = ctx.escrow.get_escrow(&ctx.invoice_id);
+    assert_eq!(data_before.status, data_after.status);
+    assert_eq!(data_before.paid_amt, data_after.paid_amt);
+    assert_eq!(data_after.paid_amt, 0);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 7. CONCURRENT: Multiple investors fund sequentially
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_concurrent_multiple_fundings() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGEMF", 0, 1_000);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "multi"), &None,
+    );
+
+    let buyer1 = Address::generate(&env);
+    let buyer2 = Address::generate(&env);
+    let buyer3 = Address::generate(&env);
+
+    ctx.payment_asset.mint(&buyer1, &300);
+    ctx.payment_asset.mint(&buyer2, &400);
+    ctx.payment_asset.mint(&buyer3, &300);
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &buyer1, &300);
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).funded_amt, 300);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Created);
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &buyer2, &400);
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).funded_amt, 700);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Created);
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &buyer3, &300);
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).funded_amt, 1_000);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Settled);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 8. FAILURE: Invalid due date (at current timestamp)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_due_date_at_current_timestamp_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(10_000);
+    let ctx = setup(&env, 300, "EDGEDDT", 0, 0);
+
+    let result = ctx.escrow.try_create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &10_000,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "exact"), &None,
+    );
+    assert_eq!(result, Err(Ok(errors::Error::InvalidDueDate)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 9. BOUNDARY: Refund at exact due date boundary
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_refund_at_exact_due_date_allowed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+    let ctx = setup(&env, 300, "EDGERBD", 1_000, 0);
+    create_and_fund(&ctx, 1_000, 10_000);
+
+    // Before due date
+    env.ledger().set_timestamp(9_999);
+    let result = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
+    assert_eq!(result, Err(Ok(errors::Error::RefundNotAllowed)));
+
+    // At due date (ledger_ts < due_dt check fails)
+    env.ledger().set_timestamp(10_000);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Refunded);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 10. FAILURE: Multiple invalid state transitions
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_multiple_invalid_transitions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGEMST", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    // Fund again
+    let result = ctx.escrow.try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1);
+    assert_eq!(result, Err(Ok(errors::Error::EscrowFunded)));
+
+    // Cancel
+    let result = ctx.escrow.try_cancel_escrow(&ctx.invoice_id, &ctx.seller);
+    assert_eq!(result, Err(Ok(errors::Error::EscrowFunded)));
+
+    // Settle
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+
+    // Fund settled
+    let buyer2 = Address::generate(&env);
+    ctx.payment_asset.mint(&buyer2, &100);
+    let result = ctx.escrow.try_fund_escrow(&ctx.invoice_id, &buyer2, &100);
+    assert_eq!(result, Err(Ok(errors::Error::EscrowFunded)));
+
+    // Pay again
+    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &1);
+    assert_eq!(result, Err(Ok(errors::Error::AlreadySettled)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 11. BOUNDARY: 100% platform fee
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_fee_100_percent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 10_000, "EDGEF100", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 1_000);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 12. EDGE: Very small partial payments (1 stroop increments)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_tiny_partial_payments() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 0, "EDGEPAY", 10, 10);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &10, &10, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "tiny"), &None,
+    );
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &10);
+
+    for i in 1..=10 {
+        ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1);
+        let data = ctx.escrow.get_escrow(&ctx.invoice_id);
+        assert_eq!(data.paid_amt, i);
+
+        if i < 10 {
+            assert_eq!(data.status, EscrowStatus::Funded);
+        } else {
+            assert_eq!(data.status, EscrowStatus::Settled);
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 13. FAILURE: Initialize with invalid fee
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_initialize_fee_over_max_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register(InvoiceEscrow, ());
+    let escrow = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+
+    let result = escrow.try_initialize(&admin, &10_001);
+    assert_eq!(result, Err(Ok(errors::Error::InvalidFeeBps)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 14. STATE PERSISTENCE: Commitment immutability throughout lifecycle
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_commitment_immutable_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGECMT", 1_000, 1_000);
+
+    let commitment = test_commitment(&env, "immutable_hash_data");
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &commitment, &None,
+    );
+
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).commitment, commitment);
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &500);
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).commitment, commitment);
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &500);
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).commitment, commitment);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &500);
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).commitment, commitment);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &500);
+    assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).commitment, commitment);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 15. FAILURE: Wrong payer rejected
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_wrong_payer_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGEWP", 1_000, 0);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    let impostor = Address::generate(&env);
+    ctx.payment_asset.mint(&impostor, &1_000);
+
+    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &impostor, &1_000);
+    assert_eq!(result, Err(Ok(errors::Error::InvalidPayer)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 16. FAILURE: Overpayment rejected
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_overpayment_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGEOVR", 1_000, 2_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &1_001);
+    assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 17. FAILURE: Over-funding rejected
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_over_funding_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGEOVF", 2_000, 0);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "overfund"), &None,
+    );
+
+    let result = ctx.escrow.try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_001);
+    assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 18. STATE PERSISTENCE: State after failed cancel
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_state_after_failed_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGECAN", 1_000, 0);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "cancel_fail"), &None,
+    );
+
+    ctx.payment_asset.mint(&ctx.buyer, &500);
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &500);
+
+    let data_before = ctx.escrow.get_escrow(&ctx.invoice_id);
+    let result = ctx.escrow.try_cancel_escrow(&ctx.invoice_id, &ctx.seller);
+    assert_eq!(result, Err(Ok(errors::Error::EscrowFunded)));
+
+    let data_after = ctx.escrow.get_escrow(&ctx.invoice_id);
+    assert_eq!(data_before, data_after);
+    assert_eq!(data_after.funded_amt, 500);
+    assert_eq!(data_after.status, EscrowStatus::Created);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 19. FAILURE: Payment on cancelled escrow
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_payment_on_cancelled_escrow_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "EDGEPCN", 0, 1_000);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, &1_000, &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "pay_cancel"), &None,
+    );
+
+    ctx.escrow.cancel_escrow(&ctx.invoice_id, &ctx.seller);
+
+    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(result, Err(Ok(errors::Error::AlreadySettled)));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 20. EDGE: Discounted invoice (purchase_price < face_value)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_edge_discounted_invoice() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 0, "EDGEDSC", 800, 1_000);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id, &ctx.seller, &ctx.payer,
+        &1_000, // face_value
+        &800,   // purchase_price (20% discount)
+        &99_999,
+        &ctx.payment_token.address, &ctx.inv_token_id,
+        &test_commitment(&env, "discount"), &None,
+    );
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &800);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Settled);
+
+    // 0% fee: investor gets 1000, seller gets 1000
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 1_000);
+}
