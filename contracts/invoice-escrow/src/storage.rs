@@ -149,7 +149,7 @@ pub fn set_whitelisted(env: &Env, buyer: &Address, allowed: bool) {
     }
 }
 
-// ── Funding invoice (BytesN<32>) storage for position management ───────
+// ?? Funding invoice (BytesN<32>) storage for position management ???????
 
 use soroban_sdk::BytesN;
 

@@ -102,4 +102,6 @@ pub enum Error {
     NoPositionFound = 43,
     /// Repayment amount is less than the total raised amount.
     InsufficientRepayment = 44,
+    /// New funding deadline must be greater than the current deadline.
+    DeadlineNotExtended = 45,
 }
