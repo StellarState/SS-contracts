@@ -929,7 +929,7 @@ impl InvoiceEscrow {
             return Ok(false);
         }
 
-        // Threshold reached — execute emergency release
+        // Threshold reached ? execute emergency release
         let mut data =
             storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
 
@@ -984,7 +984,7 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    // ── Position management: top_up / partial_refund / transfer_position / finalise_funding ──
+    // ?? Position management: top_up / partial_refund / transfer_position / finalise_funding ??
 
     /// Create a funding invoice (BytesN<32> id) for the new position management flows.
     /// This is the setup entrypoint for tests and admin tooling for the
@@ -1126,6 +1126,36 @@ impl InvoiceEscrow {
         Ok(())
     }
 
+    /// Admin-only: extend the funding deadline for an open invoice.
+    pub fn extend_deadline(
+        env: Env,
+        invoice_id: BytesN<32>,
+        new_deadline_ledger: u32,
+    ) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        config.admin.require_auth();
+
+        let mut invoice =
+            storage::get_invoice(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if invoice.status != InvoiceStatus::Open {
+            return Err(Error::InvalidInvoiceStatus);
+        }
+
+        let old_deadline_ledger = invoice.deadline_ledger;
+        if new_deadline_ledger <= old_deadline_ledger {
+            return Err(Error::DeadlineNotExtended);
+        }
+
+        invoice.deadline_ledger = new_deadline_ledger;
+        storage::set_invoice(&env, invoice_id.clone(), &invoice);
+        events::deadline_extended(
+            &env,
+            &invoice_id,
+            old_deadline_ledger,
+            new_deadline_ledger,
+        );
+        Ok(())
+    }
     /// Invest in a registered invoice or funding invoice.
     pub fn invest(
         env: Env,

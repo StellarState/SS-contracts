@@ -233,6 +233,22 @@ pub fn invoice_registered(
     );
 }
 
+/// Publish deadline_extended event with old and new ledger deadlines.
+pub fn deadline_extended(
+    env: &Env,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    old_deadline_ledger: u32,
+    new_deadline_ledger: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "deadline_extended"),),
+        (
+            invoice_id.clone(),
+            old_deadline_ledger,
+            new_deadline_ledger,
+        ),
+    );
+}
 /// Publish investment_refunded event.
 pub fn investment_refunded(
     env: &Env,
