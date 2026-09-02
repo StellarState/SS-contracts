@@ -124,11 +124,27 @@ pub fn payment_distributor_updated(
     );
 }
 
-/// Publish pause state updates.
+/// Publish paused state updates.
 pub fn paused_updated(env: &Env, old_paused: bool, new_paused: bool) {
     env.events().publish(
         (Symbol::new(env, "paused_updated"),),
         (old_paused, new_paused),
+    );
+}
+
+/// Emitted when an early-settlement discount hook is applied during `record_payment`.
+/// `original_face` is the unmodified face value; `effective_face` is the discounted value
+/// that will be used as the settlement target.
+pub fn early_settlement_applied(
+    env: &Env,
+    inv_id: Symbol,
+    discount_bps: u32,
+    original_face: i128,
+    effective_face: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "early_settlement_applied"),),
+        (inv_id, discount_bps, original_face, effective_face),
     );
 }
 
@@ -188,7 +204,7 @@ pub fn position_transferred(
     );
 }
 
-/// Funding finalised event.
+/// Publish funding finalised event.
 pub fn funding_finalised(env: &Env, invoice_id: BytesN<32>, total_raised: i128, seller: &Address) {
     env.events().publish(
         (Symbol::new(env, "funding_finalised"), invoice_id.clone()),
@@ -196,8 +212,66 @@ pub fn funding_finalised(env: &Env, invoice_id: BytesN<32>, total_raised: i128, 
     );
 }
 
-/// Publish grace period expired event.
-pub fn grace_period_expired(env: &Env, inv_id: Symbol) {
-    env.events()
-        .publish((Symbol::new(env, "grace_period_expired"),), inv_id);
+/// Publish invoice_registered event with all parameters.
+pub fn invoice_registered(
+    env: &Env,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    face_value: i128,
+    funding_target: i128,
+    yield_bps: u32,
+    deadline_ledger: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "invoice_registered"),),
+        (
+            invoice_id.clone(),
+            face_value,
+            funding_target,
+            yield_bps,
+            deadline_ledger,
+        ),
+    );
+}
+
+/// Publish deadline_extended event with old and new ledger deadlines.
+pub fn deadline_extended(
+    env: &Env,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    old_deadline_ledger: u32,
+    new_deadline_ledger: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "deadline_extended"),),
+        (
+            invoice_id.clone(),
+            old_deadline_ledger,
+            new_deadline_ledger,
+        ),
+    );
+}
+/// Publish investment_refunded event.
+pub fn investment_refunded(
+    env: &Env,
+    investor: &Address,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    amount_refunded: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "investment_refunded"),),
+        (investor.clone(), invoice_id.clone(), amount_refunded),
+    );
+}
+
+/// Publish settlement_paid event per investor.
+pub fn settlement_paid(
+    env: &Env,
+    investor: &Address,
+    invoice_id: &soroban_sdk::BytesN<32>,
+    payout_amount: i128,
+    yield_earned: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_paid"),),
+        (investor.clone(), invoice_id.clone(), payout_amount, yield_earned),
+    );
 }
