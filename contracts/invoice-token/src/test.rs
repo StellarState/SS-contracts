@@ -2944,3 +2944,156 @@ fn test_storage_key_ttl_after_multiple_operations() {
     let allowance = client.allowance(&recipient, &other);
     assert_eq!(allowance, 500);
 }
+// ========== Allowance Expiration Tests (#141) ==========
+
+#[test]
+fn test_expired_allowance_blocks_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    let current_ledger = env.ledger().sequence();
+    let expiration = current_ledger + 10;
+    
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // Advance ledger past expiration
+    env.ledger().with_mut(|l| l.sequence = expiration + 1);
+
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+}
+
+#[test]
+fn test_expiration_checked_before_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    // User has 0 balance, but we approve spender
+    let current_ledger = env.ledger().sequence();
+    let expiration = current_ledger + 10;
+    
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // Advance ledger past expiration
+    env.ledger().with_mut(|l| l.sequence = expiration + 1);
+
+    // Should fail with AllowanceExpired, not InsufficientBalance
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+}
+
+#[test]
+fn test_partial_use_and_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    let current_ledger = env.ledger().sequence();
+    let expiration = current_ledger + 10;
+    
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // Partial use before expiration
+    client.transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+
+    // Advance ledger past expiration
+    env.ledger().with_mut(|l| l.sequence = expiration + 1);
+
+    // Remaining use should fail
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+}
+
+#[test]
+fn test_valid_approval_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    let current_ledger = env.ledger().sequence();
+    let expiration = current_ledger + 10;
+    
+    client.approve(&admin, &spender, &500, &expiration);
+
+    // Advance ledger but not past expiration
+    env.ledger().with_mut(|l| l.sequence = expiration);
+
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert!(result.is_ok());
+    assert_eq!(client.balance(&admin), 900);
+    assert_eq!(client.balance(&recipient), 100);
+}
+
+#[test]
+fn test_reapproval_after_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    let current_ledger = env.ledger().sequence();
+    let expiration1 = current_ledger + 10;
+    
+    client.approve(&admin, &spender, &500, &expiration1);
+
+    // Advance ledger past expiration
+    env.ledger().with_mut(|l| l.sequence = expiration1 + 1);
+
+    // Re-approve
+    let expiration2 = env.ledger().sequence() + 10;
+    client.approve(&admin, &spender, &300, &expiration2);
+
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert!(result.is_ok());
+    assert_eq!(client.balance(&admin), 900);
+    assert_eq!(client.balance(&recipient), 100);
+}
+
+#[test]
+fn test_zero_expiry_edge_case() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+    
+    // Approval with expiration in the past (e.g. 0 or current_ledger - 1) should fail
+    let expiration_past = if current_ledger > 0 { current_ledger - 1 } else { 0 };
+    if current_ledger > 0 {
+        let result = client.try_approve(&admin, &spender, &500, &expiration_past);
+        assert_eq!(result, Err(Ok(crate::errors::Error::InvalidExpiration)));
+    }
+}
+
