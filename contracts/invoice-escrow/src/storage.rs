@@ -149,7 +149,7 @@ pub fn set_whitelisted(env: &Env, buyer: &Address, allowed: bool) {
     }
 }
 
-// ── Funding invoice (BytesN<32>) storage for position management ───────
+// ?? Funding invoice (BytesN<32>) storage for position management ???????
 
 use soroban_sdk::BytesN;
 
@@ -321,18 +321,4 @@ pub fn set_escrow_id_by_index(env: &soroban_sdk::Env, index: u32, invoice_id: &S
     env.storage()
         .persistent()
         .set(&StorageKey::EscrowIdByIndex(index), invoice_id);
-}
-
-/// Load the dispute data for an escrow.
-pub fn get_dispute(env: &soroban_sdk::Env, inv_id: &Symbol) -> Option<crate::types::DisputeData> {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::Dispute(inv_id.clone()))
-}
-
-/// Save dispute data for an escrow.
-pub fn set_dispute(env: &soroban_sdk::Env, inv_id: &Symbol, data: &crate::types::DisputeData) {
-    env.storage()
-        .persistent()
-        .set(&StorageKey::Dispute(inv_id.clone()), data);
 }
