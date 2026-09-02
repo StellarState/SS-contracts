@@ -9,6 +9,11 @@ pub fn initialized(env: &Env, admin: &Address) {
     env.events().publish(topics, admin.clone());
 }
 
+pub fn admin_transferred(env: &Env, previous_admin: &Address, new_admin: &Address) {
+    let topics = (Symbol::new(env, "admin_transferred"),);
+    env.events().publish(topics, (previous_admin.clone(), new_admin.clone()));
+}
+
 /// Issue #122: Fee recipient updated event
 pub fn fee_recipient_updated(env: &Env, old_recipient: Option<Address>, new_recipient: &Address) {
     let topics = (Symbol::new(env, "fee_recipient_updated"),);

@@ -627,6 +627,35 @@ impl PaymentDistributor {
         storage::get_admin(&env).ok_or(Error::NotInit)
     }
 
+    /// Issue #380: Transfer admin ownership (Step 1).
+    /// Proposes a new admin. The new admin must call `accept_admin` to finalize.
+    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), Error> {
+        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        if current_admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        current_admin.require_auth();
+        storage::set_pending_admin(&env, &new_admin);
+        Ok(())
+    }
+
+    /// Issue #380: Accept admin ownership (Step 2).
+    /// Finalizes the transfer of admin ownership.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let pending = storage::get_pending_admin(&env).ok_or(Error::Unauthorized)?;
+        if new_admin != pending {
+            return Err(Error::Unauthorized);
+        }
+        new_admin.require_auth();
+        
+        let previous_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        storage::set_admin(&env, &new_admin);
+        storage::clear_pending_admin(&env);
+        
+        events::admin_transferred(&env, &previous_admin, &new_admin);
+        Ok(())
+    }
+
     /// Issue #122: Set the fee recipient address for platform fees.
     /// Only the admin can update the fee recipient.
     /// Emits a fee_recipient_updated event for audit trails.

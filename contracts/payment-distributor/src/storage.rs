@@ -28,6 +28,18 @@ pub fn get_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&StorageKey::Admin)
 }
 
+pub fn set_pending_admin(env: &Env, admin: &Address) {
+    env.storage().instance().set(&StorageKey::PendingAdmin, admin);
+}
+
+pub fn get_pending_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&StorageKey::PendingAdmin)
+}
+
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&StorageKey::PendingAdmin);
+}
+
 pub fn set_fee_recipient(env: &Env, fee_recipient: &Address) {
     env.storage()
         .instance()
