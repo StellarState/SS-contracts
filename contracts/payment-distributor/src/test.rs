@@ -4923,8 +4923,79 @@ fn acceptance_criteria_no_unexpected_dust_after_completed_distribution() {
     let distributor = ctx.payment_token.balance(&ctx.distributor_id);
     let escrow = ctx.payment_token.balance(&ctx.escrow_id);
 
-    // No dust in distributor
+// No dust in distributor
     assert_eq!(distributor, 0);
     // All escrowed funds distributed or reserved
     assert_eq!(escrow, 0);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// ADMIN TRANSFER TWO-STEP PROCESS TESTS
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_successful_two_step_admin_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let ctx = setup(&env, 0, false);
+    let new_admin = Address::generate(&env);
+    
+    // Step 1: transfer_admin
+    ctx.distributor.transfer_admin(&ctx.admin, &new_admin);
+    
+    // Step 2: accept_admin
+    ctx.distributor.accept_admin(&new_admin);
+    
+    assert_eq!(ctx.distributor.get_admin(), new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_unauthorized_caller_on_transfer_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let ctx = setup(&env, 0, false);
+    let unauthorized = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    
+    // Fails with Unauthorized
+    ctx.distributor.transfer_admin(&unauthorized, &new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_unauthorized_caller_on_accept_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let ctx = setup(&env, 0, false);
+    let new_admin = Address::generate(&env);
+    let unauthorized = Address::generate(&env);
+    
+    ctx.distributor.transfer_admin(&ctx.admin, &new_admin);
+    
+    // Fails with Unauthorized (wrong caller)
+    ctx.distributor.accept_admin(&unauthorized);
+}
+
+#[test]
+fn test_chained_transfers_and_event_log_emission() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let ctx = setup(&env, 0, false);
+    let admin_1 = Address::generate(&env);
+    let admin_2 = Address::generate(&env);
+    
+    // Transfer 1
+    ctx.distributor.transfer_admin(&ctx.admin, &admin_1);
+    ctx.distributor.accept_admin(&admin_1);
+    assert_eq!(ctx.distributor.get_admin(), admin_1);
+    
+    // Transfer 2
+    ctx.distributor.transfer_admin(&admin_1, &admin_2);
+    ctx.distributor.accept_admin(&admin_2);
+    assert_eq!(ctx.distributor.get_admin(), admin_2);
 }
