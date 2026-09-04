@@ -145,6 +145,7 @@ impl InvoiceEscrow {
         invoice_token: Address,
         commitment: soroban_sdk::BytesN<32>,
         funding_milestone: Option<i128>,
+        accepted_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     ) -> Result<(), Error> {
         seller.require_auth();
         if face_value <= 0 || purchase_price <= 0 {
@@ -166,6 +167,22 @@ impl InvoiceEscrow {
         if storage::has_escrow(&env, invoice_id.clone()) {
             return Err(Error::EscrowExists);
         }
+
+        // Validate accepted_tokens non-empty and contains payment_token
+        if accepted_tokens.is_empty() {
+            return Err(Error::TokenNotAccepted);
+        }
+        let mut contains_payment_token = false;
+        for token in accepted_tokens.iter() {
+            if token == payment_token {
+                contains_payment_token = true;
+                break;
+            }
+        }
+        if !contains_payment_token {
+            return Err(Error::TokenNotAccepted);
+        }
+
         // Ensure the payment token and invoice token use the same decimals to avoid
         // settlement/rounding mismatches during distribution and fee calculations.
         let inv_decimals: Option<u32> = env
@@ -200,6 +217,7 @@ impl InvoiceEscrow {
             funders: soroban_sdk::Vec::new(&env),
             due_dt: due_date,
             token: payment_token.clone(),
+            accepted_tokens,
             inv_token: invoice_token.clone(),
             paid_amt: 0,
             status: EscrowStatus::Created,
@@ -387,9 +405,10 @@ impl InvoiceEscrow {
         invoice_id: Symbol,
         buyer: Address,
         amount: i128,
+        funding_token: Address,
     ) -> Result<(), Error> {
         buyer.require_auth();
-        Self::fund_escrow_core(&env, invoice_id, &buyer, amount)
+        Self::fund_escrow_core(&env, invoice_id, &buyer, amount, &funding_token)
     }
 
     /// Fund the escrow on behalf of `buyer` using a signed off-chain approval that a relayer
@@ -406,8 +425,9 @@ impl InvoiceEscrow {
         amount: i128,
         nonce: u64,
         expiry: u64,
+        funding_token: Address,
     ) -> Result<(), Error> {
-        buyer.require_auth_for_args((invoice_id.clone(), amount, nonce, expiry).into_val(&env));
+        buyer.require_auth_for_args((invoice_id.clone(), amount, nonce, expiry, funding_token.clone()).into_val(&env));
 
         let current_ts = env.ledger().timestamp();
         if current_ts > expiry {
@@ -419,7 +439,7 @@ impl InvoiceEscrow {
             return Err(Error::NonceAlreadyUsed);
         }
 
-        Self::fund_escrow_core(&env, invoice_id.clone(), &buyer, amount)?;
+        Self::fund_escrow_core(&env, invoice_id.clone(), &buyer, amount, &funding_token)?;
 
         storage::set_nonce(&env, &buyer, nonce);
         events::escrow_funded_signed(&env, invoice_id, &buyer, amount, nonce);
@@ -432,6 +452,7 @@ impl InvoiceEscrow {
         invoice_id: Symbol,
         buyer: &Address,
         amount: i128,
+        funding_token: &Address,
     ) -> Result<(), Error> {
         // Fail fast: validate amount before hitting storage.
         if amount == 0 {
@@ -452,6 +473,28 @@ impl InvoiceEscrow {
         }
         if data.status != EscrowStatus::Created {
             return Err(Error::EscrowFunded);
+        }
+
+        // Validate that funding_token is included in accepted_tokens.
+        let mut is_accepted = false;
+        for token in data.accepted_tokens.iter() {
+            if token == *funding_token {
+                is_accepted = true;
+                break;
+            }
+        }
+        if !is_accepted {
+            return Err(Error::TokenNotAccepted);
+        }
+
+        // Lock data.token = funding_token upon initial contribution.
+        // Subsequent funding and settlement calls strictly enforce data.token.
+        if data.funded_amt == 0 {
+            data.token = funding_token.clone();
+        } else {
+            if *funding_token != data.token {
+                return Err(Error::TokenNotAccepted);
+            }
         }
 
         // Check that funding doesn't exceed purchase_price
