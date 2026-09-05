@@ -2526,3 +2526,176 @@ fn test_pause_unpause_event_emission() {
     assert_eq!(old_val, true);
     assert_eq!(new_val, false);
 }
+
+// ---------------------------------------------------------------------------
+// Allowance expiration edge cases (Issue #141 / #361)
+// ---------------------------------------------------------------------------
+
+/// Expired allowance blocks transfer_from even when balance is sufficient.
+#[test]
+fn test_expired_allowance_blocks_transfer_despite_sufficient_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // Approve at current ledger, then advance one past expiration
+    client.approve(&admin, &spender, &500, &initial_ledger);
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 1);
+
+    // Balance is sufficient (1000), but allowance is expired
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+
+    // Neither balance nor allowance should change
+    assert_eq!(client.balance(&admin), 1000);
+    assert_eq!(client.allowance(&admin, &spender), 500);
+}
+
+/// Partial use of allowance, then expiry, prevents further use.
+#[test]
+fn test_partial_use_then_expiry_prevents_further_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // Approve 500, expire at current ledger + 10
+    client.approve(&admin, &spender, &500, &(initial_ledger + 10));
+
+    // Use 200 of the 500
+    client.transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+
+    // Advance ledger past expiration
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 11);
+
+    // Try to use the remaining 300 — should fail with AllowanceExpired
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &300);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+
+    // Balances and allowance unchanged after failed call
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.balance(&recipient), 200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+}
+
+/// Re-approval after expiry allows transfer_from to succeed again.
+#[test]
+fn test_reapproval_after_expiry_allows_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // Approve with short expiry
+    client.approve(&admin, &spender, &500, &initial_ledger);
+
+    // Use part of it while valid
+    client.transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(client.allowance(&admin, &spender), 400);
+
+    // Advance past expiration
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 1);
+
+    // Re-approve with a new expiration far in the future
+    client.approve(&admin, &spender, &400, &(initial_ledger + 100));
+    assert_eq!(client.allowance(&admin, &spender), 400);
+
+    // Transfer should now succeed
+    client.transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(client.balance(&admin), 700);
+    assert_eq!(client.balance(&recipient), 300);
+    assert_eq!(client.allowance(&admin, &spender), 200);
+}
+
+/// Approving with expiration_ledger = 0 and amount > 0 is rejected.
+#[test]
+fn test_zero_expiration_with_positive_amount_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+
+    let spender = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // expiration_ledger = 0 is always < current_ledger (which starts at 1)
+    let result = client.try_approve(&admin, &spender, &100, &0);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidExpiration)));
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
+/// Expiration is checked before balance validation in transfer_from.
+#[test]
+fn test_expiration_checked_before_balance_in_transfer_from() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Mint only 100 tokens
+    client.mint(&admin, &100, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+
+    // Approve 500 (more than balance) with short expiry
+    client.approve(&admin, &spender, &500, &initial_ledger);
+
+    // Advance past expiration
+    env.ledger()
+        .with_mut(|li| li.sequence_number = initial_ledger + 1);
+
+    // Try to transfer 200.  The allowance is expired, so the error should be
+    // AllowanceExpired — NOT InsufficientBalance — confirming that expiration
+    // is checked before balance validation.
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+}
+
+/// A fresh valid approval immediately enables transfer_from.
+#[test]
+fn test_fresh_valid_approval_enables_transfer_from() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Fresh approval with expiration well in the future
+    client.approve(&admin, &spender, &500, &(current_ledger + 1000));
+    assert_eq!(client.allowance(&admin, &spender), 500);
+
+    // transfer_from should succeed immediately
+    client.transfer_from(&spender, &admin, &recipient, &250);
+    assert_eq!(client.balance(&admin), 750);
+    assert_eq!(client.balance(&recipient), 250);
+    assert_eq!(client.allowance(&admin, &spender), 250);
+}
