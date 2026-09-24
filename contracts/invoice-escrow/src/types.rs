@@ -35,6 +35,8 @@ pub enum StorageKey {
     CategoryFee(InvoiceCategory),
     /// Persistent: dispute metadata for an invoice, by invoice id.
     Dispute(soroban_sdk::Symbol),
+    /// Persistent: installment repayment milestone schedule by invoice id.
+    InstallmentSchedule(soroban_sdk::Symbol),
 }
 
 /// Registered invoice metadata and funding parameters stored in persistent storage.
@@ -242,6 +244,42 @@ pub struct MultiSigConfig {
 pub struct EmergencyApprovals {
     /// List of admin addresses that have already approved this release.
     pub approvals: soroban_sdk::Vec<soroban_sdk::Address>,
+}
+
+/// One repayment milestone in an installment settlement schedule.
+///
+/// Milestones are ordered by `index` and their `cumulative_amount` values are
+/// strictly increasing, ending at exactly `EscrowData::face_value`. A milestone
+/// becomes `settled` once the escrow's cumulative `paid_amt` reaches its
+/// `cumulative_amount`, or once the escrow itself reaches the terminal
+/// `Settled` status (e.g. via an early-settlement discount or emergency
+/// release that pays less than the undiscounted face value).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstallmentMilestone {
+    /// 0-based position of this milestone within the schedule.
+    pub index: u32,
+    /// Cumulative repayment target: sum of all installment amounts through
+    /// this milestone (inclusive).
+    pub cumulative_amount: i128,
+    /// Ledger timestamp by which `cumulative_amount` must have been repaid.
+    pub due_ts: u64,
+    /// Whether this milestone has already been reached by recorded payments.
+    pub settled: bool,
+}
+
+/// Seller-supplied entry used to configure an installment schedule.
+///
+/// `amount` is the size of the individual installment (not the cumulative
+/// total); the contract derives and stores cumulative amounts when the
+/// schedule is saved.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstallmentInput {
+    /// Ledger timestamp by which this installment is due.
+    pub due_ts: u64,
+    /// Size of this individual installment. Must be `> 0`.
+    pub amount: i128,
 }
 
 /// Optional early-settlement discount hook configuration.

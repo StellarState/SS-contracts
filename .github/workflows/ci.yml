@@ -13,6 +13,16 @@ env:
   CARGO_TERM_COLOR: always
   WASM_MAX_BYTES: 262144
 jobs:
+  toolchain-sync:
+    name: Toolchain Sync Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify rust-toolchain.toml matches workflows/scripts/docs
+        run: bash scripts/check-toolchain-sync.sh
+
   check-and-test:
     name: Lint, Test & Build WASM (${{ matrix.toolchain }})
     runs-on: ubuntu-latest

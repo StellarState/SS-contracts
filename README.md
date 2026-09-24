@@ -60,6 +60,16 @@ Repeatable deployment scripts live in [`scripts/`](scripts/). See the [**How to 
 
 The scripts deploy and initialise all three contracts, then wire `invoice-escrow` to `payment-distributor` so settlement and refund payouts run through the distributor flow by default.
 
+For an interactive testnet setup wizard and a single CLI entrypoint wrapping setup/build/package/deploy/smoke:
+
+```bash
+bash scripts/cli.sh            # interactive menu
+bash scripts/cli.sh setup      # write .env (network, keys, fee, token metadata)
+bash scripts/cli.sh deploy     # multi-contract deploy (wraps scripts/deploy.sh)
+```
+
+CI releases: merges to `main` trigger [`.github/workflows/release.yml`](.github/workflows/release.yml), which tags the next semver version, generates a changelog, and attaches WASM artifacts + `checksums.txt` to the GitHub Release. Toolchain drift between `rust-toolchain.toml` and workflows/scripts is enforced by `scripts/check-toolchain-sync.sh` (run automatically in CI).
+
 ## 📚 Contract Documentation
 
 ### Invoice Escrow Contract
@@ -114,7 +124,10 @@ See [`.env.example`](.env.example) for the full list of variables and their desc
 ### 3a. Bash (macOS / Linux)
 
 ```bash
-# Run from the repo root
+# Interactive path (wizard + menu)
+bash scripts/cli.sh
+
+# Or run the deploy script directly from the repo root
 bash scripts/deploy.sh
 ```
 

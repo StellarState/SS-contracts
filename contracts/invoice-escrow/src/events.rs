@@ -318,3 +318,33 @@ pub fn dispute_resolved(env: &Env, inv_id: Symbol, favour: Symbol, timed_out: bo
         (inv_id, favour, timed_out),
     );
 }
+
+/// Publish `installment_schedule_set` when a seller configures (or replaces)
+/// the installment repayment milestone schedule for an invoice.
+pub fn installment_schedule_set(
+    env: &Env,
+    inv_id: Symbol,
+    milestone_count: u32,
+    final_due_ts: u64,
+    total_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "installment_schedule_set"),),
+        (inv_id, milestone_count, final_due_ts, total_amount),
+    );
+}
+
+/// Publish `installment_settled` when cumulative repayments reach a
+/// milestone's cumulative target (or the escrow fully settles).
+pub fn installment_settled(
+    env: &Env,
+    inv_id: Symbol,
+    index: u32,
+    cumulative_amount: i128,
+    paid_amt: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "installment_settled"),),
+        (inv_id, index, cumulative_amount, paid_amt),
+    );
+}

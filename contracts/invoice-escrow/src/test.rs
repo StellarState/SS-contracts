@@ -9411,3 +9411,340 @@ fn test_raise_dispute_requires_funded_status() {
     );
     assert_eq!(result, Err(Ok(Error::InvalidInvoiceStatus)));
 }
+
+// ── Installment settlement milestone schedule (#450) ─────────────────────────
+
+/// Build an installment input pair for schedule tests.
+fn installment(_env: &Env, due_ts: u64, amount: i128) -> types::InstallmentInput {
+    types::InstallmentInput {
+        due_ts,
+        amount,
+    }
+}
+
+#[test]
+fn test_set_installment_schedule_happy_path() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 300),
+        installment(&env, 500_000, 300),
+        installment(&env, 900_000, 400),
+    ];
+    test_env.escrow_client.set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+
+    let stored = test_env
+        .escrow_client
+        .get_installment_schedule(&test_env.invoice_id);
+    assert_eq!(stored.len(), 3);
+
+    let m0 = stored.get(0).unwrap();
+    assert_eq!(m0.index, 0);
+    assert_eq!(m0.cumulative_amount, 300);
+    assert_eq!(m0.due_ts, 200_000);
+    assert!(!m0.settled);
+
+    let m1 = stored.get(1).unwrap();
+    assert_eq!(m1.index, 1);
+    assert_eq!(m1.cumulative_amount, 600);
+    assert_eq!(m1.due_ts, 500_000);
+
+    let m2 = stored.get(2).unwrap();
+    assert_eq!(m2.index, 2);
+    assert_eq!(m2.cumulative_amount, 1000);
+    assert_eq!(m2.due_ts, 900_000);
+
+    let next = test_env
+        .escrow_client
+        .get_next_installment(&test_env.invoice_id);
+    assert_eq!(next.unwrap().index, 0);
+}
+
+#[test]
+fn test_set_installment_schedule_rejects_sum_mismatch() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    // Sums to 900, not face_value 1000.
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 400),
+        installment(&env, 500_000, 500),
+    ];
+    let result = test_env.escrow_client.try_set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidInstallmentSchedule)));
+}
+
+#[test]
+fn test_set_installment_schedule_rejects_non_increasing_due_ts() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 500_000, 500),
+        installment(&env, 200_000, 500),
+    ];
+    let result = test_env.escrow_client.try_set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidInstallmentSchedule)));
+}
+
+#[test]
+fn test_set_installment_schedule_rejects_due_after_escrow_due_date() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    // MockTokenEnvironment creates the escrow with due_date = 1_000_000.
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 500),
+        installment(&env, 1_000_001, 500),
+    ];
+    let result = test_env.escrow_client.try_set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidInstallmentSchedule)));
+}
+
+#[test]
+fn test_set_installment_schedule_rejects_empty_schedule() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let schedule: soroban_sdk::Vec<types::InstallmentInput> = soroban_sdk::Vec::new(&env);
+    let result = test_env.escrow_client.try_set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidInstallmentSchedule)));
+}
+
+#[test]
+fn test_set_installment_schedule_requires_seller() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let impostor = Address::generate(&env);
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 500),
+        installment(&env, 500_000, 500),
+    ];
+    let result = test_env.escrow_client.try_set_installment_schedule(
+        &test_env.invoice_id,
+        &impostor,
+        &schedule,
+    );
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_set_installment_schedule_rejects_after_first_payment() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+    test_env.record_payment(300);
+
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 500),
+        installment(&env, 500_000, 500),
+    ];
+    let result = test_env.escrow_client.try_set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidInstallmentSchedule)));
+}
+
+#[test]
+fn test_record_payment_settles_installment_milestones_progressively() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 300),
+        installment(&env, 500_000, 300),
+        installment(&env, 900_000, 400),
+    ];
+    test_env.escrow_client.set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+
+    // First installment: 300 reaches cumulative 300 only.
+    test_env.record_payment(300);
+    let stored = test_env
+        .escrow_client
+        .get_installment_schedule(&test_env.invoice_id);
+    assert!(stored.get(0).unwrap().settled);
+    assert!(!stored.get(1).unwrap().settled);
+    assert!(!stored.get(2).unwrap().settled);
+    let next = test_env
+        .escrow_client
+        .get_next_installment(&test_env.invoice_id);
+    assert_eq!(next.unwrap().index, 1);
+
+    // Second installment: cumulative paid 600 settles milestone 1.
+    test_env.record_payment(300);
+    let stored = test_env
+        .escrow_client
+        .get_installment_schedule(&test_env.invoice_id);
+    assert!(stored.get(0).unwrap().settled);
+    assert!(stored.get(1).unwrap().settled);
+    assert!(!stored.get(2).unwrap().settled);
+
+    // Final installment settles the escrow and the remaining milestone.
+    test_env.record_payment(400);
+    let stored = test_env
+        .escrow_client
+        .get_installment_schedule(&test_env.invoice_id);
+    assert!(stored.iter().all(|m| m.settled));
+    assert_eq!(
+        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        EscrowStatus::Settled
+    );
+    let next = test_env
+        .escrow_client
+        .get_next_installment(&test_env.invoice_id);
+    assert!(next.is_none());
+}
+
+#[test]
+fn test_get_installment_schedule_empty_when_unset() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let stored = test_env
+        .escrow_client
+        .get_installment_schedule(&test_env.invoice_id);
+    assert_eq!(stored.len(), 0);
+    let next = test_env
+        .escrow_client
+        .get_next_installment(&test_env.invoice_id);
+    assert!(next.is_none());
+}
+
+#[test]
+fn test_get_installment_schedule_unknown_invoice_errors() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let missing = Symbol::new(&env, "NOPE");
+    let result = test_env.escrow_client.try_get_installment_schedule(&missing);
+    assert_eq!(result, Err(Ok(Error::EscrowNotFound)));
+}
+
+#[test]
+fn test_cleanup_escrow_removes_installment_schedule() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 0, 1000, 1000);
+    test_env.fund(1000);
+
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 500),
+        installment(&env, 500_000, 500),
+    ];
+    test_env.escrow_client.set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+
+    test_env.record_payment(1000);
+    assert_eq!(
+        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        EscrowStatus::Settled
+    );
+
+    test_env
+        .escrow_client
+        .cleanup_escrow(&test_env.invoice_id, &test_env.seller);
+
+    // Escrow is gone, so the schedule view errors with EscrowNotFound and no
+    // orphaned persistent schedule entry remains readable.
+    let result = test_env
+        .escrow_client
+        .try_get_installment_schedule(&test_env.invoice_id);
+    assert_eq!(result, Err(Ok(Error::EscrowNotFound)));
+}
+
+#[test]
+fn test_set_installment_schedule_rejects_non_positive_installment() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 1000),
+        installment(&env, 500_000, 0),
+    ];
+    let result = test_env.escrow_client.try_set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+    assert_eq!(result, Err(Ok(Error::InvalidInstallmentSchedule)));
+}
+
+#[test]
+fn test_set_installment_schedule_emits_schedule_set_event() {
+    let env = Env::default();
+    let mut test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+
+    let schedule = soroban_sdk::vec![
+        &env,
+        installment(&env, 200_000, 500),
+        installment(&env, 500_000, 500),
+    ];
+    test_env.escrow_client.set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+
+    let events = env.events().all();
+    let found = events.events().iter().any(|e| {
+        let (_, topics, _) = parse_event(&env, e);
+        topics
+            .get(0)
+            .map(|t| {
+                Symbol::try_from_val(&env, &t).unwrap()
+                    == Symbol::new(&env, "installment_schedule_set")
+            })
+            .unwrap_or(false)
+    });
+    assert!(found, "expected installment_schedule_set event");
+}

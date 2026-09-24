@@ -114,4 +114,7 @@ pub enum Error {
     /// Early-settlement discount hook configuration is invalid, or the escrow is
     /// no longer in a state where configuring one is meaningful.
     InvalidEarlySettlement = 53,
+    /// Installment repayment schedule is invalid (bad amounts/timestamps/sum),
+    /// or cannot be modified in the escrow's current state.
+    InvalidInstallmentSchedule = 54,
 }

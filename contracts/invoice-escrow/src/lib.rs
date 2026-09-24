@@ -17,10 +17,11 @@ use types::MultiSigConfig;
 
 // EscrowStatus is re-exported publicly; Config, EscrowData, and InvoiceData are crate-private.
 pub use types::EscrowStatus;
+pub use types::InstallmentMilestone;
 pub use types::InvoiceCategory;
 use types::{
-    CategoryFeeSchedule, Config, DisputeData, EscrowData, FundingInvoice, InvoiceData,
-    InvoiceStatus,
+    CategoryFeeSchedule, Config, DisputeData, EarlySettlementConfig, EscrowData, FundingInvoice,
+    InstallmentInput, InvoiceData, InvoiceStatus,
 };
 
 use errors::Error;
@@ -53,6 +54,10 @@ const MAX_ESCROW_DURATION_SECS: u64 = 31_536_000;
 /// Default dispute resolution timeout: 7 days (604,800 seconds).
 const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 604_800;
 
+/// Maximum number of milestones allowed in one installment repayment schedule.
+/// Bounds storage growth and per-payment iteration cost.
+const MAX_INSTALLMENTS: u32 = 64;
+
 #[contract]
 pub struct InvoiceEscrow;
 
@@ -61,6 +66,47 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
         return Err(Error::Paused);
     }
     Ok(())
+}
+
+/// Mark every installment milestone whose cumulative target has been reached by
+/// `paid_amt` as settled, emitting `installment_settled` for each one that
+/// flips. When `fully_settled` is true (escrow reached terminal `Settled`),
+/// any remaining milestones are settled unconditionally so discounted or
+/// emergency settlements still close out the schedule.
+///
+/// No-op when the invoice has no configured schedule.
+fn advance_installment_schedule(env: &Env, invoice_id: &Symbol, paid_amt: i128, fully_settled: bool) {
+    let Some(mut schedule) = storage::get_installment_schedule(env, invoice_id) else {
+        return;
+    };
+    let mut changed = false;
+    for i in 0..schedule.len() {
+        let Some(mut milestone) = schedule.get(i) else {
+            break;
+        };
+        if milestone.settled {
+            continue;
+        }
+        if fully_settled || paid_amt >= milestone.cumulative_amount {
+            milestone.settled = true;
+            schedule.set(i, milestone.clone());
+            changed = true;
+            events::installment_settled(
+                env,
+                invoice_id.clone(),
+                milestone.index,
+                milestone.cumulative_amount,
+                paid_amt,
+            );
+        } else {
+            // Milestones are stored in strictly increasing cumulative order,
+            // so no later milestone can have been reached either.
+            break;
+        }
+    }
+    if changed {
+        storage::set_installment_schedule(env, invoice_id, &schedule);
+    }
 }
 
 #[contractimpl]
@@ -435,6 +481,86 @@ impl InvoiceEscrow {
         Ok(())
     }
 
+    /// Configure (or replace) the installment repayment milestone schedule for
+    /// an invoice — Issue #450.
+    ///
+    /// The seller defines a sequence of future installments; the contract
+    /// stores them as cumulative milestones that `record_payment` settles
+    /// progressively as repayments arrive.
+    ///
+    /// Rules:
+    /// - Only the escrow's seller may call this, and only while the escrow is
+    ///   still `Created` or `Funded` with **zero** recorded repayment
+    ///   (`paid_amt == 0`), so the schedule cannot be moved once the debtor
+    ///   has started paying.
+    /// - `1..=MAX_INSTALLMENTS` entries; each `amount` must be `> 0`.
+    /// - `due_ts` values must be strictly increasing, strictly in the future,
+    ///   and on or before the escrow's `due_dt`.
+    /// - Installment amounts must sum **exactly** to `face_value`, so the
+    ///   schedule always covers the full repayment obligation.
+    ///
+    /// Emits `installment_schedule_set`.
+    pub fn set_installment_schedule(
+        env: Env,
+        invoice_id: Symbol,
+        seller: Address,
+        schedule: soroban_sdk::Vec<InstallmentInput>,
+    ) -> Result<(), Error> {
+        seller.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
+        let data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if data.seller != seller {
+            return Err(Error::Unauthorized);
+        }
+        match data.status {
+            EscrowStatus::Created | EscrowStatus::Funded => {}
+            _ => return Err(Error::InvalidInstallmentSchedule),
+        }
+        if data.paid_amt > 0 {
+            return Err(Error::InvalidInstallmentSchedule);
+        }
+
+        let count = schedule.len();
+        if count == 0 || count > MAX_INSTALLMENTS {
+            return Err(Error::InvalidInstallmentSchedule);
+        }
+
+        let now = env.ledger().timestamp();
+        let mut milestones = soroban_sdk::Vec::new(&env);
+        let mut cumulative: i128 = 0;
+        let mut prev_due: u64 = 0;
+        let mut first = true;
+        for input in schedule.iter() {
+            if input.amount <= 0 {
+                return Err(Error::InvalidInstallmentSchedule);
+            }
+            if input.due_ts <= now || input.due_ts > data.due_dt {
+                return Err(Error::InvalidInstallmentSchedule);
+            }
+            if !first && input.due_ts <= prev_due {
+                return Err(Error::InvalidInstallmentSchedule);
+            }
+            first = false;
+            prev_due = input.due_ts;
+            cumulative = cumulative.checked_add(input.amount).ok_or(Error::Overflow)?;
+            milestones.push_back(InstallmentMilestone {
+                index: milestones.len(),
+                cumulative_amount: cumulative,
+                due_ts: input.due_ts,
+                settled: false,
+            });
+        }
+        if cumulative != data.face_value {
+            return Err(Error::InvalidInstallmentSchedule);
+        }
+
+        storage::set_installment_schedule(&env, &invoice_id, &milestones);
+        events::installment_schedule_set(&env, invoice_id, count, prev_due, cumulative);
+        Ok(())
+    }
+
     /// Fund the escrow (investor buys part or all of the invoice at purchase_price).
     /// Transfers `amount` from buyer to this contract. Multiple investors can fund until fully subscribed.
     pub fn fund_escrow(
@@ -705,6 +831,16 @@ impl InvoiceEscrow {
         }
 
         storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        // Progress the installment milestone schedule (#450): mark every
+        // milestone covered by the new cumulative paid amount (or all of them
+        // when the escrow just reached terminal Settled).
+        advance_installment_schedule(
+            &env,
+            &invoice_id,
+            data.paid_amt,
+            data.status == EscrowStatus::Settled,
+        );
 
         let funder_addr = data.funder.clone().unwrap_or_else(|| data.seller.clone());
 
@@ -990,6 +1126,9 @@ impl InvoiceEscrow {
 
         dispute.resolved = true;
         storage::set_dispute(&env, &invoice_id, &dispute);
+        if settle_to_seller {
+            advance_installment_schedule(&env, &invoice_id, data.paid_amt, true);
+        }
 
         // Unlock invoice token transfers now that the dispute is resolved.
         env.invoke_contract::<()>(
@@ -1067,6 +1206,35 @@ impl InvoiceEscrow {
     pub fn paused(env: Env) -> Result<bool, Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         Ok(config.paused)
+    }
+
+    /// View: return the installment repayment milestone schedule for an
+    /// invoice. Returns an empty vector when no schedule has been configured
+    /// (or after `cleanup_escrow` reclaimed it).
+    pub fn get_installment_schedule(
+        env: Env,
+        invoice_id: Symbol,
+    ) -> Result<soroban_sdk::Vec<InstallmentMilestone>, Error> {
+        storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        Ok(storage::get_installment_schedule(&env, &invoice_id)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env)))
+    }
+
+    /// View: return the next unsettled installment milestone, or `None` when
+    /// no schedule exists or every milestone has been settled.
+    pub fn get_next_installment(
+        env: Env,
+        invoice_id: Symbol,
+    ) -> Result<Option<InstallmentMilestone>, Error> {
+        storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let schedule = storage::get_installment_schedule(&env, &invoice_id)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        for milestone in schedule.iter() {
+            if !milestone.settled {
+                return Ok(Some(milestone));
+            }
+        }
+        Ok(None)
     }
 
     /// Admin-only: configure the emergency multi-sig admin set and threshold.
@@ -1147,6 +1315,7 @@ impl InvoiceEscrow {
 
         data.status = EscrowStatus::Settled;
         storage::set_escrow(&env, invoice_id.clone(), &data);
+        advance_installment_schedule(&env, &invoice_id, data.paid_amt, true);
 
         events::escrow_status_changed(
             &env,
@@ -1173,6 +1342,7 @@ impl InvoiceEscrow {
             _ => return Err(Error::EscrowNotSettled),
         }
         storage::remove_escrow_state(&env, invoice_id.clone(), &data.funders);
+        storage::remove_installment_schedule(&env, &invoice_id);
         events::escrow_cleaned_up(&env, invoice_id);
         Ok(())
     }

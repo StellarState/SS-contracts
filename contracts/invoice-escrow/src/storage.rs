@@ -3,8 +3,8 @@
 use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 use crate::types::{
-    CategoryFeeSchedule, Config, DisputeData, EmergencyApprovals, EscrowData, InvoiceCategory,
-    InvoiceData, MultiSigConfig, StorageKey,
+    CategoryFeeSchedule, Config, DisputeData, EmergencyApprovals, EscrowData, InstallmentMilestone,
+    InvoiceCategory, InvoiceData, MultiSigConfig, StorageKey,
 };
 
 /// Ledgers below which a persistent entry's TTL is extended (~7 days at 5s/ledger).
@@ -331,4 +331,36 @@ pub fn set_dispute(env: &Env, inv_id: &Symbol, data: &DisputeData) {
     let key = StorageKey::Dispute(inv_id.clone());
     env.storage().persistent().set(&key, data);
     bump_persistent(env, &key);
+}
+
+/// Load the installment repayment milestone schedule for an invoice, if one
+/// has been configured. Extends the entry's TTL on every access.
+pub fn get_installment_schedule(
+    env: &Env,
+    inv_id: &Symbol,
+) -> Option<soroban_sdk::Vec<InstallmentMilestone>> {
+    let key = StorageKey::InstallmentSchedule(inv_id.clone());
+    let data = env.storage().persistent().get(&key);
+    if data.is_some() {
+        bump_persistent(env, &key);
+    }
+    data
+}
+
+/// Save the installment repayment milestone schedule for an invoice, extending its TTL.
+pub fn set_installment_schedule(
+    env: &Env,
+    inv_id: &Symbol,
+    schedule: &soroban_sdk::Vec<InstallmentMilestone>,
+) {
+    let key = StorageKey::InstallmentSchedule(inv_id.clone());
+    env.storage().persistent().set(&key, schedule);
+    bump_persistent(env, &key);
+}
+
+/// Remove the installment schedule for an invoice (used by storage cleanup).
+pub fn remove_installment_schedule(env: &Env, inv_id: &Symbol) {
+    env.storage()
+        .persistent()
+        .remove(&StorageKey::InstallmentSchedule(inv_id.clone()));
 }

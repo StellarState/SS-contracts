@@ -79,6 +79,9 @@ The `payment-distributor` contract now implements the settlement/refund fan-out 
 - `fund_escrow(invoice_id, buyer)`
 - `record_payment(invoice_id, payer, amount)`
 - `refund(invoice_id)`
+- `set_installment_schedule(invoice_id, seller, schedule)`
+- `get_installment_schedule(invoice_id) -> Vec<InstallmentMilestone>`
+- `get_next_installment(invoice_id) -> Option<InstallmentMilestone>`
 - `update_platform_fee_bps(new_fee_bps)`
 - `set_payment_distributor(payment_distributor)`
 - `set_paused(paused)`
@@ -114,6 +117,24 @@ Records a full or partial payment for a funded invoice.
 - **amount**: Must be $> 0$ and $\le$ (initial amount - total already paid).
 - Partial payments distribute the platform fee to the admin, the remainder to the investor, and release a proportional amount of the investor's initial funding to the seller.
 - The invoice status transitions to `Settled` only when the total paid matches the invoice amount.
+- If an installment schedule is configured, every milestone whose cumulative target is reached by the new `paid_amt` is marked settled (emitting `installment_settled`). When the escrow reaches terminal `Settled`, any remaining milestones are settled as well (covers early-settlement discounts and emergency releases).
+
+### `set_installment_schedule(invoice_id: Symbol, seller: Address, schedule: Vec<InstallmentInput>)`
+Configures (or replaces) the partial installment settlement milestone schedule for an invoice (#450).
+- **Auth:** Requires `seller` authorization (must match the escrow's seller).
+- **Preconditions:** Escrow status is `Created` or `Funded`, `paid_amt == 0`, contract not paused.
+- **schedule:** `1..=64` entries, each `{ due_ts: u64, amount: i128 }`.
+  - Every `amount` must be `> 0`.
+  - `due_ts` values must be strictly increasing, strictly in the future, and `<= escrow.due_dt`.
+  - Installment amounts must sum **exactly** to `face_value`.
+- Stores cumulative milestones under `StorageKey::InstallmentSchedule(invoice_id)` and emits `installment_schedule_set`.
+- Error: `InvalidInstallmentSchedule` (54) on any validation failure.
+
+### `get_installment_schedule(invoice_id) -> Vec<InstallmentMilestone>`
+Returns the stored milestone schedule (empty vector when none configured / after `cleanup_escrow`). Errors with `EscrowNotFound` for unknown invoices.
+
+### `get_next_installment(invoice_id) -> Option<InstallmentMilestone>`
+Returns the first unsettled milestone, or `None` when no schedule exists or all milestones are settled.
 
 ### Pause Policy
 - When paused, the contract rejects lifecycle-changing operations:
@@ -129,3 +150,5 @@ Records a full or partial payment for a funded invoice.
 - `platform_fee_updated`
 - `distributor_updated`
 - `paused_updated`
+- `installment_schedule_set`
+- `installment_settled`

@@ -84,7 +84,7 @@ Every Pull Request targeting `dev` automatically triggers our CI pipeline via Gi
 - **Format Check**: `cargo fmt --all -- --check`
 - **Clippy Lints**: `cargo clippy --all-targets --all-features -- -D warnings`
 - **Unit & Integration Tests**: `cargo test --all --verbose`
-- **WASM Build**: `cargo build --release --target wasm32-unknown-unknown`
+- **WASM Build**: `cargo build --release --target wasm32v1-none`
 - **Security Audit**: `cargo audit` — checks `Cargo.lock` against the RustSec Advisory Database
 - **WASM Size Regression**: compares PR branch WASM sizes against base branch; fails if any contract grows by more than 10%
 
