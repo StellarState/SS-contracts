@@ -31,6 +31,10 @@ pub enum StorageKey {
     EscrowIdByIndex(u32),
     /// Persistent: invoice metadata and parameters by BytesN<32>.
     InvoiceRecord(soroban_sdk::BytesN<32>),
+    /// Instance: platform fee rate (bps) for a given invoice category.
+    CategoryFee(InvoiceCategory),
+    /// Persistent: dispute metadata for an invoice, by invoice id.
+    Dispute(soroban_sdk::Symbol),
 }
 
 /// Registered invoice metadata and funding parameters stored in persistent storage.
@@ -54,7 +58,6 @@ pub struct InvoiceData {
     /// List of investor addresses.
     pub investors: soroban_sdk::Vec<soroban_sdk::Address>,
 }
-}
 
 /// Global contract configuration.
 #[contracttype]
@@ -76,6 +79,14 @@ pub struct Config {
     /// `0` disables the floor (only `amount > 0` is required). Completing the
     /// remaining capacity below this floor is always allowed.
     pub min_investment: i128,
+    /// Grace window (seconds) added to `due_dt` before an overdue invoice is
+    /// locked out of settlement / becomes refund-eligible. See `record_payment`
+    /// and `refund_escrow`.
+    pub grace_period_seconds: u64,
+    /// How long a `Disputed` escrow may sit unresolved before `resolve_dispute`
+    /// falls back to refunding the buyer regardless of `favour`. Defaults to
+    /// 604800 (7 days).
+    pub dispute_timeout_secs: u64,
 }
 
 /// Lifecycle status of an escrow.
@@ -95,6 +106,50 @@ pub enum EscrowStatus {
     /// Cancelled by seller while still in Created state and never funded
     /// (locked out once any investor contribution has been received).
     Cancelled = 4,
+    /// A dispute has been raised; settlement/refund are held pending
+    /// `resolve_dispute` (or its timeout fallback).
+    Disputed = 5,
+}
+
+/// Commercial invoicing sector, used to look up a per-category platform fee
+/// rate (see `Config`'s sibling storage at `StorageKey::CategoryFee`).
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum InvoiceCategory {
+    /// Standard trade credit. The default when no category is specified.
+    Standard = 0,
+    /// Invoice factoring.
+    Factoring = 1,
+    /// Reverse factoring (supply-chain financing initiated by the debtor).
+    Reverse = 2,
+    /// Government contracts.
+    Government = 3,
+}
+
+/// Per-category platform fee rate, set by the admin via `set_category_fee`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CategoryFeeSchedule {
+    /// Fee in basis points (0..=10000) applied to escrows in this category.
+    pub fee_bps: u32,
+}
+
+/// Dispute metadata for an escrow currently (or previously) in the
+/// `Disputed` status. Overwritten by each new `raise_dispute` call; a
+/// resolved dispute's record is kept (with `resolved: true`) rather than
+/// cleared, so it remains available for audit/history queries.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeData {
+    /// Who raised the dispute (buyer/debtor or seller).
+    pub raiser: soroban_sdk::Address,
+    /// Free-form reason/evidence reference (e.g. an off-chain document hash or URI).
+    pub reason: soroban_sdk::Bytes,
+    /// Ledger timestamp the dispute was raised at.
+    pub raised_at: u64,
+    /// Whether `resolve_dispute` has already run for this dispute.
+    pub resolved: bool,
 }
 
 /// Per-invoice escrow data stored in persistent storage.
@@ -136,6 +191,9 @@ pub struct EscrowData {
     /// Optional early-settlement discount hook. If present, payments made before
     /// `cutoff_date` receive a reduced effective face value.
     pub early_settlement: Option<EarlySettlementConfig>,
+    /// Commercial invoicing sector. Selects which `CategoryFeeSchedule` (if any)
+    /// overrides `Config::fee_bps` for this escrow. Defaults to `Standard`.
+    pub category: InvoiceCategory,
 }
 
 /// Status for BytesN<32> funding invoices (position management).

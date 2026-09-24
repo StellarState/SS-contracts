@@ -115,6 +115,7 @@ fn create_and_fund(ctx: &Ctx<'_>, amount: i128, due_date: u64) {
         &ctx.inv_token_id,
         &test_commitment(&ctx.env, "commitment"),
         &None,
+        &None,
     );
     ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
 }
@@ -325,6 +326,7 @@ fn test_integration_cancel_escrow_happy_path() {
         &ctx.inv_token_id,
         &test_commitment(&env, "cancel_test"),
         &None,
+        &None,
     );
     assert_eq!(
         ctx.escrow.get_escrow_status(&ctx.invoice_id),
@@ -367,6 +369,7 @@ fn test_integration_cancel_non_seller_rejected() {
         &ctx.inv_token_id,
         &test_commitment(&env, "cancel_non_seller"),
         &None,
+        &None,
     );
 
     let intruder = Address::generate(&env);
@@ -390,6 +393,7 @@ fn test_integration_fund_cancelled_escrow_rejected() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "fund_cancelled"),
+        &None,
         &None,
     );
     ctx.escrow.cancel_escrow(&ctx.invoice_id, &ctx.seller);
@@ -420,6 +424,7 @@ fn test_integration_pause_blocks_fund_and_payment() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "pause_test"),
+        &None,
         &None,
     );
 
@@ -572,6 +577,7 @@ fn test_integration_over_funding_rejected() {
         &ctx.inv_token_id,
         &test_commitment(&env, "over_fund"),
         &None,
+        &None,
     );
 
     // Purchase price is 1000; funding 1001 must fail.
@@ -635,6 +641,7 @@ fn test_integration_duplicate_invoice_id_rejected() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &commitment,
+        &None,
         &None,
     );
 
@@ -756,6 +763,7 @@ fn test_integration_state_persistence_after_create() {
         &ctx.inv_token_id,
         &commitment,
         &None,
+        &None,
     );
 
     let data = ctx.escrow.get_escrow(&ctx.invoice_id);
@@ -864,6 +872,7 @@ fn test_integration_commitment_immutable_after_lifecycle() {
         &ctx.inv_token_id,
         &original,
         &None,
+        &None,
     );
 
     // Fund.
@@ -918,6 +927,7 @@ fn test_integration_two_independent_escrows() {
         &ctx_a.payment_token.address,
         &inv_token_b_id,
         &test_commitment(&env, "inv_b"),
+        &None,
         &None,
     );
     ctx_a.escrow.fund_escrow(&inv_b_id, &buyer_b, &500);
@@ -985,6 +995,7 @@ fn test_integration_escrow_created_event_emitted() {
         &ctx.inv_token_id,
         &commitment,
         &None,
+        &None,
     );
 
     let evts = env.events().all();
@@ -1039,6 +1050,7 @@ fn test_integration_escrow_cancelled_event_emitted() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "cancel_event"),
+        &None,
         &None,
     );
     ctx.escrow.cancel_escrow(&ctx.invoice_id, &ctx.seller);
@@ -1150,6 +1162,7 @@ fn test_integration_discounted_purchase_price() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "discount"),
+        &None,
         &None,
     );
     ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &900);
@@ -1409,6 +1422,7 @@ fn test_integration_refund_restores_capacity() {
         &1_000, &1_000, &200_000,
         &ctx2.payment_token.address, &ctx2.inv_token_id,
         &test_commitment(&ctx2.env, "commitment2"), &None,
+        &None,
     );
     ctx2.escrow.fund_escrow(&ctx2.invoice_id, &ctx2.buyer, &1_000);
     assert_eq!(ctx2.payment_token.balance(&ctx2.buyer), 0);

@@ -783,4 +783,6 @@ impl InvoiceToken {
 }
 
 #[cfg(test)]
+mod integration_test;
+#[cfg(test)]
 mod test;

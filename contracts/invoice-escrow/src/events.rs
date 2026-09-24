@@ -275,3 +275,46 @@ pub fn settlement_paid(
         (investor.clone(), invoice_id.clone(), payout_amount, yield_earned),
     );
 }
+
+/// Publish grace_period_updated event when the admin changes the grace window.
+pub fn grace_period_updated(env: &Env, old_seconds: u64, new_seconds: u64) {
+    env.events().publish(
+        (Symbol::new(env, "grace_period_updated"),),
+        (old_seconds, new_seconds),
+    );
+}
+
+/// Publish `GracePeriodExpired` when `refund_escrow` succeeds specifically
+/// because the grace window (not just the bare due date) has lapsed.
+pub fn grace_period_expired(env: &Env, inv_id: Symbol, due_dt: u64, grace_period_seconds: u64) {
+    env.events().publish(
+        (Symbol::new(env, "GracePeriodExpired"),),
+        (inv_id, due_dt, grace_period_seconds),
+    );
+}
+
+/// Publish category_fee_updated event when the admin sets a category's fee rate.
+pub fn category_fee_updated(env: &Env, category: crate::types::InvoiceCategory, fee_bps: u32) {
+    env.events().publish(
+        (Symbol::new(env, "category_fee_updated"),),
+        (category as u32, fee_bps),
+    );
+}
+
+/// Publish `DisputeRaised` when `raise_dispute` transitions an escrow to `Disputed`.
+pub fn dispute_raised(env: &Env, inv_id: Symbol, raiser: &Address, raised_at: u64) {
+    env.events().publish(
+        (Symbol::new(env, "DisputeRaised"),),
+        (inv_id, raiser.clone(), raised_at),
+    );
+}
+
+/// Publish `DisputeResolved` when `resolve_dispute` settles or refunds a disputed escrow.
+/// `timed_out` is true when resolution happened via the timeout fallback rather
+/// than an explicit `favour` decision.
+pub fn dispute_resolved(env: &Env, inv_id: Symbol, favour: Symbol, timed_out: bool) {
+    env.events().publish(
+        (Symbol::new(env, "DisputeResolved"),),
+        (inv_id, favour, timed_out),
+    );
+}

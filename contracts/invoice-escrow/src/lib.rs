@@ -11,13 +11,17 @@ mod events;
 mod storage;
 mod types;
 
-use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, IntoVal, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, IntoVal, Symbol};
 
 use types::MultiSigConfig;
 
 // EscrowStatus is re-exported publicly; Config, EscrowData, and InvoiceData are crate-private.
 pub use types::EscrowStatus;
-use types::{Config, EscrowData, FundingInvoice, InvoiceData, InvoiceStatus};
+pub use types::InvoiceCategory;
+use types::{
+    CategoryFeeSchedule, Config, DisputeData, EscrowData, FundingInvoice, InvoiceData,
+    InvoiceStatus,
+};
 
 use errors::Error;
 
@@ -45,6 +49,9 @@ const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
 const MIN_ESCROW_DURATION_SECS: u64 = 3_600;
 /// Maximum escrow duration: 365 days (31,536,000 seconds).
 const MAX_ESCROW_DURATION_SECS: u64 = 31_536_000;
+
+/// Default dispute resolution timeout: 7 days (604,800 seconds).
+const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 604_800;
 
 #[contract]
 pub struct InvoiceEscrow;
@@ -75,9 +82,55 @@ impl InvoiceEscrow {
             paused: false,
             whitelist_enabled: false,
             min_investment: 0,
+            grace_period_seconds: 0,
+            dispute_timeout_secs: DEFAULT_DISPUTE_TIMEOUT_SECS,
         };
         storage::set_config(&env, &config);
         Ok(())
+    }
+
+    /// Admin-only: set the grace period (seconds) added to `due_dt` before an
+    /// overdue invoice is locked out of settlement / becomes refund-eligible.
+    pub fn set_grace_period(env: Env, admin: Address, grace_period_seconds: u64) -> Result<(), Error> {
+        admin.require_auth();
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        let old = config.grace_period_seconds;
+        config.grace_period_seconds = grace_period_seconds;
+        storage::set_config(&env, &config);
+        events::grace_period_updated(&env, old, grace_period_seconds);
+        Ok(())
+    }
+
+    /// Admin-only: set the platform fee (bps, 0..=10000) for an invoice category.
+    pub fn set_category_fee(
+        env: Env,
+        admin: Address,
+        category: InvoiceCategory,
+        fee_bps: u32,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        if fee_bps > MAX_BPS {
+            return Err(Error::InvalidFeeBps);
+        }
+        storage::set_category_fee(&env, category, &CategoryFeeSchedule { fee_bps });
+        events::category_fee_updated(&env, category, fee_bps);
+        Ok(())
+    }
+
+    /// View: the configured fee (bps) for `category`, or `Config::fee_bps` if
+    /// no category-specific rate has been set.
+    pub fn get_category_fee(env: Env, category: InvoiceCategory) -> Result<u32, Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        Ok(storage::get_category_fee(&env, category)
+            .map(|s| s.fee_bps)
+            .unwrap_or(config.fee_bps))
     }
 
     /// Admin-only: set the minimum investment amount for `fund_escrow`.
@@ -145,6 +198,7 @@ impl InvoiceEscrow {
         invoice_token: Address,
         commitment: soroban_sdk::BytesN<32>,
         funding_milestone: Option<i128>,
+        category: Option<InvoiceCategory>,
     ) -> Result<(), Error> {
         seller.require_auth();
         if face_value <= 0 || purchase_price <= 0 {
@@ -206,6 +260,7 @@ impl InvoiceEscrow {
             funding_milestone,
             commitment: commitment.clone(),
             early_settlement: None,
+            category: category.unwrap_or(InvoiceCategory::Standard),
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
         
@@ -572,9 +627,15 @@ impl InvoiceEscrow {
             return Err(Error::AlreadySettled);
         }
 
+        // Deadline verification: payment is still acceptable through the end of
+        // the grace window, not just up to the bare due date -- see #375.
+        let current_ts = env.ledger().timestamp();
+        if current_ts > data.due_dt.saturating_add(config.grace_period_seconds) {
+            return Err(Error::EscrowOverdue);
+        }
+
         // Compute effective face value: apply early-settlement discount if the hook
         // is configured and the payment arrives strictly before the cutoff date.
-        let current_ts = env.ledger().timestamp();
         let effective_face_value =
             if let Some(ref es) = data.early_settlement {
                 if current_ts < es.cutoff_date {
@@ -616,7 +677,12 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        let fee_bps = i128::from(config.fee_bps);
+        // Category-specific fee rate overrides the platform default when the
+        // admin has configured one via `set_category_fee` (see #377).
+        let effective_fee_bps = storage::get_category_fee(&env, data.category)
+            .map(|s| s.fee_bps)
+            .unwrap_or(config.fee_bps);
+        let fee_bps = i128::from(effective_fee_bps);
         // Fee is calculated on the payment amount (not face_value)
         let platform_fee = amount
             .checked_mul(fee_bps)
@@ -733,10 +799,14 @@ impl InvoiceEscrow {
         if data.status != EscrowStatus::Funded {
             return Err(Error::RefundNotAllowed);
         }
+        // Overdue eligibility: refund is only allowed once the grace window
+        // (not just the bare due date) has fully lapsed -- see #375.
         let ledger_ts = env.ledger().timestamp();
-        if ledger_ts < data.due_dt {
-            return Err(Error::RefundNotAllowed);
+        let overdue_at = data.due_dt.saturating_add(config.grace_period_seconds);
+        if ledger_ts <= overdue_at {
+            return Err(Error::EscrowNotOverdue);
         }
+        events::grace_period_expired(&env, invoice_id.clone(), data.due_dt, config.grace_period_seconds);
 
         // Refund the remaining collateral (purchase_price minus already released partial payments)
         let amount_to_refund = data
@@ -812,6 +882,129 @@ impl InvoiceEscrow {
             EscrowStatus::Refunded,
             env.ledger().timestamp(),
         );
+        Ok(())
+    }
+
+    /// Raise a dispute on a `Funded` escrow, freezing it out of the normal
+    /// settlement/refund paths until `resolve_dispute` runs. Either party
+    /// (the seller or the debtor/buyer) may raise it.
+    pub fn raise_dispute(
+        env: Env,
+        caller: Address,
+        invoice_id: Symbol,
+        reason: Bytes,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        ensure_not_paused(&config)?;
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if caller != data.seller && caller != data.debtor {
+            return Err(Error::Unauthorized);
+        }
+        if data.status != EscrowStatus::Funded {
+            return Err(Error::InvalidInvoiceStatus);
+        }
+
+        let raised_at = env.ledger().timestamp();
+        data.status = EscrowStatus::Disputed;
+        storage::set_escrow(&env, invoice_id.clone(), &data);
+        storage::set_dispute(
+            &env,
+            &invoice_id,
+            &DisputeData {
+                raiser: caller.clone(),
+                reason,
+                raised_at,
+                resolved: false,
+            },
+        );
+
+        events::dispute_raised(&env, invoice_id.clone(), &caller, raised_at);
+        events::escrow_status_changed(&env, invoice_id, EscrowStatus::Disputed, raised_at);
+        Ok(())
+    }
+
+    /// Admin-only: resolve a `Disputed` escrow in favour of `'seller'` (settles
+    /// the escrow's held funds to the seller) or `'buyer'` (refunds them,
+    /// pro-rata across funders, same as `refund_escrow`). If called after
+    /// `Config::dispute_timeout_secs` has elapsed since the dispute was
+    /// raised, the outcome is always the buyer-refund fallback regardless of
+    /// `favour` -- an unresponsive admin cannot indefinitely strand a
+    /// disputed escrow's funds.
+    pub fn resolve_dispute(
+        env: Env,
+        admin: Address,
+        invoice_id: Symbol,
+        favour: Symbol,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        let mut data =
+            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if data.status != EscrowStatus::Disputed {
+            return Err(Error::NotDisputed);
+        }
+        let mut dispute = storage::get_dispute(&env, &invoice_id).ok_or(Error::NotDisputed)?;
+        if dispute.resolved {
+            return Err(Error::AlreadyResolved);
+        }
+
+        let now = env.ledger().timestamp();
+        let timed_out = now > dispute.raised_at.saturating_add(config.dispute_timeout_secs);
+        // Past the timeout, the outcome is always refund-to-buyer regardless
+        // of what `favour` was passed.
+        let settle_to_seller = !timed_out && favour == Symbol::new(&env, "seller");
+
+        let token = token::Client::new(&env, &data.token);
+        let contract = env.current_contract_address();
+        let held_amount = data.purchase_price.checked_sub(data.paid_amt).ok_or(Error::Overflow)?;
+
+        if settle_to_seller {
+            if held_amount > 0 {
+                token.transfer(&contract, &data.seller, &held_amount);
+            }
+            data.status = EscrowStatus::Settled;
+        } else {
+            if held_amount > 0 {
+                if let Some(funder) = data.funder.clone() {
+                    if data.funded_amt > 0 {
+                        let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), &funder);
+                        let pro_rata_refund = held_amount
+                            .checked_mul(funder_amt)
+                            .ok_or(Error::Overflow)?
+                            .checked_div(data.funded_amt)
+                            .ok_or(Error::Overflow)?;
+                        if pro_rata_refund > 0 {
+                            token.transfer(&contract, &funder, &pro_rata_refund);
+                        }
+                    }
+                }
+            }
+            data.status = EscrowStatus::Refunded;
+        }
+        storage::set_escrow(&env, invoice_id.clone(), &data);
+
+        dispute.resolved = true;
+        storage::set_dispute(&env, &invoice_id, &dispute);
+
+        // Unlock invoice token transfers now that the dispute is resolved.
+        env.invoke_contract::<()>(
+            &data.inv_token,
+            &Symbol::new(&env, "set_transfer_locked"),
+            soroban_sdk::vec![&env, contract.to_val(), false.into_val(&env)],
+        );
+
+        let resolved_favour = if settle_to_seller {
+            Symbol::new(&env, "seller")
+        } else {
+            Symbol::new(&env, "buyer")
+        };
+        events::dispute_resolved(&env, invoice_id.clone(), resolved_favour, timed_out);
+        events::escrow_status_changed(&env, invoice_id, data.status, now);
         Ok(())
     }
 

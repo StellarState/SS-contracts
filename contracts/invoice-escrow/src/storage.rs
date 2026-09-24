@@ -3,7 +3,8 @@
 use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 use crate::types::{
-    Config, EmergencyApprovals, EscrowData, InvoiceData, MultiSigConfig, StorageKey,
+    CategoryFeeSchedule, Config, DisputeData, EmergencyApprovals, EscrowData, InvoiceCategory,
+    InvoiceData, MultiSigConfig, StorageKey,
 };
 
 /// Ledgers below which a persistent entry's TTL is extended (~7 days at 5s/ledger).
@@ -173,29 +174,6 @@ pub fn has_invoice(env: &soroban_sdk::Env, invoice_id: BytesN<32>) -> bool {
         .has(&StorageKey::Invoice(invoice_id))
 }
 
-pub fn get_investor_position(
-    env: &soroban_sdk::Env,
-    invoice_id: BytesN<32>,
-    investor: &Address,
-) -> i128 {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::InvestorPosition(invoice_id, investor.clone()))
-        .unwrap_or(0)
-}
-
-pub fn set_investor_position(
-    env: &soroban_sdk::Env,
-    invoice_id: BytesN<32>,
-    investor: &Address,
-    amount: i128,
-) {
-    let key = StorageKey::InvestorPosition(invoice_id, investor.clone());
-    if amount == 0 {
-        env.storage().persistent().remove(&key);
-    } else {
-        env.storage().persistent().set(&key, &amount);
-    }
 /// Load the emergency multi-sig admin configuration.
 pub fn get_emergency_config(env: &Env) -> Option<MultiSigConfig> {
     env.storage()
@@ -321,4 +299,36 @@ pub fn set_escrow_id_by_index(env: &soroban_sdk::Env, index: u32, invoice_id: &S
     env.storage()
         .persistent()
         .set(&StorageKey::EscrowIdByIndex(index), invoice_id);
+}
+
+/// Get the configured platform fee (bps) for an invoice category, if the
+/// admin has set one via `set_category_fee`.
+pub fn get_category_fee(env: &Env, category: InvoiceCategory) -> Option<CategoryFeeSchedule> {
+    env.storage()
+        .instance()
+        .get(&StorageKey::CategoryFee(category))
+}
+
+/// Set the platform fee (bps) for an invoice category.
+pub fn set_category_fee(env: &Env, category: InvoiceCategory, schedule: &CategoryFeeSchedule) {
+    env.storage()
+        .instance()
+        .set(&StorageKey::CategoryFee(category), schedule);
+}
+
+/// Get the dispute record for an invoice, if one has ever been raised.
+pub fn get_dispute(env: &Env, inv_id: &Symbol) -> Option<DisputeData> {
+    let key = StorageKey::Dispute(inv_id.clone());
+    let data = env.storage().persistent().get(&key);
+    if data.is_some() {
+        bump_persistent(env, &key);
+    }
+    data
+}
+
+/// Save the dispute record for an invoice.
+pub fn set_dispute(env: &Env, inv_id: &Symbol, data: &DisputeData) {
+    let key = StorageKey::Dispute(inv_id.clone());
+    env.storage().persistent().set(&key, data);
+    bump_persistent(env, &key);
 }
