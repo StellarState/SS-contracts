@@ -898,9 +898,6 @@ impl InvoiceEscrow {
         } else {
             // 2. Platform fee to admin
             token.transfer(&contract, &config.admin, &platform_fee);
-            if platform_fee > 0 {
-                events::fee_collected(&env, invoice_id.clone(), platform_fee, &config.admin);
-            }
 
             // 3. Pro-rata investor distribution
             if let Some(funder) = &data.funder {
@@ -918,6 +915,10 @@ impl InvoiceEscrow {
             }
             // Seller receives the full payment amount
             token.transfer(&contract, &data.seller, &amount);
+        }
+
+        if platform_fee > 0 {
+            events::fee_collected(&env, invoice_id.clone(), platform_fee, &config.admin);
         }
 
         if data.status == EscrowStatus::Settled {
