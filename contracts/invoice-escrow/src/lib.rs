@@ -43,6 +43,7 @@ fn ensure_non_zero_address(env: &Env, address: &Address) -> Result<(), Error> {
 }
 
 const MAX_BPS: u32 = 10_000;
+const MAX_SETTLEMENT_FEE_BPS: u32 = 1_000;
 const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
 const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
 
@@ -167,6 +168,24 @@ impl InvoiceEscrow {
         }
         storage::set_category_fee(&env, category, &CategoryFeeSchedule { fee_bps });
         events::category_fee_updated(&env, category, fee_bps);
+        Ok(())
+    }
+
+    /// Set the fallback settlement fee, paid to the configured admin treasury.
+    /// Category-specific fee schedules continue to override this rate.
+    pub fn set_settlement_fee(env: Env, admin: Address, fee_bps: u32) -> Result<(), Error> {
+        admin.require_auth();
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        if fee_bps > MAX_SETTLEMENT_FEE_BPS {
+            return Err(Error::FeeTooHigh);
+        }
+        let old_fee_bps = config.fee_bps;
+        config.fee_bps = fee_bps;
+        storage::set_config(&env, &config);
+        events::platform_fee_updated(&env, old_fee_bps, fee_bps);
         Ok(())
     }
 
@@ -879,6 +898,9 @@ impl InvoiceEscrow {
         } else {
             // 2. Platform fee to admin
             token.transfer(&contract, &config.admin, &platform_fee);
+            if platform_fee > 0 {
+                events::fee_collected(&env, invoice_id.clone(), platform_fee, &config.admin);
+            }
 
             // 3. Pro-rata investor distribution
             if let Some(funder) = &data.funder {
