@@ -59,6 +59,8 @@ pub struct InvoiceData {
     pub status: EscrowStatus,
     /// List of investor addresses.
     pub investors: soroban_sdk::Vec<soroban_sdk::Address>,
+    /// Off-chain invoice document SHA256 hash for verification.
+    pub document_hash: soroban_sdk::BytesN<32>,
 }
 
 /// Global contract configuration.
@@ -202,6 +204,8 @@ pub struct EscrowData {
     /// Commercial invoicing sector. Selects which `CategoryFeeSchedule` (if any)
     /// overrides `Config::fee_bps` for this escrow. Defaults to `Standard`.
     pub category: InvoiceCategory,
+    /// Timestamp when escrow was fully funded (0 if not yet funded).
+    pub funded_dt: u64,
 }
 
 /// Status for BytesN<32> funding invoices (position management).

@@ -68,6 +68,34 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
     Ok(())
 }
 
+/// Calculate early repayment yield rebate for investors when invoice is paid before due date.
+/// Rebate is proportional to the time remaining until maturity: fewer days means higher rebate.
+/// Returns the rebate amount to deduct from investor distribution.
+fn calculate_early_repayment_rebate(
+    current_ts: u64,
+    due_dt: u64,
+    funded_dt: u64,
+    investor_amount: i128,
+) -> i128 {
+    if current_ts >= due_dt || funded_dt == 0 {
+        return 0;
+    }
+    let total_loan_period = due_dt.saturating_sub(funded_dt);
+    if total_loan_period == 0 {
+        return 0;
+    }
+    let days_remaining = due_dt.saturating_sub(current_ts);
+    let rebate_bps = days_remaining
+        .saturating_mul(10_000)
+        .checked_div(total_loan_period)
+        .unwrap_or(0) as i128;
+    investor_amount
+        .checked_mul(rebate_bps)
+        .unwrap_or(0)
+        .checked_div(10_000)
+        .unwrap_or(0)
+}
+
 /// Mark every installment milestone whose cumulative target has been reached by
 /// `paid_amt` as settled, emitting `installment_settled` for each one that
 /// flips. When `fully_settled` is true (escrow reached terminal `Settled`),
@@ -354,6 +382,7 @@ impl InvoiceEscrow {
             commitment: commitment.clone(),
             early_settlement: None,
             category: category.unwrap_or(InvoiceCategory::Standard),
+            funded_dt: 0,
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
         
@@ -762,9 +791,10 @@ impl InvoiceEscrow {
             data.funder = Some(buyer.clone());
         }
 
-        // If fully funded, transition to Funded status
+        // If fully funded, transition to Funded status and record funding timestamp
         if data.funded_amt == data.purchase_price {
             data.status = EscrowStatus::Funded;
+            data.funded_dt = env.ledger().timestamp();
         }
 
         storage::set_escrow(env, invoice_id.clone(), &data);
@@ -957,11 +987,20 @@ impl InvoiceEscrow {
             // 2. Platform fee + penalty interest to admin
             token.transfer(&contract, &config.admin, &total_fee);
 
-            // 3. Pro-rata investor distribution (reduced by penalty interest)
+            // 3. Pro-rata investor distribution with early repayment yield rebate
             if let Some(funder) = &data.funder {
                 if data.funded_amt > 0 && final_investor_amount > 0 {
                     let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), funder);
-                    let pro_rata_share = final_investor_amount
+                    let rebate = calculate_early_repayment_rebate(
+                        current_ts,
+                        data.due_dt,
+                        data.funded_dt,
+                        investor_amount,
+                    );
+                    let net_investor_amount = investor_amount
+                        .checked_sub(rebate)
+                        .ok_or(Error::Overflow)?;
+                    let pro_rata_share = net_investor_amount
                         .checked_mul(funder_amt)
                         .ok_or(Error::Overflow)?
                         .checked_div(data.funded_amt)
@@ -1532,6 +1571,7 @@ impl InvoiceEscrow {
         funding_target: i128,
         yield_bps: u32,
         deadline_ledger: u32,
+        document_hash: BytesN<32>,
     ) -> Result<(), Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         config.admin.require_auth();
@@ -1555,6 +1595,7 @@ impl InvoiceEscrow {
             total_raised: 0,
             status: EscrowStatus::Created,
             investors: soroban_sdk::Vec::new(&env),
+            document_hash,
         };
 
         storage::set_invoice_record(&env, &invoice_id, &data);
