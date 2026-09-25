@@ -348,3 +348,17 @@ pub fn installment_settled(
         (inv_id, index, cumulative_amount, paid_amt),
     );
 }
+
+/// Publish invoice cancellation with the authorized admin as the actor.
+pub fn invoice_cancelled(env: &Env, invoice_id: &BytesN<32>, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "invoice_cancelled"), invoice_id.clone()),
+        admin.clone(),
+    );
+}
+
+/// Publish a change to the maximum unique investors allowed per invoice.
+pub fn max_investors_updated(env: &Env, count: u32) {
+    env.events()
+        .publish((Symbol::new(env, "max_investors_updated"),), count);
+}

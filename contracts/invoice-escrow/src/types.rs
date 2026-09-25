@@ -33,6 +33,10 @@ pub enum StorageKey {
     InvoiceRecord(soroban_sdk::BytesN<32>),
     /// Instance: platform fee rate (bps) for a given invoice category.
     CategoryFee(InvoiceCategory),
+    /// Instance: hard-capped maximum number of investors per registered invoice.
+    MaxInvestors,
+    /// Persistent: unique investor count for a registered invoice.
+    InvestorCount(soroban_sdk::BytesN<32>),
     /// Persistent: dispute metadata for an invoice, by invoice id.
     Dispute(soroban_sdk::Symbol),
     /// Persistent: installment repayment milestone schedule by invoice id.
