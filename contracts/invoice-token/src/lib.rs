@@ -588,6 +588,30 @@ impl InvoiceToken {
         Ok(())
     }
 
+    /// Update the token name. Admin only.
+    pub fn set_name(env: Env, new_name: SorobanString) -> Result<(), Error> {
+        let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        meta.admin.require_auth();
+        if new_name.is_empty() {
+            return Err(Error::InvalidMetadata);
+        }
+        meta.name = new_name;
+        storage::set_metadata(&env, &meta);
+        Ok(())
+    }
+
+    /// Update the token symbol. Admin only.
+    pub fn set_symbol(env: Env, new_symbol: SorobanString) -> Result<(), Error> {
+        let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        meta.admin.require_auth();
+        if new_symbol.is_empty() {
+            return Err(Error::InvalidMetadata);
+        }
+        meta.symbol = new_symbol;
+        storage::set_metadata(&env, &meta);
+        Ok(())
+    }
+
     /// Update the fractional precision for this invoice sub-asset. Admin only.
     pub fn set_decimals(env: Env, decimals: u32) -> Result<(), Error> {
         let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;

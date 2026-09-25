@@ -61,6 +61,19 @@ pub fn escrow_funded(
     );
 }
 
+/// Publish penalty_interest_charged event when late payment incurs additional interest.
+pub fn penalty_interest_charged(
+    env: &Env,
+    inv_id: Symbol,
+    penalty_amount: i128,
+    total_fee: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "penalty_interest_charged"),),
+        (inv_id, penalty_amount, total_fee),
+    );
+}
+
 /// Publish payment_settled event (amount, platform_fee, investor_amount).
 pub fn payment_settled(
     env: &Env,
