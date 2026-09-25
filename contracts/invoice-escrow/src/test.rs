@@ -9225,6 +9225,54 @@ fn test_unauthorized_category_fee_configuration_is_rejected() {
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
 
+#[test]
+fn test_settlement_fee_enforces_admin_and_ten_percent_ceiling() {
+    let env = Env::default();
+    let (client, admin, _invoice_id, _pt_client, _debtor) =
+        setup_categorized_escrow(&env, None);
+
+    client.set_settlement_fee(&admin, &0);
+    assert_eq!(client.get_category_fee(&InvoiceCategory::Standard), 0);
+    client.set_settlement_fee(&admin, &1000);
+    assert_eq!(client.get_category_fee(&InvoiceCategory::Standard), 1000);
+    assert_eq!(
+        client.try_set_settlement_fee(&admin, &1001),
+        Err(Ok(Error::FeeTooHigh))
+    );
+
+    let stranger = Address::generate(&env);
+    assert_eq!(
+        client.try_set_settlement_fee(&stranger, &500),
+        Err(Ok(Error::Unauthorized))
+    );
+}
+
+#[test]
+fn test_settlement_fee_is_paid_to_admin_treasury_and_emits_event() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 300, 1000, 1000);
+    test_env.fund(1000);
+    test_env
+        .escrow_client
+        .set_settlement_fee(&test_env.admin, &200);
+
+    test_env.record_payment(1000);
+
+    assert_eq!(test_env.payment_token.client.balance(&test_env.admin), 20);
+    let events = env.events().all();
+    let fee_event = events.events().iter().rev().find(|event| {
+        let (_, topics, _) = parse_event(&env, event);
+        topics.get(0).map(|topic| {
+            Symbol::try_from_val(&env, &topic).unwrap() == Symbol::new(&env, "fee_collected")
+        }).unwrap_or(false)
+    });
+    let (_, _, data) = parse_event(&env, fee_event.expect("fee_collected event missing"));
+    let (invoice_id, amount, treasury): (Symbol, i128, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(invoice_id, test_env.invoice_id);
+    assert_eq!(amount, 20);
+    assert_eq!(treasury, test_env.admin);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // #378 — dispute resolution lifecycle
 // ─────────────────────────────────────────────────────────────────────────
@@ -9635,6 +9683,136 @@ fn test_record_payment_settles_installment_milestones_progressively() {
         .escrow_client
         .get_next_installment(&test_env.invoice_id);
     assert!(next.is_none());
+}
+
+// #352: failed integration calls must leave escrow state and balances intact.
+#[test]
+fn test_failed_zero_funding_preserves_created_escrow() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    assert_eq!(
+        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &0),
+        Err(Ok(Error::ZeroAmount))
+    );
+    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap();
+    assert_eq!(data.funded_amt, 0);
+    assert_eq!(data.status, EscrowStatus::Created);
+}
+
+#[test]
+fn test_failed_negative_funding_preserves_buyer_balance() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    let before = test_env.payment_token.client.balance(&test_env.buyer);
+    assert_eq!(
+        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &-1),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(test_env.payment_token.client.balance(&test_env.buyer), before);
+    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().funded_amt, 0);
+}
+
+#[test]
+fn test_failed_overfund_preserves_partial_funding() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    test_env.fund(400);
+    assert_eq!(
+        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &601),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().funded_amt, 400);
+}
+
+#[test]
+fn test_second_funding_after_full_subscription_does_not_change_state() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    test_env.fund(1000);
+    assert_eq!(
+        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &1),
+        Err(Ok(Error::EscrowFunded))
+    );
+    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Funded));
+}
+
+#[test]
+fn test_payment_before_funding_leaves_payment_state_unchanged() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    assert_eq!(
+        test_env.escrow_client.try_record_payment(&test_env.invoice_id, &test_env.payer, &1),
+        Err(Ok(Error::AlreadySettled))
+    );
+    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().paid_amt, 0);
+}
+
+#[test]
+fn test_failed_overpayment_preserves_prior_partial_payment() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    test_env.fund(1000);
+    test_env.record_payment(400);
+    let before = test_env.payment_token.client.balance(&test_env.payer);
+    assert_eq!(
+        test_env.escrow_client.try_record_payment(&test_env.invoice_id, &test_env.payer, &601),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(test_env.payment_token.client.balance(&test_env.payer), before);
+    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().paid_amt, 400);
+    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Funded));
+}
+
+#[test]
+fn test_wrong_payer_failure_preserves_funded_escrow() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    test_env.fund(1000);
+    let wrong_payer = Address::generate(&env);
+    assert_eq!(
+        test_env.escrow_client.try_record_payment(&test_env.invoice_id, &wrong_payer, &1),
+        Err(Ok(Error::InvalidPayer))
+    );
+    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap();
+    assert_eq!(data.paid_amt, 0);
+    assert_eq!(data.status, EscrowStatus::Funded);
+}
+
+#[test]
+fn test_refund_before_funding_is_rejected_without_mutation() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    assert_eq!(
+        test_env.escrow_client.try_refund_escrow(&test_env.invoice_id),
+        Err(Ok(Error::RefundNotAllowed))
+    );
+    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Created));
+}
+
+#[test]
+fn test_refund_before_due_date_preserves_funded_escrow() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    test_env.fund(1000);
+    assert_eq!(
+        test_env.escrow_client.try_refund_escrow(&test_env.invoice_id),
+        Err(Ok(Error::EscrowNotOverdue))
+    );
+    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Funded));
+}
+
+#[test]
+fn test_sequential_partial_contributions_reach_target_once() {
+    let env = Env::default();
+    let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
+    let second_buyer = Address::generate(&env);
+    test_env.payment_token.asset.mint(&second_buyer, &600);
+    test_env.escrow_client.fund_escrow(&test_env.invoice_id, &test_env.buyer, &400);
+    test_env.escrow_client.fund_escrow(&test_env.invoice_id, &second_buyer, &600);
+    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap();
+    assert_eq!(data.funded_amt, 1000);
+    assert_eq!(data.status, EscrowStatus::Funded);
+    assert_eq!(data.funders.len(), 2);
 }
 
 #[test]
