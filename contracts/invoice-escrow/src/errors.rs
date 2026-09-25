@@ -117,4 +117,6 @@ pub enum Error {
     /// Installment repayment schedule is invalid (bad amounts/timestamps/sum),
     /// or cannot be modified in the escrow's current state.
     InvalidInstallmentSchedule = 54,
+    /// Settlement fee exceeds the protocol's 10% safety ceiling.
+    FeeTooHigh = 55,
 }
