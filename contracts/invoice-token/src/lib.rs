@@ -172,6 +172,9 @@ impl InvoiceToken {
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &to])?;
         from.require_auth();
+        if from == to {
+            return Err(Error::InvalidAddress);
+        }
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -251,7 +254,10 @@ impl InvoiceToken {
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &spender])?;
         from.require_auth();
-        if amount < 0 {
+        if from == spender {
+            return Err(Error::InvalidAddress);
+        }
+        if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
@@ -280,6 +286,9 @@ impl InvoiceToken {
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &spender])?;
         from.require_auth();
+        if from == spender {
+            return Err(Error::InvalidAddress);
+        }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         if meta.paused {
             return Err(Error::Paused);
@@ -304,6 +313,9 @@ impl InvoiceToken {
     pub fn revoke_approval(env: Env, from: Address, spender: Address) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &spender])?;
         from.require_auth();
+        if from == spender {
+            return Err(Error::InvalidAddress);
+        }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         if meta.paused {
             return Err(Error::Paused);
@@ -323,6 +335,9 @@ impl InvoiceToken {
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&spender, &from, &to])?;
         spender.require_auth();
+        if from == to {
+            return Err(Error::InvalidAddress);
+        }
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
