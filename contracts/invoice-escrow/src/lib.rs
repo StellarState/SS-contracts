@@ -1579,7 +1579,7 @@ impl InvoiceEscrow {
         if face_value <= 0 || funding_target <= 0 {
             return Err(Error::InvalidAmount);
         }
-        if !(1..=5000).contains(&yield_bps) {
+        if !(1..=2500).contains(&yield_bps) {
             return Err(Error::InvalidYield);
         }
         if storage::has_invoice_record(&env, &invoice_id) {
