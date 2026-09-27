@@ -33,6 +33,10 @@ pub enum StorageKey {
     InvoiceRecord(soroban_sdk::BytesN<32>),
     /// Instance: platform fee rate (bps) for a given invoice category.
     CategoryFee(InvoiceCategory),
+    /// Instance: hard-capped maximum number of investors per registered invoice.
+    MaxInvestors,
+    /// Persistent: unique investor count for a registered invoice.
+    InvestorCount(soroban_sdk::BytesN<32>),
     /// Persistent: dispute metadata for an invoice, by invoice id.
     Dispute(soroban_sdk::Symbol),
     /// Persistent: installment repayment milestone schedule by invoice id.
@@ -59,6 +63,8 @@ pub struct InvoiceData {
     pub status: EscrowStatus,
     /// List of investor addresses.
     pub investors: soroban_sdk::Vec<soroban_sdk::Address>,
+    /// Off-chain invoice document SHA256 hash for verification.
+    pub document_hash: soroban_sdk::BytesN<32>,
 }
 
 /// Global contract configuration.
@@ -89,6 +95,12 @@ pub struct Config {
     /// falls back to refunding the buyer regardless of `favour`. Defaults to
     /// 604800 (7 days).
     pub dispute_timeout_secs: u64,
+    /// Optional accreditation check callback contract. If set, `fund_escrow` calls
+    /// this contract to verify investor eligibility before allowing funding.
+    pub accreditation_callback: Option<soroban_sdk::Address>,
+    /// Penalty interest rate in basis points (0..=10000) charged on payments
+    /// received after due_date but within grace_period. Defaults to 0 (disabled).
+    pub penalty_interest_bps: u32,
 }
 
 /// Lifecycle status of an escrow.
@@ -196,6 +208,8 @@ pub struct EscrowData {
     /// Commercial invoicing sector. Selects which `CategoryFeeSchedule` (if any)
     /// overrides `Config::fee_bps` for this escrow. Defaults to `Standard`.
     pub category: InvoiceCategory,
+    /// Timestamp when escrow was fully funded (0 if not yet funded).
+    pub funded_dt: u64,
 }
 
 /// Status for BytesN<32> funding invoices (position management).

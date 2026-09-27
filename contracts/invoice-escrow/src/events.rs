@@ -61,6 +61,19 @@ pub fn escrow_funded(
     );
 }
 
+/// Publish penalty_interest_charged event when late payment incurs additional interest.
+pub fn penalty_interest_charged(
+    env: &Env,
+    inv_id: Symbol,
+    penalty_amount: i128,
+    total_fee: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "penalty_interest_charged"),),
+        (inv_id, penalty_amount, total_fee),
+    );
+}
+
 /// Publish payment_settled event (amount, platform_fee, investor_amount).
 pub fn payment_settled(
     env: &Env,
@@ -355,4 +368,17 @@ pub fn fee_collected(env: &Env, inv_id: Symbol, fee_amount: i128, treasury: &Add
         (Symbol::new(env, "fee_collected"),),
         (inv_id, fee_amount, treasury.clone()),
     );
+}
+/// Publish invoice cancellation with the authorized admin as the actor.
+pub fn invoice_cancelled(env: &Env, invoice_id: &BytesN<32>, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "invoice_cancelled"), invoice_id.clone()),
+        admin.clone(),
+    );
+}
+
+/// Publish a change to the maximum unique investors allowed per invoice.
+pub fn max_investors_updated(env: &Env, count: u32) {
+    env.events()
+        .publish((Symbol::new(env, "max_investors_updated"),), count);
 }
