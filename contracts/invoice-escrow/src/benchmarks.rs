@@ -71,7 +71,10 @@ fn bench_initialize_contract() {
         (cpu, mem)
     });
 
-    println!("[bench] initialize_contract: cpu={}, mem={}", result.0, result.1);
+    println!(
+        "[bench] initialize_contract: cpu={}, mem={}",
+        result.0, result.1
+    );
     // Sanity: initialization should complete without exceeding budget.
     assert!(result.0 > 0);
 }
@@ -89,7 +92,10 @@ fn bench_set_platform_fee() {
         (cpu, mem)
     });
 
-    println!("[bench] set_platform_fee: cpu={}, mem={}", result.0, result.1);
+    println!(
+        "[bench] set_platform_fee: cpu={}, mem={}",
+        result.0, result.1
+    );
     assert!(result.0 > 0);
 }
 
@@ -106,7 +112,10 @@ fn bench_set_grace_period() {
         (cpu, mem)
     });
 
-    println!("[bench] set_grace_period: cpu={}, mem={}", result.0, result.1);
+    println!(
+        "[bench] set_grace_period: cpu={}, mem={}",
+        result.0, result.1
+    );
     assert!(result.0 > 0);
 }
 
@@ -123,7 +132,10 @@ fn bench_set_max_investors() {
         (cpu, mem)
     });
 
-    println!("[bench] set_max_investors: cpu={}, mem={}", result.0, result.1);
+    println!(
+        "[bench] set_max_investors: cpu={}, mem={}",
+        result.0, result.1
+    );
     assert!(result.0 > 0);
 }
 
@@ -147,7 +159,10 @@ fn bench_propose_param_change() {
         (cpu, mem)
     });
 
-    println!("[bench] propose_param_change: cpu={}, mem={}", result.0, result.1);
+    println!(
+        "[bench] propose_param_change: cpu={}, mem={}",
+        result.0, result.1
+    );
     assert!(result.0 > 0);
 }
 
@@ -187,7 +202,10 @@ fn bench_set_category_fee() {
         (cpu, mem)
     });
 
-    println!("[bench] set_category_fee: cpu={}, mem={}", result.0, result.1);
+    println!(
+        "[bench] set_category_fee: cpu={}, mem={}",
+        result.0, result.1
+    );
     assert!(result.0 > 0);
 }
 
@@ -204,6 +222,9 @@ fn bench_toggle_whitelist() {
         (cpu, mem)
     });
 
-    println!("[bench] toggle_whitelist: cpu={}, mem={}", result.0, result.1);
+    println!(
+        "[bench] toggle_whitelist: cpu={}, mem={}",
+        result.0, result.1
+    );
     assert!(result.0 > 0);
 }

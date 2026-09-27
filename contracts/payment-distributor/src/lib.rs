@@ -1,5 +1,7 @@
 #![no_std]
 
+extern crate alloc;
+
 mod errors;
 mod events;
 mod storage;
@@ -85,12 +87,10 @@ fn parse_fee_bps(fee_bps: i128) -> Result<u32, Error> {
 fn select_fee_tier(env: &Env, payment_amount: i128, default_fee_bps: u32) -> u32 {
     if let Some(tiers) = storage::get_fee_tiers(env) {
         for tier in tiers.iter() {
-            if let Some(tier_data) = tier {
-                if payment_amount >= tier_data.min_amount
-                    && (tier_data.max_amount == 0 || payment_amount <= tier_data.max_amount)
-                {
-                    return tier_data.fee_bps;
-                }
+            if payment_amount >= tier.min_amount
+                && (tier.max_amount == 0 || payment_amount <= tier.max_amount)
+            {
+                return tier.fee_bps;
             }
         }
     }
@@ -286,7 +286,9 @@ impl PaymentDistributor {
         let mut state = get_distribution_state(&env, &escrow_contract, &invoice_id);
 
         // Issue #448: Select fee tier based on payment volume for tiered fee schedule
-        let payment_volume = paid_amount.checked_sub(state.paid_distributed).ok_or(Error::InvalidAmount)?;
+        let payment_volume = paid_amount
+            .checked_sub(state.paid_distributed)
+            .ok_or(Error::InvalidAmount)?;
         let fee_bps_u32 = select_fee_tier(&env, payment_volume, default_fee_bps);
 
         // Issue #132: Automated fee rounding loss minimization, computed via the
@@ -417,7 +419,11 @@ impl PaymentDistributor {
 
     /// Issue #448: Admin-only: configure tiered volume-based platform fee schedule.
     /// Tiers should be ordered by min_amount and non-overlapping for correct behavior.
-    pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<types::FeeTier>) -> Result<(), Error> {
+    pub fn set_fee_tiers(
+        env: Env,
+        admin: Address,
+        tiers: Vec<types::FeeTier>,
+    ) -> Result<(), Error> {
         let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
         if admin != stored_admin {
             return Err(Error::Unauthorized);
@@ -426,13 +432,11 @@ impl PaymentDistributor {
 
         // Validate all tiers
         for tier in tiers.iter() {
-            if let Some(tier_data) = tier {
-                if tier_data.fee_bps > MAX_FEE_BPS {
-                    return Err(Error::InvalidBps);
-                }
-                if tier_data.min_amount < 0 || (tier_data.max_amount > 0 && tier_data.max_amount < tier_data.min_amount) {
-                    return Err(Error::InvalidAmount);
-                }
+            if tier.fee_bps > MAX_FEE_BPS {
+                return Err(Error::InvalidBps);
+            }
+            if tier.min_amount < 0 || (tier.max_amount > 0 && tier.max_amount < tier.min_amount) {
+                return Err(Error::InvalidAmount);
             }
         }
 
@@ -649,32 +653,6 @@ impl PaymentDistributor {
         Ok(())
     }
 
-    /// Issue #119: Implement Dust Amount Collector and Sweep Function.
-    ///
-    /// Admin-only function to sweep leftover token balances to the configured
-    /// fee recipient (or admin if not set).
-    pub fn sweep_dust(env: Env, admin: Address, token: Address) -> Result<(), Error> {
-        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        admin.require_auth();
-
-        let token_client = token::Client::new(&env, &token);
-        let contract_addr = env.current_contract_address();
-        let balance = token_client.balance(&contract_addr);
-        if balance <= 0 {
-            return Err(Error::NothingToSweep);
-        }
-
-        let fee_recipient =
-            storage::get_fee_recipient(&env).unwrap_or_else(|| stored_admin.clone());
-
-        token_client.transfer(&contract_addr, &fee_recipient, &balance);
-        events::dust_swept(&env, &admin, &token, &fee_recipient, balance);
-        Ok(())
-    }
-
     /// View: return the current admin.
     pub fn get_admin(env: Env) -> Result<Address, Error> {
         storage::get_admin(&env).ok_or(Error::NotInit)
@@ -794,13 +772,63 @@ impl PaymentDistributor {
 
         let fee_recipient = storage::get_fee_recipient(&env)
             .unwrap_or_else(|| storage::get_admin(&env).expect("admin must exist"));
-        token_client.transfer(
-            &env.current_contract_address(),
-            &fee_recipient,
-            &balance,
-        );
+        token_client.transfer(&env.current_contract_address(), &fee_recipient, &balance);
 
         events::dust_swept(&env, &admin, &token, &fee_recipient, balance);
+        Ok(balance)
+    }
+
+    /// Issue #482: automated refund fallback for excess funds.
+    ///
+    /// `distribute_payment` only rejects a balance that is too *low*; anything
+    /// the escrow over-deposits relative to the amounts actually paid out stays
+    /// in the distributor. Before this existed the only way to recover it was
+    /// for an admin to notice and call `sweep_dust`, which sends the entire
+    /// balance to the fee recipient — the wrong destination for funds the
+    /// platform never earned, and something that has to be done manually every
+    /// time it happens.
+    ///
+    /// This hands the leftover back to the escrow that deposited it, so the
+    /// refund is automatic from the escrow's side (it can call this whenever it
+    /// has overpaid) and the funds go back to their rightful owner rather than
+    /// to the platform. Only the escrow bound to the distribution is allowed to
+    /// call it, and the call must be authorized by that escrow.
+    ///
+    /// Note this returns the full remaining balance of `token`, not a
+    /// per-invoice remainder: the distributor does not track deposits per
+    /// invoice, so it cannot attribute a surplus to a specific one. Callers
+    /// should only invoke it when no other distribution is in flight, which is
+    /// the case at the end of an escrow's settlement.
+    ///
+    /// Returns the amount refunded.
+    pub fn refund_excess(
+        env: Env,
+        escrow_contract: Address,
+        token: Address,
+        invoice_id: Symbol,
+    ) -> Result<i128, Error> {
+        acquire_lock(&env)?;
+
+        storage::get_admin(&env).ok_or(Error::NotInit)?;
+        escrow_contract.require_auth();
+
+        if let Some(whitelisted) = storage::get_escrow_contract(&env) {
+            if whitelisted != escrow_contract {
+                return Err(Error::UnauthorizedEscrow);
+            }
+        }
+
+        let contract_addr = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&contract_addr);
+        if balance <= 0 {
+            return Err(Error::NothingToRefund);
+        }
+
+        token_client.transfer(&contract_addr, &escrow_contract, &balance);
+        events::excess_refunded(&env, &escrow_contract, &token, &invoice_id, balance);
+
+        release_lock(&env);
         Ok(balance)
     }
 
@@ -811,7 +839,7 @@ impl PaymentDistributor {
     /// splits rather than partially distributing and leaving state inconsistent.
     pub fn validate_recipients(
         env: Env,
-        token: Address,
+        _token: Address,
         recipients: Vec<Address>,
     ) -> Result<(), Error> {
         let contract_addr = env.current_contract_address();
