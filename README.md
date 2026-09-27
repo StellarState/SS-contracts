@@ -72,6 +72,8 @@ CI releases: merges to `main` trigger [`.github/workflows/release.yml`](.github/
 
 ## 📚 Contract Documentation
 
+- [TypeScript contract error SDK](sdk/README.md) — exported error codes, TypeScript types, and JSON Schema.
+
 ### Invoice Escrow Contract
 ```rust
 // Create new invoice escrow

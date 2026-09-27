@@ -2995,6 +2995,26 @@ fn test_admin_setters_all_reject_same_non_admin_attacker() {
         ctx.distributor.try_set_investor_bonus_bps(&attacker, 1_000),
         Err(Ok(Error::Unauthorized))
     );
+    assert_eq!(
+        ctx.distributor.try_set_fee_tiers(
+            &attacker,
+            &soroban_sdk::vec![
+                &env,
+                types::FeeTier {
+                    min_amount: 1_000,
+                    max_amount: 0,
+                    fee_bps: 300,
+                }
+            ]
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    // A rejected caller must not have changed any admin-controlled setting.
+    assert_eq!(ctx.distributor.get_fee_recipient(), ctx.admin);
+    assert_eq!(ctx.distributor.get_escrow_contract(), Some(ctx.escrow_id));
+    assert_eq!(ctx.distributor.get_investor_bonus_bps(), 0);
+    assert_eq!(ctx.distributor.get_fee_tiers(), None);
 }
 
 #[test]

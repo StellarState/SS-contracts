@@ -152,8 +152,6 @@ pub fn set_whitelisted(env: &Env, buyer: &Address, allowed: bool) {
 
 // ?? Funding invoice (BytesN<32>) storage for position management ???????
 
-use soroban_sdk::BytesN;
-
 use crate::types::FundingInvoice;
 
 pub fn get_invoice(env: &soroban_sdk::Env, invoice_id: BytesN<32>) -> Option<FundingInvoice> {
