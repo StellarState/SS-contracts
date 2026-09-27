@@ -587,6 +587,42 @@ fn test_integration_over_funding_rejected() {
     assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
 }
 
+/// Two competing funders racing to fill the same escrow cannot overfund it.
+/// The first transaction in ledger order fills the target; the losing funding
+/// transaction is rejected without transferring tokens or minting invoice tokens.
+#[test]
+fn test_integration_competing_funders_cannot_overfund_invoice() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "INVRACE", 1_000, 0);
+    let competitor = Address::generate(&env);
+    ctx.payment_asset.mint(&competitor, &1_000);
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id,
+        &ctx.seller,
+        &ctx.payer,
+        &1_000,
+        &1_000,
+        &99_999,
+        &ctx.payment_token.address,
+        &ctx.inv_token_id,
+        &test_commitment(&env, "front_run_race"),
+        &None,
+        &None,
+    );
+
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+    let losing_funder = ctx.escrow.try_fund_escrow(&ctx.invoice_id, &competitor, &1_000);
+
+    assert!(losing_funder.is_err());
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
+    assert_eq!(ctx.payment_token.balance(&competitor), 1_000);
+    assert_eq!(ctx.inv_token.balance(&ctx.buyer), 1_000);
+    assert_eq!(ctx.inv_token.balance(&competitor), 0);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // 13. Platform fee update mid-lifecycle affects next payment
 // ──────────────────────────────────────────────────────────────────────────────

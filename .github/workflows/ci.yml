@@ -13,6 +13,32 @@ env:
   CARGO_TERM_COLOR: always
   WASM_MAX_BYTES: 262144
 jobs:
+  typescript-rpc-sdk:
+    name: TypeScript RPC SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdk/rpc-client/package-lock.json
+      - name: Build and test SDK
+        working-directory: sdk/rpc-client
+        run: |
+          npm ci
+          npm test
+      - name: Start standalone Stellar network
+        uses: stellar/quickstart@main
+        with:
+          network: local
+          enable: rpc
+      - name: Test against standalone Soroban RPC
+        working-directory: sdk/rpc-client
+        env:
+          STELLAR_RPC_URL: http://localhost:8000/rpc
+        run: npm run test:integration
+
   toolchain-sync:
     name: Toolchain Sync Check
     runs-on: ubuntu-latest
