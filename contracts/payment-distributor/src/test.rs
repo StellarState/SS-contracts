@@ -4984,3 +4984,59 @@ fn acceptance_criteria_no_unexpected_dust_after_completed_distribution() {
     // All escrowed funds distributed or reserved
     assert_eq!(escrow, 0);
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Issue #482: automated refund fallback for excess funds
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_refund_excess_returns_leftover_to_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_admin, distributor_id, distributor) = distributor_only(&env);
+    let escrow = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_addr = token_id.address();
+    let asset = AssetClient::new(&env, &token_addr);
+    let invoice_id = Symbol::new(&env, "EXCESS");
+
+    // Escrow over-deposits into the distributor.
+    asset.mint(&escrow, &500);
+    asset.transfer(&escrow, &distributor_id, &500);
+    assert_eq!(asset.balance(&distributor_id), 500);
+
+    let refunded = distributor.refund_excess(&escrow, &token_addr, &invoice_id);
+    assert_eq!(refunded, 500);
+
+    // Funds went back to the escrow, not to the platform fee recipient.
+    assert_eq!(asset.balance(&distributor_id), 0);
+    assert_eq!(asset.balance(&escrow), 500);
+
+    // Nothing left to refund on a second call.
+    assert_eq!(
+        distributor.try_refund_excess(&escrow, &token_addr, &invoice_id),
+        Err(Ok(Error::NothingToRefund))
+    );
+}
+
+#[test]
+fn test_refund_excess_rejects_unbound_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, _distributor_id, distributor) = distributor_only(&env);
+    let escrow = Address::generate(&env);
+    let allowed = Address::generate(&env);
+    let token_addr = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let invoice_id = Symbol::new(&env, "BOUND");
+
+    distributor.set_escrow_contract(&admin, &allowed);
+
+    assert_eq!(
+        distributor.try_refund_excess(&escrow, &token_addr, &invoice_id),
+        Err(Ok(Error::UnauthorizedEscrow))
+    );
+}

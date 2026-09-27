@@ -778,6 +778,60 @@ impl PaymentDistributor {
         Ok(balance)
     }
 
+    /// Issue #482: automated refund fallback for excess funds.
+    ///
+    /// `distribute_payment` only rejects a balance that is too *low*; anything
+    /// the escrow over-deposits relative to the amounts actually paid out stays
+    /// in the distributor. Before this existed the only way to recover it was
+    /// for an admin to notice and call `sweep_dust`, which sends the entire
+    /// balance to the fee recipient — the wrong destination for funds the
+    /// platform never earned, and something that has to be done manually every
+    /// time it happens.
+    ///
+    /// This hands the leftover back to the escrow that deposited it, so the
+    /// refund is automatic from the escrow's side (it can call this whenever it
+    /// has overpaid) and the funds go back to their rightful owner rather than
+    /// to the platform. Only the escrow bound to the distribution is allowed to
+    /// call it, and the call must be authorized by that escrow.
+    ///
+    /// Note this returns the full remaining balance of `token`, not a
+    /// per-invoice remainder: the distributor does not track deposits per
+    /// invoice, so it cannot attribute a surplus to a specific one. Callers
+    /// should only invoke it when no other distribution is in flight, which is
+    /// the case at the end of an escrow's settlement.
+    ///
+    /// Returns the amount refunded.
+    pub fn refund_excess(
+        env: Env,
+        escrow_contract: Address,
+        token: Address,
+        invoice_id: Symbol,
+    ) -> Result<i128, Error> {
+        acquire_lock(&env)?;
+
+        storage::get_admin(&env).ok_or(Error::NotInit)?;
+        escrow_contract.require_auth();
+
+        if let Some(whitelisted) = storage::get_escrow_contract(&env) {
+            if whitelisted != escrow_contract {
+                return Err(Error::UnauthorizedEscrow);
+            }
+        }
+
+        let contract_addr = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&contract_addr);
+        if balance <= 0 {
+            return Err(Error::NothingToRefund);
+        }
+
+        token_client.transfer(&contract_addr, &escrow_contract, &balance);
+        events::excess_refunded(&env, &escrow_contract, &token, &invoice_id, balance);
+
+        release_lock(&env);
+        Ok(balance)
+    }
+
     /// Validate that all recipients in a distribution are distinct non-zero
     /// addresses and that no recipient is the contract itself.
     ///
