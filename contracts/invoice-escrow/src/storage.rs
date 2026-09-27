@@ -411,3 +411,70 @@ pub fn set_pending_param_change(env: &Env, proposal: &crate::types::PendingParam
 pub fn clear_pending_param_change(env: &Env) {
     env.storage().instance().remove(&StorageKey::PendingParamChange);
 }
+
+// ── Issue #469: Batch TTL extension for off-chain keeper bots ─────────────────
+
+/// Extend the TTL of multiple persistent storage keys in a single call.
+/// Off-chain keeper bots can use this to keep active escrows alive without
+/// issuing separate transactions per key. Only extends keys that exist;
+/// missing keys are silently skipped.
+pub fn batch_extend_ttl(env: &Env, keys: &soroban_sdk::Vec<StorageKey>) {
+    for key in keys.iter() {
+        if env.storage().persistent().has(&key) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL_EXTEND);
+        }
+    }
+}
+
+// ── Issue #468: Storage footprint compaction for completed invoices ───────────
+
+/// Remove all persistent storage entries associated with a completed invoice
+/// to reclaim storage footprint. Only call this after the invoice has reached
+/// a terminal state (Settled, Refunded, or Cancelled) and all associated
+/// events have been emitted.
+///
+/// Returns the number of storage keys removed.
+pub fn compact_invoice_storage(env: &Env, inv_id: &Symbol, funder_addresses: &soroban_sdk::Vec<Address>) -> u32 {
+    let mut removed = 0u32;
+
+    // Remove per-funder contribution records
+    for funder in funder_addresses.iter() {
+        let key = StorageKey::FunderAmount(inv_id.clone(), funder);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().remove(&key);
+            removed += 1;
+        }
+    }
+
+    // Remove escrow data
+    let escrow_key = StorageKey::Escrow(inv_id.clone());
+    if env.storage().persistent().has(&escrow_key) {
+        env.storage().persistent().remove(&escrow_key);
+        removed += 1;
+    }
+
+    // Remove dispute record if any
+    let dispute_key = StorageKey::Dispute(inv_id.clone());
+    if env.storage().persistent().has(&dispute_key) {
+        env.storage().persistent().remove(&dispute_key);
+        removed += 1;
+    }
+
+    // Remove installment schedule if any
+    let installment_key = StorageKey::InstallmentSchedule(inv_id.clone());
+    if env.storage().persistent().has(&installment_key) {
+        env.storage().persistent().remove(&installment_key);
+        removed += 1;
+    }
+
+    // Remove emergency approvals if any
+    let emergency_key = StorageKey::EmergencyApprovals(inv_id.clone());
+    if env.storage().persistent().has(&emergency_key) {
+        env.storage().persistent().remove(&emergency_key);
+        removed += 1;
+    }
+
+    removed
+}
