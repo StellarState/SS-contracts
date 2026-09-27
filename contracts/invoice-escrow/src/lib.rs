@@ -2178,3 +2178,15 @@ mod integration_test;
 mod test;
 #[cfg(test)]
 mod benchmarks;
+
+// Modules added for batch resolution of #479, #480, #481
+pub mod insurance_pool;
+pub mod oracle_adapter;
+pub mod earnest_deposit;
+
+#[cfg(test)]
+mod test_batch_features;
+
+pub use insurance_pool::{InsuranceConfig, InsurancePool, InsuranceStorageKey};
+pub use oracle_adapter::{CurrencyOracleConfig, OracleError, OraclePriceAdapter, PriceData};
+pub use earnest_deposit::{EarnestDeposit, EarnestDepositConfig, EarnestError, EarnestStatus};
