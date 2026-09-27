@@ -825,3 +825,5 @@ impl InvoiceToken {
 mod integration_test;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod sep41_compliance;

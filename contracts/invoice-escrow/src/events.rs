@@ -382,3 +382,29 @@ pub fn max_investors_updated(env: &Env, count: u32) {
     env.events()
         .publish((Symbol::new(env, "max_investors_updated"),), count);
 }
+
+// ── Issue #443: Timelock controller events ────────────────────────────────────
+
+/// Emitted when an admin proposes a timelocked parameter change.
+pub fn param_change_proposed(env: &Env, proposal: &crate::types::PendingParamChange) {
+    env.events().publish(
+        (Symbol::new(env, "param_change_proposed"),),
+        (
+            proposal.param.clone() as u32,
+            proposal.new_value,
+            proposal.proposed_at,
+            proposal.timelock_secs,
+        ),
+    );
+}
+
+/// Emitted when a timelocked parameter change is executed after the delay.
+pub fn param_change_executed(env: &Env, proposal: &crate::types::PendingParamChange) {
+    env.events().publish(
+        (Symbol::new(env, "param_change_executed"),),
+        (
+            proposal.param.clone() as u32,
+            proposal.new_value,
+        ),
+    );
+}

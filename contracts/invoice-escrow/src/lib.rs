@@ -2066,9 +2066,115 @@ impl InvoiceEscrow {
         
         Ok(results)
     }
+
+    // ── Issue #443: Two-step timelock controller for admin parameter updates ──
+
+    /// Default timelock period: 24 hours (86400 seconds).
+    const DEFAULT_TIMELOCK_SECS: u64 = 86_400;
+
+    /// Propose a critical admin parameter change. The change cannot be executed
+    /// until `timelock_secs` seconds have elapsed, giving participants time to
+    /// react (e.g. withdraw before a fee increase takes effect).
+    pub fn propose_param_change(
+        env: Env,
+        admin: Address,
+        param: types::ParamType,
+        new_value: i128,
+        timelock_secs: Option<u64>,
+    ) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        let delay = timelock_secs.unwrap_or(Self::DEFAULT_TIMELOCK_SECS);
+        if delay == 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let proposal = types::PendingParamChange {
+            param,
+            new_value,
+            proposed_at: env.ledger().timestamp(),
+            timelock_secs: delay,
+            proposer: admin,
+        };
+
+        storage::set_pending_param_change(&env, &proposal);
+        events::param_change_proposed(&env, &proposal);
+        Ok(())
+    }
+
+    /// Execute a previously proposed parameter change after the timelock has
+    /// expired. Anyone may call this (permissionless execution) — the security
+    /// property is the delay, not the caller identity.
+    pub fn execute_param_change(env: Env) -> Result<(), Error> {
+        let proposal = storage::get_pending_param_change(&env)
+            .ok_or(Error::InvalidEarlySettlement)?;
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(proposal.proposed_at);
+        if elapsed < proposal.timelock_secs {
+            return Err(Error::InvalidDuration);
+        }
+
+        let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
+
+        match proposal.param {
+            types::ParamType::FeeBps => {
+                let new_bps = u32::try_from(proposal.new_value).map_err(|_| Error::InvalidFeeBps)?;
+                if new_bps > MAX_BPS {
+                    return Err(Error::InvalidFeeBps);
+                }
+                let old = config.fee_bps;
+                config.fee_bps = new_bps;
+                storage::set_config(&env, &config);
+                events::platform_fee_updated(&env, old, new_bps);
+            }
+            types::ParamType::GracePeriod => {
+                let new_secs = u64::try_from(proposal.new_value).map_err(|_| Error::Overflow)?;
+                let old = config.grace_period_seconds;
+                config.grace_period_seconds = new_secs;
+                storage::set_config(&env, &config);
+                events::grace_period_updated(&env, old, new_secs);
+            }
+            types::ParamType::MinInvestment => {
+                if proposal.new_value < 0 {
+                    return Err(Error::InvalidAmount);
+                }
+                config.min_investment = proposal.new_value;
+                storage::set_config(&env, &config);
+            }
+            types::ParamType::DisputeTimeout => {
+                let new_secs = u64::try_from(proposal.new_value).map_err(|_| Error::Overflow)?;
+                config.dispute_timeout_secs = new_secs;
+                storage::set_config(&env, &config);
+            }
+            types::ParamType::PenaltyInterestBps => {
+                let new_bps = u32::try_from(proposal.new_value).map_err(|_| Error::InvalidFeeBps)?;
+                if new_bps > MAX_BPS {
+                    return Err(Error::InvalidFeeBps);
+                }
+                config.penalty_interest_bps = new_bps;
+                storage::set_config(&env, &config);
+            }
+        }
+
+        storage::clear_pending_param_change(&env);
+        events::param_change_executed(&env, &proposal);
+        Ok(())
+    }
+
+    /// View: return the pending parameter change, if any.
+    pub fn get_pending_param_change(env: Env) -> Option<types::PendingParamChange> {
+        storage::get_pending_param_change(&env)
+    }
 }
 
 #[cfg(test)]
 mod integration_test;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod benchmarks;

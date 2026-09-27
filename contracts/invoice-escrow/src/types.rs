@@ -41,6 +41,8 @@ pub enum StorageKey {
     Dispute(soroban_sdk::Symbol),
     /// Persistent: installment repayment milestone schedule by invoice id.
     InstallmentSchedule(soroban_sdk::Symbol),
+    /// Instance: pending admin parameter change awaiting timelock expiry.
+    PendingParamChange,
 }
 
 /// Registered invoice metadata and funding parameters stored in persistent storage.
@@ -294,6 +296,38 @@ pub struct InstallmentInput {
     pub due_ts: u64,
     /// Size of this individual installment. Must be `> 0`.
     pub amount: i128,
+}
+
+/// A pending admin parameter change gated by a timelock (#443).
+///
+/// Critical parameter updates (fee_bps, grace_period, min_investment, etc.)
+/// are proposed via `propose_param_change` and can only be executed after
+/// `timelock_secs` have elapsed, giving participants time to react.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingParamChange {
+    /// Which parameter is being changed.
+    pub param: ParamType,
+    /// The new value to apply.
+    pub new_value: i128,
+    /// Ledger timestamp when the change was proposed.
+    pub proposed_at: u64,
+    /// Minimum seconds that must elapse before execution.
+    pub timelock_secs: u64,
+    /// Address that proposed the change.
+    pub proposer: soroban_sdk::Address,
+}
+
+/// Identifies which admin parameter a timelocked change targets.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum ParamType {
+    FeeBps = 0,
+    GracePeriod = 1,
+    MinInvestment = 2,
+    DisputeTimeout = 3,
+    PenaltyInterestBps = 4,
 }
 
 /// Optional early-settlement discount hook configuration.

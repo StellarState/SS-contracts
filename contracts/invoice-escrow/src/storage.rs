@@ -395,3 +395,19 @@ pub fn set_max_investors(env: &Env, count: u32) {
         .instance()
         .set(&StorageKey::MaxInvestors, &count);
 }
+
+// ── Issue #443: Pending param change storage ─────────────────────────────────
+
+pub fn get_pending_param_change(env: &Env) -> Option<crate::types::PendingParamChange> {
+    env.storage().instance().get(&StorageKey::PendingParamChange)
+}
+
+pub fn set_pending_param_change(env: &Env, proposal: &crate::types::PendingParamChange) {
+    env.storage()
+        .instance()
+        .set(&StorageKey::PendingParamChange, proposal);
+}
+
+pub fn clear_pending_param_change(env: &Env) {
+    env.storage().instance().remove(&StorageKey::PendingParamChange);
+}
