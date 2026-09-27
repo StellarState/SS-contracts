@@ -2,7 +2,7 @@
 # local-checks — comprehensive local check suite mirroring CI.
 # Usage: ./scripts/local-checks [quick|full]
 #   quick (default): fmt + clippy + lib tests
-#   full:            fmt + clippy + all tests + WASM build + audit
+#   full:            fmt + clippy + all tests + WASM build + audit + cargo-deny
 
 set -euo pipefail
 
@@ -83,6 +83,17 @@ if [ "$MODE" = "full" ]; then
     fi
   else
     warn "cargo-audit not installed (cargo install cargo-audit --locked)"
+  fi
+
+  header "cargo deny"
+  if command -v cargo-deny &>/dev/null; then
+    if cargo deny check 2>/dev/null; then
+      pass "cargo-deny OK (licences, sources, bans)"
+    else
+      fail "cargo-deny found a licence/source/bans violation"
+    fi
+  else
+    warn "cargo-deny not installed (cargo install cargo-deny --locked)"
   fi
 fi
 
