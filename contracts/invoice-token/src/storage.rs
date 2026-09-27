@@ -33,14 +33,13 @@ pub fn set_total_supply(env: &soroban_sdk::Env, amount: i128) {
 /// Auto-extends the storage key TTL on access to prevent expiration during active use.
 pub fn get_balance(env: &soroban_sdk::Env, addr: &Address) -> i128 {
     let key = StorageKey::Balance(addr.clone());
-    let balance = env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(0);
+    let balance = env.storage().persistent().get(&key).unwrap_or(0);
 
     // Extend TTL to prevent key expiration during active use
     let current_ledger = env.ledger().sequence();
-    env.storage().persistent().extend_ttl(&key, current_ledger + 1_000, current_ledger + 1_000);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, current_ledger + 1_000, current_ledger + 1_000);
 
     balance
 }

@@ -20,8 +20,8 @@ pub use types::EscrowStatus;
 pub use types::InstallmentMilestone;
 pub use types::InvoiceCategory;
 use types::{
-    CategoryFeeSchedule, Config, DisputeData, EarlySettlementConfig, EscrowData, FundingInvoice,
-    InstallmentInput, InvoiceData, InvoiceStatus,
+    CategoryFeeSchedule, Config, DisputeData, EscrowData, FundingInvoice, InstallmentInput,
+    InvoiceData, InvoiceStatus,
 };
 
 use errors::Error;
@@ -105,7 +105,12 @@ fn calculate_early_repayment_rebate(
 /// emergency settlements still close out the schedule.
 ///
 /// No-op when the invoice has no configured schedule.
-fn advance_installment_schedule(env: &Env, invoice_id: &Symbol, paid_amt: i128, fully_settled: bool) {
+fn advance_installment_schedule(
+    env: &Env,
+    invoice_id: &Symbol,
+    paid_amt: i128,
+    fully_settled: bool,
+) {
     let Some(mut schedule) = storage::get_installment_schedule(env, invoice_id) else {
         return;
     };
@@ -182,7 +187,11 @@ impl InvoiceEscrow {
 
     /// Admin-only: set the grace period (seconds) added to `due_dt` before an
     /// overdue invoice is locked out of settlement / becomes refund-eligible.
-    pub fn set_grace_period(env: Env, admin: Address, grace_period_seconds: u64) -> Result<(), Error> {
+    pub fn set_grace_period(
+        env: Env,
+        admin: Address,
+        grace_period_seconds: u64,
+    ) -> Result<(), Error> {
         admin.require_auth();
         let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
         if config.admin != admin {
@@ -289,7 +298,11 @@ impl InvoiceEscrow {
 
     /// Admin-only: set penalty interest rate (basis points) charged on late payments.
     /// Valid range: 0..=10000. Set to 0 to disable penalty interest.
-    pub fn set_penalty_interest_bps(env: Env, admin: Address, penalty_bps: u32) -> Result<(), Error> {
+    pub fn set_penalty_interest_bps(
+        env: Env,
+        admin: Address,
+        penalty_bps: u32,
+    ) -> Result<(), Error> {
         admin.require_auth();
         let mut config = storage::get_config(&env).ok_or(Error::NotInit)?;
         if config.admin != admin {
@@ -413,17 +426,18 @@ impl InvoiceEscrow {
             status: EscrowStatus::Created,
             funding_milestone,
             commitment: commitment.clone(),
-            early_settlement: None,
+            early_settlement_discount_bps: 0,
+            early_settlement_cutoff: 0,
             category: category.unwrap_or(InvoiceCategory::Standard),
             funded_dt: 0,
         };
         storage::set_escrow(&env, invoice_id.clone(), &data);
-        
+
         // Store the invoice_id at the current index for pagination
         let current_count = storage::get_escrow_count(&env);
         storage::set_escrow_id_by_index(&env, current_count, &invoice_id);
         storage::increment_escrow_count(&env);
-        
+
         events::escrow_created(
             &env,
             invoice_id.clone(),
@@ -582,10 +596,8 @@ impl InvoiceEscrow {
             return Err(Error::InvalidEarlySettlement);
         }
 
-        data.early_settlement = Some(EarlySettlementConfig {
-            discount_bps,
-            cutoff_date,
-        });
+        data.early_settlement_discount_bps = discount_bps;
+        data.early_settlement_cutoff = cutoff_date;
         storage::set_escrow(&env, invoice_id, &data);
         Ok(())
     }
@@ -618,8 +630,7 @@ impl InvoiceEscrow {
         seller.require_auth();
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
-        let data =
-            storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
         if data.seller != seller {
             return Err(Error::Unauthorized);
         }
@@ -653,7 +664,9 @@ impl InvoiceEscrow {
             }
             first = false;
             prev_due = input.due_ts;
-            cumulative = cumulative.checked_add(input.amount).ok_or(Error::Overflow)?;
+            cumulative = cumulative
+                .checked_add(input.amount)
+                .ok_or(Error::Overflow)?;
             milestones.push_back(InstallmentMilestone {
                 index: milestones.len(),
                 cumulative_amount: cumulative,
@@ -887,38 +900,35 @@ impl InvoiceEscrow {
 
         // Compute effective face value: apply early-settlement discount if the hook
         // is configured and the payment arrives strictly before the cutoff date.
-        let effective_face_value =
-            if let Some(ref es) = data.early_settlement {
-                if current_ts < es.cutoff_date {
-                    let discount = data
-                        .face_value
-                        .checked_mul(i128::from(es.discount_bps))
-                        .ok_or(Error::Overflow)?
-                        .checked_div(i128::from(MAX_BPS))
-                        .ok_or(Error::Overflow)?;
-                    let discounted = data
-                        .face_value
-                        .checked_sub(discount)
-                        .ok_or(Error::Overflow)?
-                        .max(1); // floor at 1 stroop
-                    // Emit the hook application event (only on first payment in the window
-                    // to avoid redundant emissions on subsequent partial payments).
-                    if data.paid_amt == 0 {
-                        events::early_settlement_applied(
-                            &env,
-                            invoice_id.clone(),
-                            es.discount_bps,
-                            data.face_value,
-                            discounted,
-                        );
-                    }
-                    discounted
-                } else {
-                    data.face_value
-                }
-            } else {
-                data.face_value
-            };
+        let effective_face_value = if data.early_settlement_discount_bps > 0
+            && current_ts < data.early_settlement_cutoff
+        {
+            let discount = data
+                .face_value
+                .checked_mul(i128::from(data.early_settlement_discount_bps))
+                .ok_or(Error::Overflow)?
+                .checked_div(i128::from(MAX_BPS))
+                .ok_or(Error::Overflow)?;
+            let discounted = data
+                .face_value
+                .checked_sub(discount)
+                .ok_or(Error::Overflow)?
+                .max(1); // floor at 1 stroop
+                         // Emit the hook application event (only on first payment in the window
+                         // to avoid redundant emissions on subsequent partial payments).
+            if data.paid_amt == 0 {
+                events::early_settlement_applied(
+                    &env,
+                    invoice_id.clone(),
+                    data.early_settlement_discount_bps,
+                    data.face_value,
+                    discounted,
+                );
+            }
+            discounted
+        } else {
+            data.face_value
+        };
 
         // Remaining balance toward effective face value
         let remaining = effective_face_value
@@ -955,7 +965,9 @@ impl InvoiceEscrow {
         let total_fee = platform_fee
             .checked_add(penalty_interest)
             .ok_or(Error::Overflow)?;
-        let final_investor_amount = investor_amount.checked_sub(penalty_interest).ok_or(Error::Overflow)?;
+        let final_investor_amount = investor_amount
+            .checked_sub(penalty_interest)
+            .ok_or(Error::Overflow)?;
 
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
@@ -1030,9 +1042,8 @@ impl InvoiceEscrow {
                         data.funded_dt,
                         investor_amount,
                     );
-                    let net_investor_amount = investor_amount
-                        .checked_sub(rebate)
-                        .ok_or(Error::Overflow)?;
+                    let net_investor_amount =
+                        investor_amount.checked_sub(rebate).ok_or(Error::Overflow)?;
                     let pro_rata_share = net_investor_amount
                         .checked_mul(funder_amt)
                         .ok_or(Error::Overflow)?
@@ -1098,7 +1109,12 @@ impl InvoiceEscrow {
         if ledger_ts <= overdue_at {
             return Err(Error::EscrowNotOverdue);
         }
-        events::grace_period_expired(&env, invoice_id.clone(), data.due_dt, config.grace_period_seconds);
+        events::grace_period_expired(
+            &env,
+            invoice_id.clone(),
+            data.due_dt,
+            config.grace_period_seconds,
+        );
 
         // Refund the remaining collateral (purchase_price minus already released partial payments)
         let amount_to_refund = data
@@ -1246,14 +1262,20 @@ impl InvoiceEscrow {
         }
 
         let now = env.ledger().timestamp();
-        let timed_out = now > dispute.raised_at.saturating_add(config.dispute_timeout_secs);
+        let timed_out = now
+            > dispute
+                .raised_at
+                .saturating_add(config.dispute_timeout_secs);
         // Past the timeout, the outcome is always refund-to-buyer regardless
         // of what `favour` was passed.
         let settle_to_seller = !timed_out && favour == Symbol::new(&env, "seller");
 
         let token = token::Client::new(&env, &data.token);
         let contract = env.current_contract_address();
-        let held_amount = data.purchase_price.checked_sub(data.paid_amt).ok_or(Error::Overflow)?;
+        let held_amount = data
+            .purchase_price
+            .checked_sub(data.paid_amt)
+            .ok_or(Error::Overflow)?;
 
         if settle_to_seller {
             if held_amount > 0 {
@@ -1264,7 +1286,8 @@ impl InvoiceEscrow {
             if held_amount > 0 {
                 if let Some(funder) = data.funder.clone() {
                     if data.funded_amt > 0 {
-                        let funder_amt = storage::get_funder_amount(&env, invoice_id.clone(), &funder);
+                        let funder_amt =
+                            storage::get_funder_amount(&env, invoice_id.clone(), &funder);
                         let pro_rata_refund = held_amount
                             .checked_mul(funder_amt)
                             .ok_or(Error::Overflow)?
@@ -1686,12 +1709,7 @@ impl InvoiceEscrow {
 
         invoice.deadline_ledger = new_deadline_ledger;
         storage::set_invoice(&env, invoice_id.clone(), &invoice);
-        events::deadline_extended(
-            &env,
-            &invoice_id,
-            old_deadline_ledger,
-            new_deadline_ledger,
-        );
+        events::deadline_extended(&env, &invoice_id, old_deadline_ledger, new_deadline_ledger);
         Ok(())
     }
     /// Invest in a registered invoice or funding invoice.
@@ -1916,11 +1934,7 @@ impl InvoiceEscrow {
     }
 
     /// Refund an investor's committed position if deadline passed without reaching target.
-    pub fn refund(
-        env: Env,
-        invoice_id: BytesN<32>,
-        investor: Address,
-    ) -> Result<(), Error> {
+    pub fn refund(env: Env, invoice_id: BytesN<32>, investor: Address) -> Result<(), Error> {
         investor.require_auth();
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         ensure_not_paused(&config)?;
@@ -2004,8 +2018,7 @@ impl InvoiceEscrow {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         config.admin.require_auth();
 
-        let record =
-            storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)?;
+        let record = storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)?;
         for investor in record.investors.iter() {
             let _ = storage::get_investor_position(&env, &invoice_id, &investor);
         }
@@ -2037,25 +2050,29 @@ impl InvoiceEscrow {
     }
 
     /// Paginated query to retrieve multiple escrows by sequential creation order.
-    pub fn get_escrows(env: Env, start: u32, limit: u32) -> Result<soroban_sdk::Vec<EscrowData>, Error> {
+    pub fn get_escrows(
+        env: Env,
+        start: u32,
+        limit: u32,
+    ) -> Result<soroban_sdk::Vec<EscrowData>, Error> {
         const MAX_PAGE_SIZE: u32 = 100;
-        
+
         if limit == 0 {
             return Err(Error::InvalidLimit);
         }
         if limit > MAX_PAGE_SIZE {
             return Err(Error::LimitExceeded);
         }
-        
+
         let total_count = storage::get_escrow_count(&env);
-        
+
         if start >= total_count {
             return Ok(soroban_sdk::Vec::new(&env));
         }
-        
+
         let end = core::cmp::min(start + limit, total_count);
         let mut results = soroban_sdk::Vec::new(&env);
-        
+
         for index in start..end {
             if let Some(invoice_id) = storage::get_escrow_id_by_index(&env, index) {
                 if let Some(escrow_data) = storage::get_escrow(&env, invoice_id) {
@@ -2063,7 +2080,7 @@ impl InvoiceEscrow {
                 }
             }
         }
-        
+
         Ok(results)
     }
 
@@ -2110,8 +2127,8 @@ impl InvoiceEscrow {
     /// expired. Anyone may call this (permissionless execution) — the security
     /// property is the delay, not the caller identity.
     pub fn execute_param_change(env: Env) -> Result<(), Error> {
-        let proposal = storage::get_pending_param_change(&env)
-            .ok_or(Error::InvalidEarlySettlement)?;
+        let proposal =
+            storage::get_pending_param_change(&env).ok_or(Error::InvalidEarlySettlement)?;
 
         let now = env.ledger().timestamp();
         let elapsed = now.saturating_sub(proposal.proposed_at);
@@ -2123,7 +2140,8 @@ impl InvoiceEscrow {
 
         match proposal.param {
             types::ParamType::FeeBps => {
-                let new_bps = u32::try_from(proposal.new_value).map_err(|_| Error::InvalidFeeBps)?;
+                let new_bps =
+                    u32::try_from(proposal.new_value).map_err(|_| Error::InvalidFeeBps)?;
                 if new_bps > MAX_BPS {
                     return Err(Error::InvalidFeeBps);
                 }
@@ -2152,7 +2170,8 @@ impl InvoiceEscrow {
                 storage::set_config(&env, &config);
             }
             types::ParamType::PenaltyInterestBps => {
-                let new_bps = u32::try_from(proposal.new_value).map_err(|_| Error::InvalidFeeBps)?;
+                let new_bps =
+                    u32::try_from(proposal.new_value).map_err(|_| Error::InvalidFeeBps)?;
                 if new_bps > MAX_BPS {
                     return Err(Error::InvalidFeeBps);
                 }
@@ -2173,8 +2192,8 @@ impl InvoiceEscrow {
 }
 
 #[cfg(test)]
+mod benchmarks;
+#[cfg(test)]
 mod integration_test;
 #[cfg(test)]
 mod test;
-#[cfg(test)]
-mod benchmarks;

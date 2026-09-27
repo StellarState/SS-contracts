@@ -1288,10 +1288,15 @@ fn test_integration_pause_blocks_settlement() {
 
     ctx.escrow.set_paused(&true);
 
-    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    let result = ctx
+        .escrow
+        .try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
     assert_eq!(result, Err(Ok(errors::Error::Paused)));
 
-    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Funded
+    );
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
 }
 
@@ -1310,7 +1315,10 @@ fn test_integration_pause_blocks_refund_after_deadline() {
     let result = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
     assert_eq!(result, Err(Ok(errors::Error::Paused)));
 
-    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Funded
+    );
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
 }
 
@@ -1323,13 +1331,19 @@ fn test_integration_unpause_restores_behavior() {
     create_and_fund(&ctx, 1_000, 99_999);
 
     ctx.escrow.set_paused(&true);
-    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    let result = ctx
+        .escrow
+        .try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
     assert_eq!(result, Err(Ok(errors::Error::Paused)));
 
     ctx.escrow.set_paused(&false);
-    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    ctx.escrow
+        .record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
 
-    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Settled);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Settled
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1348,7 +1362,10 @@ fn test_integration_refund_after_deadline() {
 
     ctx.escrow.refund_escrow(&ctx.invoice_id);
 
-    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Refunded
+    );
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1_000);
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
     assert!(!ctx.inv_token.transfer_locked());
@@ -1386,7 +1403,10 @@ fn test_integration_partial_payment_refund() {
     // Buyer already received 388 from partial payment (400 - 12 fee)
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 988);
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
-    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Refunded);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Refunded
+    );
 }
 
 #[test]
@@ -1418,13 +1438,20 @@ fn test_integration_refund_restores_capacity() {
     // Buyer can fund again after refund
     let ctx2 = setup(&env, 300, "INVREFC2", 1_000, 0);
     ctx2.escrow.create_escrow(
-        &ctx2.invoice_id, &ctx2.seller, &ctx2.payer,
-        &1_000, &1_000, &200_000,
-        &ctx2.payment_token.address, &ctx2.inv_token_id,
-        &test_commitment(&ctx2.env, "commitment2"), &None,
+        &ctx2.invoice_id,
+        &ctx2.seller,
+        &ctx2.payer,
+        &1_000,
+        &1_000,
+        &200_000,
+        &ctx2.payment_token.address,
+        &ctx2.inv_token_id,
+        &test_commitment(&ctx2.env, "commitment2"),
+        &None,
         &None,
     );
-    ctx2.escrow.fund_escrow(&ctx2.invoice_id, &ctx2.buyer, &1_000);
+    ctx2.escrow
+        .fund_escrow(&ctx2.invoice_id, &ctx2.buyer, &1_000);
     assert_eq!(ctx2.payment_token.balance(&ctx2.buyer), 0);
     assert_eq!(ctx2.payment_token.balance(&ctx2.escrow_id), 1_000);
 }

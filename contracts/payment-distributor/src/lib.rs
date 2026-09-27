@@ -1,5 +1,7 @@
 #![no_std]
 
+extern crate alloc;
+
 mod errors;
 mod events;
 mod storage;
@@ -284,7 +286,9 @@ impl PaymentDistributor {
         let mut state = get_distribution_state(&env, &escrow_contract, &invoice_id);
 
         // Issue #448: Select fee tier based on payment volume for tiered fee schedule
-        let payment_volume = paid_amount.checked_sub(state.paid_distributed).ok_or(Error::InvalidAmount)?;
+        let payment_volume = paid_amount
+            .checked_sub(state.paid_distributed)
+            .ok_or(Error::InvalidAmount)?;
         let fee_bps_u32 = select_fee_tier(&env, payment_volume, default_fee_bps);
 
         // Issue #132: Automated fee rounding loss minimization, computed via the
@@ -415,7 +419,11 @@ impl PaymentDistributor {
 
     /// Issue #448: Admin-only: configure tiered volume-based platform fee schedule.
     /// Tiers should be ordered by min_amount and non-overlapping for correct behavior.
-    pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<types::FeeTier>) -> Result<(), Error> {
+    pub fn set_fee_tiers(
+        env: Env,
+        admin: Address,
+        tiers: Vec<types::FeeTier>,
+    ) -> Result<(), Error> {
         let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
         if admin != stored_admin {
             return Err(Error::Unauthorized);
@@ -427,9 +435,7 @@ impl PaymentDistributor {
             if tier.fee_bps > MAX_FEE_BPS {
                 return Err(Error::InvalidBps);
             }
-            if tier.min_amount < 0
-                || (tier.max_amount > 0 && tier.max_amount < tier.min_amount)
-            {
+            if tier.min_amount < 0 || (tier.max_amount > 0 && tier.max_amount < tier.min_amount) {
                 return Err(Error::InvalidAmount);
             }
         }
@@ -766,11 +772,7 @@ impl PaymentDistributor {
 
         let fee_recipient = storage::get_fee_recipient(&env)
             .unwrap_or_else(|| storage::get_admin(&env).expect("admin must exist"));
-        token_client.transfer(
-            &env.current_contract_address(),
-            &fee_recipient,
-            &balance,
-        );
+        token_client.transfer(&env.current_contract_address(), &fee_recipient, &balance);
 
         events::dust_swept(&env, &admin, &token, &fee_recipient, balance);
         Ok(balance)
