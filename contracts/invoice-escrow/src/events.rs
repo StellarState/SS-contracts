@@ -362,6 +362,13 @@ pub fn installment_settled(
     );
 }
 
+/// Publish the protocol fee collected from a repayment and its treasury.
+pub fn fee_collected(env: &Env, inv_id: Symbol, fee_amount: i128, treasury: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "fee_collected"),),
+        (inv_id, fee_amount, treasury.clone()),
+    );
+}
 /// Publish invoice cancellation with the authorized admin as the actor.
 pub fn invoice_cancelled(env: &Env, invoice_id: &BytesN<32>, admin: &Address) {
     env.events().publish(
