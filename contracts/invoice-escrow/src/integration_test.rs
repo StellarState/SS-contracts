@@ -70,7 +70,7 @@ fn setup<'a>(
     let invoice_id = Symbol::new(env, inv_id_str);
 
     inv_token.initialize(
-        &admin,
+        &escrow_id,
         &SorobanString::from_str(env, "Test Invoice Token"),
         &SorobanString::from_str(env, "TIT"),
         &7,
@@ -114,6 +114,7 @@ fn create_and_fund(ctx: &Ctx<'_>, amount: i128, due_date: u64) {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&ctx.env, "commitment"),
+        &None,
         &None,
     );
     ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
@@ -182,11 +183,11 @@ fn test_integration_refund_lifecycle() {
     create_and_fund(&ctx, 1_000, due_date);
 
     // Refund before due date must fail.
-    assert!(ctx.escrow.try_refund(&ctx.invoice_id).is_err());
+    assert!(ctx.escrow.try_refund_escrow(&ctx.invoice_id).is_err());
 
     // Advance past due date.
     env.ledger().set_timestamp(due_date + 1);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     // Buyer gets full purchase price back.
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1_000);
@@ -292,7 +293,7 @@ fn test_integration_partial_payment_then_refund() {
 
     // Advance past due date and refund remaining 600.
     env.ledger().set_timestamp(5_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     assert_eq!(
         ctx.escrow.get_escrow_status(&ctx.invoice_id),
@@ -324,6 +325,7 @@ fn test_integration_cancel_escrow_happy_path() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "cancel_test"),
+        &None,
         &None,
     );
     assert_eq!(
@@ -367,6 +369,7 @@ fn test_integration_cancel_non_seller_rejected() {
         &ctx.inv_token_id,
         &test_commitment(&env, "cancel_non_seller"),
         &None,
+        &None,
     );
 
     let intruder = Address::generate(&env);
@@ -390,6 +393,7 @@ fn test_integration_fund_cancelled_escrow_rejected() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "fund_cancelled"),
+        &None,
         &None,
     );
     ctx.escrow.cancel_escrow(&ctx.invoice_id, &ctx.seller);
@@ -420,6 +424,7 @@ fn test_integration_pause_blocks_fund_and_payment() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "pause_test"),
+        &None,
         &None,
     );
 
@@ -459,16 +464,16 @@ fn test_integration_pause_blocks_refund() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
     let ctx = setup(&env, 300, "INVPSR", 1_000, 0);
-    create_and_fund(&ctx, 1_000, 2_000);
+    create_and_fund(&ctx, 1_000, 5_000);
 
-    env.ledger().set_timestamp(2_001);
+    env.ledger().set_timestamp(5_001);
     ctx.escrow.set_paused(&true);
 
-    let r = ctx.escrow.try_refund(&ctx.invoice_id);
+    let r = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
     assert_eq!(r, Err(Ok(errors::Error::Paused)));
 
     ctx.escrow.set_paused(&false);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
     assert_eq!(
         ctx.escrow.get_escrow_status(&ctx.invoice_id),
         EscrowStatus::Refunded
@@ -572,6 +577,7 @@ fn test_integration_over_funding_rejected() {
         &ctx.inv_token_id,
         &test_commitment(&env, "over_fund"),
         &None,
+        &None,
     );
 
     // Purchase price is 1000; funding 1001 must fail.
@@ -635,6 +641,7 @@ fn test_integration_duplicate_invoice_id_rejected() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &commitment,
+        &None,
         &None,
     );
 
@@ -756,6 +763,7 @@ fn test_integration_state_persistence_after_create() {
         &ctx.inv_token_id,
         &commitment,
         &None,
+        &None,
     );
 
     let data = ctx.escrow.get_escrow(&ctx.invoice_id);
@@ -807,10 +815,10 @@ fn test_integration_state_persistence_after_refund() {
     env.mock_all_auths();
     env.ledger().set_timestamp(0);
     let ctx = setup(&env, 300, "INVPSR", 1_000, 0);
-    create_and_fund(&ctx, 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 5_000);
 
-    env.ledger().set_timestamp(1_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    env.ledger().set_timestamp(5_001);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     let data = ctx.escrow.get_escrow(&ctx.invoice_id);
     assert_eq!(data.status, EscrowStatus::Refunded);
@@ -863,6 +871,7 @@ fn test_integration_commitment_immutable_after_lifecycle() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &original,
+        &None,
         &None,
     );
 
@@ -918,6 +927,7 @@ fn test_integration_two_independent_escrows() {
         &ctx_a.payment_token.address,
         &inv_token_b_id,
         &test_commitment(&env, "inv_b"),
+        &None,
         &None,
     );
     ctx_a.escrow.fund_escrow(&inv_b_id, &buyer_b, &500);
@@ -985,6 +995,7 @@ fn test_integration_escrow_created_event_emitted() {
         &ctx.inv_token_id,
         &commitment,
         &None,
+        &None,
     );
 
     let evts = env.events().all();
@@ -1039,6 +1050,7 @@ fn test_integration_escrow_cancelled_event_emitted() {
         &ctx.payment_token.address,
         &ctx.inv_token_id,
         &test_commitment(&env, "cancel_event"),
+        &None,
         &None,
     );
     ctx.escrow.cancel_escrow(&ctx.invoice_id, &ctx.seller);
@@ -1101,9 +1113,9 @@ fn test_integration_escrow_refunded_event_emitted() {
     env.mock_all_auths();
     env.ledger().set_timestamp(0);
     let ctx = setup(&env, 300, "INVREF", 1_000, 0);
-    create_and_fund(&ctx, 1_000, 1_000);
-    env.ledger().set_timestamp(1_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    create_and_fund(&ctx, 1_000, 5_000);
+    env.ledger().set_timestamp(5_001);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     let evts = env.events().all();
     let evt = evts
@@ -1151,6 +1163,7 @@ fn test_integration_discounted_purchase_price() {
         &ctx.inv_token_id,
         &test_commitment(&env, "discount"),
         &None,
+        &None,
     );
     ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &900);
 
@@ -1185,13 +1198,13 @@ fn test_integration_refund_at_exact_due_date_blocked() {
 
     // One second before due_date: must fail.
     env.ledger().set_timestamp(4_999);
-    let result = ctx.escrow.try_refund(&ctx.invoice_id);
+    let result = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
     assert_eq!(result, Err(Ok(errors::Error::RefundNotAllowed)));
 
     // At exactly due_date (ledger_ts == due_dt): contract allows refund
     // because it checks `ledger_ts < due_dt` — false when equal.
     env.ledger().set_timestamp(5_000);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
     assert_eq!(
         ctx.escrow.get_escrow_status(&ctx.invoice_id),
         EscrowStatus::Refunded
@@ -1208,12 +1221,12 @@ fn test_integration_double_refund_rejected() {
     env.mock_all_auths();
     env.ledger().set_timestamp(0);
     let ctx = setup(&env, 300, "INVDR", 1_000, 0);
-    create_and_fund(&ctx, 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 5_000);
 
-    env.ledger().set_timestamp(1_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    env.ledger().set_timestamp(5_001);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
-    let result = ctx.escrow.try_refund(&ctx.invoice_id);
+    let result = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
     assert_eq!(result, Err(Ok(errors::Error::RefundNotAllowed)));
 }
 
@@ -1260,4 +1273,158 @@ fn test_integration_cancel_after_partial_payment_preserves_state() {
     assert_eq!(ctx.payment_token.balance(&ctx.admin), 12);
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 388);
     assert!(ctx.inv_token.transfer_locked());
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Issue #336: Pause blocks settlement and refund
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_integration_pause_blocks_settlement() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "INVPAUSES", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    ctx.escrow.set_paused(&true);
+
+    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(result, Err(Ok(errors::Error::Paused)));
+
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
+}
+
+#[test]
+fn test_integration_pause_blocks_refund_after_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(5_000);
+    let ctx = setup(&env, 300, "INVPAUSER", 1_000, 0);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    env.ledger().set_timestamp(100_000);
+
+    ctx.escrow.set_paused(&true);
+
+    let result = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
+    assert_eq!(result, Err(Ok(errors::Error::Paused)));
+
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
+}
+
+#[test]
+fn test_integration_unpause_restores_behavior() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(5_000);
+    let ctx = setup(&env, 300, "INVUNP", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    ctx.escrow.set_paused(&true);
+    let result = ctx.escrow.try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(result, Err(Ok(errors::Error::Paused)));
+
+    ctx.escrow.set_paused(&false);
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Settled);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Issue #390: Comprehensive refund test suite
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_integration_refund_after_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(5_000);
+    let ctx = setup(&env, 300, "INVREFD", 1_000, 0);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    env.ledger().set_timestamp(100_000);
+
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
+
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Refunded);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert!(!ctx.inv_token.transfer_locked());
+}
+
+#[test]
+fn test_integration_refund_before_deadline_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(5_000);
+    let ctx = setup(&env, 300, "INVREFB", 1_000, 0);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    let result = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
+    assert_eq!(result, Err(Ok(errors::Error::RefundNotAllowed)));
+}
+
+#[test]
+fn test_integration_partial_payment_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(5_000);
+    let ctx = setup(&env, 300, "INVREFP", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    // Partial payment of 400 (3% fee = 12, investor gets 388, seller gets 400)
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &400);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 600);
+
+    env.ledger().set_timestamp(100_000);
+
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
+
+    // Refund = purchase_price - paid_amt = 1000 - 400 = 600
+    // Buyer already received 388 from partial payment (400 - 12 fee)
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 988);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Refunded);
+}
+
+#[test]
+fn test_integration_duplicate_refund_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(5_000);
+    let ctx = setup(&env, 300, "INVREFDD", 1_000, 0);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    env.ledger().set_timestamp(100_000);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
+
+    let result = ctx.escrow.try_refund_escrow(&ctx.invoice_id);
+    assert_eq!(result, Err(Ok(errors::Error::RefundNotAllowed)));
+}
+
+#[test]
+fn test_integration_refund_restores_capacity() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(5_000);
+    let ctx = setup(&env, 300, "INVREFC", 1_000, 0);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    env.ledger().set_timestamp(100_000);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
+
+    // Buyer can fund again after refund
+    let ctx2 = setup(&env, 300, "INVREFC2", 1_000, 0);
+    ctx2.escrow.create_escrow(
+        &ctx2.invoice_id, &ctx2.seller, &ctx2.payer,
+        &1_000, &1_000, &200_000,
+        &ctx2.payment_token.address, &ctx2.inv_token_id,
+        &test_commitment(&ctx2.env, "commitment2"), &None,
+        &None,
+    );
+    ctx2.escrow.fund_escrow(&ctx2.invoice_id, &ctx2.buyer, &1_000);
+    assert_eq!(ctx2.payment_token.balance(&ctx2.buyer), 0);
+    assert_eq!(ctx2.payment_token.balance(&ctx2.escrow_id), 1_000);
 }

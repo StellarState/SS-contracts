@@ -172,6 +172,9 @@ impl InvoiceToken {
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &to])?;
         from.require_auth();
+        if from == to {
+            return Err(Error::InvalidAddress);
+        }
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -251,7 +254,10 @@ impl InvoiceToken {
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &spender])?;
         from.require_auth();
-        if amount < 0 {
+        if from == spender {
+            return Err(Error::InvalidAddress);
+        }
+        if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
@@ -280,6 +286,9 @@ impl InvoiceToken {
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &spender])?;
         from.require_auth();
+        if from == spender {
+            return Err(Error::InvalidAddress);
+        }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         if meta.paused {
             return Err(Error::Paused);
@@ -304,6 +313,9 @@ impl InvoiceToken {
     pub fn revoke_approval(env: Env, from: Address, spender: Address) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&from, &spender])?;
         from.require_auth();
+        if from == spender {
+            return Err(Error::InvalidAddress);
+        }
         let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
         if meta.paused {
             return Err(Error::Paused);
@@ -323,6 +335,9 @@ impl InvoiceToken {
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&spender, &from, &to])?;
         spender.require_auth();
+        if from == to {
+            return Err(Error::InvalidAddress);
+        }
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -588,6 +603,30 @@ impl InvoiceToken {
         Ok(())
     }
 
+    /// Update the token name. Admin only.
+    pub fn set_name(env: Env, new_name: SorobanString) -> Result<(), Error> {
+        let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        meta.admin.require_auth();
+        if new_name.is_empty() {
+            return Err(Error::InvalidMetadata);
+        }
+        meta.name = new_name;
+        storage::set_metadata(&env, &meta);
+        Ok(())
+    }
+
+    /// Update the token symbol. Admin only.
+    pub fn set_symbol(env: Env, new_symbol: SorobanString) -> Result<(), Error> {
+        let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        meta.admin.require_auth();
+        if new_symbol.is_empty() {
+            return Err(Error::InvalidMetadata);
+        }
+        meta.symbol = new_symbol;
+        storage::set_metadata(&env, &meta);
+        Ok(())
+    }
+
     /// Update the fractional precision for this invoice sub-asset. Admin only.
     pub fn set_decimals(env: Env, decimals: u32) -> Result<(), Error> {
         let mut meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
@@ -783,4 +822,8 @@ impl InvoiceToken {
 }
 
 #[cfg(test)]
+mod integration_test;
+#[cfg(test)]
 mod test;
+#[cfg(test)]
+mod sep41_compliance;

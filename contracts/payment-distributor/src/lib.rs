@@ -79,6 +79,24 @@ fn parse_fee_bps(fee_bps: i128) -> Result<u32, Error> {
     Ok(fee_bps_u32)
 }
 
+/// Select the appropriate fee tier based on payment volume.
+/// Returns the fee_bps for the tier that matches the payment amount.
+/// If no tiers are configured or amount doesn't match any tier, returns the default fee.
+fn select_fee_tier(env: &Env, payment_amount: i128, default_fee_bps: u32) -> u32 {
+    if let Some(tiers) = storage::get_fee_tiers(env) {
+        for tier in tiers.iter() {
+            if let Some(tier_data) = tier {
+                if payment_amount >= tier_data.min_amount
+                    && (tier_data.max_amount == 0 || payment_amount <= tier_data.max_amount)
+                {
+                    return tier_data.fee_bps;
+                }
+            }
+        }
+    }
+    default_fee_bps
+}
+
 fn compute_split(
     paid_amount: i128,
     already_distributed: i128,
@@ -261,11 +279,15 @@ impl PaymentDistributor {
         let token = addresses.get(0).ok_or(Error::InvalidAmount)?;
         let seller = addresses.get(1).ok_or(Error::InvalidAmount)?;
         let funder = addresses.get(2).ok_or(Error::InvalidAmount)?;
-        let fee_bps_u32 = parse_fee_bps(amounts.get(3).ok_or(Error::InvalidAmount)?)?;
+        let default_fee_bps = parse_fee_bps(amounts.get(3).ok_or(Error::InvalidAmount)?)?;
 
         let paid_amount = amounts.get(0).ok_or(Error::InvalidAmount)?;
         let investor_amount = amounts.get(2).ok_or(Error::InvalidAmount)?;
         let mut state = get_distribution_state(&env, &escrow_contract, &invoice_id);
+
+        // Issue #448: Select fee tier based on payment volume for tiered fee schedule
+        let payment_volume = paid_amount.checked_sub(state.paid_distributed).ok_or(Error::InvalidAmount)?;
+        let fee_bps_u32 = select_fee_tier(&env, payment_volume, default_fee_bps);
 
         // Issue #132: Automated fee rounding loss minimization, computed via the
         // shared `compute_split` core also used by the Issue #129 dry-run getter.
@@ -391,6 +413,37 @@ impl PaymentDistributor {
     pub fn get_investor_bonus_bps(env: Env) -> Result<u32, Error> {
         storage::get_admin(&env).ok_or(Error::NotInit)?;
         Ok(storage::get_investor_bonus_bps(&env))
+    }
+
+    /// Issue #448: Admin-only: configure tiered volume-based platform fee schedule.
+    /// Tiers should be ordered by min_amount and non-overlapping for correct behavior.
+    pub fn set_fee_tiers(env: Env, admin: Address, tiers: Vec<types::FeeTier>) -> Result<(), Error> {
+        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        // Validate all tiers
+        for tier in tiers.iter() {
+            if let Some(tier_data) = tier {
+                if tier_data.fee_bps > MAX_FEE_BPS {
+                    return Err(Error::InvalidBps);
+                }
+                if tier_data.min_amount < 0 || (tier_data.max_amount > 0 && tier_data.max_amount < tier_data.min_amount) {
+                    return Err(Error::InvalidAmount);
+                }
+            }
+        }
+
+        storage::set_fee_tiers(&env, &tiers);
+        Ok(())
+    }
+
+    /// View: return the configured fee tiers for volume-based platform fee schedule.
+    pub fn get_fee_tiers(env: Env) -> Result<Option<Vec<types::FeeTier>>, Error> {
+        storage::get_admin(&env).ok_or(Error::NotInit)?;
+        Ok(storage::get_fee_tiers(&env))
     }
 
     /// Distribute the final refund for a refunded escrow.
@@ -713,6 +766,86 @@ impl PaymentDistributor {
             investor_amount,
             fee_bps_u32,
         )
+    }
+
+    // ── Issue #444: Residual dust sweep & recipient invariant validation ────
+
+    /// Sweep residual token balances held by this contract to the admin.
+    ///
+    /// After distributions, rounding and partial fills can leave sub-unit
+    /// ("dust") balances stranded in the contract. Over many distributions
+    /// these accumulate and inflate the contract's visible balance without
+    /// belonging to any party. This function lets the admin reclaim them.
+    ///
+    /// The swept amount is the full contract balance for `token`. If the
+    /// balance is zero, `NothingToSweep` is returned.
+    pub fn sweep_dust(env: Env, admin: Address, token: Address) -> Result<i128, Error> {
+        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&env.current_contract_address());
+        if balance <= 0 {
+            return Err(Error::NothingToSweep);
+        }
+
+        let fee_recipient = storage::get_fee_recipient(&env)
+            .unwrap_or_else(|| storage::get_admin(&env).expect("admin must exist"));
+        token_client.transfer(
+            &env.current_contract_address(),
+            &fee_recipient,
+            &balance,
+        );
+
+        events::dust_swept(&env, &admin, &token, &fee_recipient, balance);
+        Ok(balance)
+    }
+
+    /// Validate that all recipients in a distribution are distinct non-zero
+    /// addresses and that no recipient is the contract itself.
+    ///
+    /// Call this before executing any distribution to fail-fast on malformed
+    /// splits rather than partially distributing and leaving state inconsistent.
+    pub fn validate_recipients(
+        env: Env,
+        token: Address,
+        recipients: Vec<Address>,
+    ) -> Result<(), Error> {
+        let contract_addr = env.current_contract_address();
+        let mut seen = soroban_sdk::Map::<Address, bool>::new(&env);
+
+        for i in 0..recipients.len() {
+            let addr = recipients.get(i).ok_or(Error::InvalidSplit)?;
+
+            // Reject the contract itself as a recipient — funds would be
+            // irrecoverable without a dedicated sweep path.
+            if addr == contract_addr {
+                return Err(Error::InvalidSplit);
+            }
+
+            // Reject duplicate recipients — two entries for the same address
+            // would silently merge into a single transfer, losing the intended
+            // split semantics.
+            if seen.contains_key(addr.clone()) {
+                return Err(Error::InvalidSplit);
+            }
+            seen.set(addr.clone(), true);
+
+            // Reject zero-address recipients.
+            let zero_str = soroban_sdk::String::from_str(
+                &env,
+                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            );
+            let zero = Address::from_string(&zero_str);
+            if addr == zero {
+                return Err(Error::InvalidSplit);
+            }
+        }
+
+        Ok(())
     }
 }
 

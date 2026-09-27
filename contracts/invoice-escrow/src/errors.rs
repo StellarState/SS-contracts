@@ -62,4 +62,65 @@ pub enum Error {
     InvalidInvoiceToken = 27,
     /// Payment token and invoice token must be different contracts.
     IdenticalTokens = 28,
+    /// Investor has no position for this invoice.
+    NoPositionFound = 29,
+    /// Invoice status does not allow this operation.
+    InvalidInvoiceStatus = 30,
+    /// Remaining position after withdrawal is below the minimum investment floor.
+    BelowMinimumInvestment = 31,
+    /// Funding target has not yet been reached.
+    FundingTargetNotReached = 32,
+    /// Deposit amount is zero (dust prevention: use a positive amount).
+    ZeroAmount = 33,
+    /// Deposit amount is below the configured minimum investment.
+    AmountBelowMinimum = 34,
+    /// Address is the zero address (all-zero 32-byte key).
+    InvalidAddress = 35,
+    /// Escrow duration is outside the allowed [MIN, MAX] window.
+    InvalidDuration = 36,
+    /// Caller is not a member of the emergency admin multi-sig set.
+    NotEmergencyAdmin = 37,
+    /// Caller has already approved this emergency release (duplicate).
+    AlreadyApproved = 38,
+    /// Emergency release threshold has not been reached yet.
+    ThresholdNotMet = 39,
+    /// Emergency multi-sig config has not been set.
+    EmergencyNotConfigured = 40,
+    /// Pagination limit is invalid (zero).
+    InvalidLimit = 41,
+    /// Pagination limit exceeds maximum allowed page size.
+    LimitExceeded = 42,
+    /// Invoice with the given ID already exists.
+    InvoiceAlreadyExists = 43,
+    /// Yield basis points is invalid (must be between 1 and 5000).
+    InvalidYield = 44,
+    /// Funding deadline has not passed yet.
+    FundingDeadlineNotPassed = 45,
+    /// Repayment amount is less than the total raised amount.
+    InsufficientRepayment = 46,
+    /// New funding deadline must be greater than the current deadline.
+    DeadlineNotExtended = 47,
+    /// Payment or refund attempted after the due date (plus grace period) has passed.
+    EscrowOverdue = 48,
+    /// Refund attempted before the due date (plus grace period) has passed.
+    EscrowNotOverdue = 49,
+    /// Operation requires the escrow to be in the `Disputed` status.
+    NotDisputed = 50,
+    /// Dispute has already been resolved.
+    AlreadyResolved = 51,
+    /// Dispute resolution attempted after `dispute_timeout_secs` elapsed; only the
+    /// default (refund-to-buyer) fallback is available past this point.
+    DisputeTimedOut = 52,
+    /// Early-settlement discount hook configuration is invalid, or the escrow is
+    /// no longer in a state where configuring one is meaningful.
+    InvalidEarlySettlement = 53,
+    /// Installment repayment schedule is invalid (bad amounts/timestamps/sum),
+    /// or cannot be modified in the escrow's current state.
+    InvalidInstallmentSchedule = 54,
+    /// Settlement fee exceeds the protocol's 10% safety ceiling.
+    FeeTooHigh = 55,
+    /// A registered invoice has reached its configured unique-investor cap.
+    MaxInvestorsReached = 55,
+    /// Investor cap is outside the supported range.
+    InvalidMaxInvestors = 56,
 }

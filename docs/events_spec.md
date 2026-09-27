@@ -23,3 +23,13 @@ This specification documents the exact event topics and payload schemas emitted 
 - **Topics**: `(Symbol("escrow_refunded"), invoice_id: Symbol)`
 - **Data Payload**: `(refunded_amount: i128)`
 - **Description**: Emitted when an unpaid invoice triggers an investor collateral refund after due date.
+
+### `installment_schedule_set`
+- **Topics**: `(Symbol("installment_schedule_set"),)`
+- **Data Payload**: `(invoice_id: Symbol, milestone_count: u32, final_due_ts: u64, total_amount: i128)`
+- **Description**: Emitted when a seller configures or replaces the installment repayment milestone schedule for an invoice.
+
+### `installment_settled`
+- **Topics**: `(Symbol("installment_settled"),)`
+- **Data Payload**: `(invoice_id: Symbol, index: u32, cumulative_amount: i128, paid_amt: i128)`
+- **Description**: Emitted each time cumulative repayments reach a milestone's cumulative target (or the escrow fully settles, closing any remaining milestones).
