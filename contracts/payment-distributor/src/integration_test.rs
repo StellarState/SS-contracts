@@ -95,6 +95,7 @@ fn create_and_fund(ctx: &FlowContext<'_>, amount: i128, due_date: u64) {
         &ctx.inv_token.address,
         &test_commitment(&ctx.escrow.env),
         &None,
+        &None,
     );
     ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
 }
@@ -141,7 +142,7 @@ fn test_integration_partial_payment_then_refund_routes_through_distributor() {
     ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &400);
 
     env.ledger().set_timestamp(10_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     assert_eq!(ctx.payment_token.balance(&ctx.seller), 400);
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 988);
@@ -374,7 +375,7 @@ fn test_integration_state_persistence_after_refund() {
 
     // Advance time past due date and refund.
     env.ledger().set_timestamp(10_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     let state_after_refund = ctx
         .distributor
@@ -435,7 +436,7 @@ fn test_integration_refund_distribution_invocation_verified() {
     ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &400);
 
     env.ledger().set_timestamp(10_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     let state = ctx
         .distributor
@@ -808,17 +809,11 @@ impl MaliciousRefundReentrantToken {
         let escrow: Address = storage.get(&soroban_sdk::symbol_short!("escrow")).unwrap();
         let invoice_id: Symbol = storage.get(&soroban_sdk::symbol_short!("inv")).unwrap();
 
-        let addresses = soroban_sdk::vec![
-            &env,
-            escrow.clone(),
-            escrow.clone(),
-            escrow.clone()
-        ];
+        let addresses = soroban_sdk::vec![&env, escrow.clone(), escrow.clone(), escrow.clone()];
         let amounts = soroban_sdk::vec![&env, 1i128, 1i128, 1i128];
 
         let client = PaymentDistributorClient::new(&env, &distributor);
-        let res =
-            client.try_distribute_refund(&escrow, &invoice_id, &addresses, &amounts, &3u32);
+        let res = client.try_distribute_refund(&escrow, &invoice_id, &addresses, &amounts, &3u32);
         let code: u32 = match res {
             Ok(Ok(())) => 1,
             Ok(Err(_)) => 2,
@@ -903,12 +898,7 @@ fn test_integration_reentrancy_guard_rejects_distribute_refund_when_locked() {
         crate::storage::set_lock(&env, true);
     });
 
-    let addresses = soroban_sdk::vec![
-        &env,
-        escrow.clone(),
-        escrow.clone(),
-        escrow.clone()
-    ];
+    let addresses = soroban_sdk::vec![&env, escrow.clone(), escrow.clone(), escrow.clone()];
     let amounts = soroban_sdk::vec![&env, 100i128, 100i128, 100i128];
 
     let result =
@@ -969,6 +959,7 @@ fn test_integration_state_persistence_after_reentrancy_attempt() {
         &inv_token.address,
         &test_commitment(&escrow.env),
         &None,
+        &None,
     );
     escrow.fund_escrow(&invoice_id, &buyer, &1_000);
     payment_asset.mint(&payer, &1_000);
@@ -985,11 +976,7 @@ fn test_integration_state_persistence_after_reentrancy_attempt() {
     });
 
     // Attempt distribute_refund — it should fail due to ReentrancyDetected.
-    let addresses = soroban_sdk::vec![
-        &env,
-        payment_token.address.clone(),
-        buyer.clone()
-    ];
+    let addresses = soroban_sdk::vec![&env, payment_token.address.clone(), buyer.clone()];
     let amounts = soroban_sdk::vec![&env, 970i128, 970i128];
     let result =
         distributor.try_distribute_refund(&escrow_id, &invoice_id, &addresses, &amounts, &3u32);
@@ -1016,7 +1003,7 @@ fn test_integration_lock_cleared_after_distribute_refund_success() {
     // Record partial payment then refund.
     ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &400);
     env.ledger().set_timestamp(50_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     // Verify refund was distributed.
     let state = ctx
@@ -1038,6 +1025,7 @@ fn test_integration_lock_cleared_after_distribute_refund_success() {
         &ctx.payment_token.address,
         &ctx.inv_token.address,
         &test_commitment(&ctx.escrow.env),
+        &None,
         &None,
     );
     ctx.escrow.fund_escrow(&invoice_id2, &ctx.buyer, &500);
@@ -1073,6 +1061,7 @@ fn test_invariant_distributor_balance_solvency() {
         &ctx.inv_token.address,
         &test_commitment(&ctx.escrow.env),
         &None,
+        &None,
     );
 
     // Fund the escrow
@@ -1093,14 +1082,20 @@ fn test_invariant_distributor_balance_solvency() {
     assert!(balance_after >= 0);
 
     // Verify distribution state consistency: paid_distributed <= cumulative_paid
-    let state = ctx.distributor.get_distribution_state(&ctx.escrow_id, &invoice_id);
+    let state = ctx
+        .distributor
+        .get_distribution_state(&ctx.escrow_id, &invoice_id);
     assert_eq!(state.paid_distributed, 1_000);
     assert!(!state.refund_distributed);
 
-    // Settle the escrow and verify no over-distribution occurs
-    ctx.escrow.settle(&invoice_id);
+    // Escrows keyed by Symbol settle implicitly once `paid_amt` reaches
+    // `face_value` (there is no explicit settle entrypoint for this id type),
+    // so the payment above already settled it. Re-read to confirm no
+    // over-distribution occurred during settlement.
 
-    let final_state = ctx.distributor.get_distribution_state(&ctx.escrow_id, &invoice_id);
+    let final_state = ctx
+        .distributor
+        .get_distribution_state(&ctx.escrow_id, &invoice_id);
     // After settlement, paid_distributed should reflect the settled amount
     assert!(final_state.paid_distributed <= 1_000);
 }
@@ -1127,6 +1122,7 @@ fn test_invariant_refund_balance_conservation() {
         &ctx.inv_token.address,
         &test_commitment(&ctx.escrow.env),
         &None,
+        &None,
     );
 
     // Fund with buyer
@@ -1135,9 +1131,11 @@ fn test_invariant_refund_balance_conservation() {
 
     // Refund the escrow (no payment recorded)
     env.ledger().set_timestamp(100_001);
-    ctx.escrow.refund(&invoice_id);
+    ctx.escrow.refund_escrow(&invoice_id);
 
     // Verify refund distribution state
-    let state = ctx.distributor.get_distribution_state(&ctx.escrow_id, &invoice_id);
+    let state = ctx
+        .distributor
+        .get_distribution_state(&ctx.escrow_id, &invoice_id);
     assert!(state.refund_distributed);
 }

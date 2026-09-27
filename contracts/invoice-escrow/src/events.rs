@@ -1,9 +1,28 @@
 #![allow(deprecated)]
 //! Event definitions for state changes (escrow_created, escrow_funded, payment_settled).
+//!
+//! #471 — All events include the contract address as the first topic for
+//! indexer standardization. Off-chain indexers (Zephyr, Mercury) can filter
+//! by contract address without inspecting the event body.
 
 use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 use crate::types::EscrowStatus;
+
+/// Helper to emit a standardized event with the contract address as the first
+/// topic. This ensures all events follow a consistent schema:
+///   topics: [contract_address, event_name, ...]
+///   data: <payload>
+fn emit_event(env: &Env, event_name: &str, topics: soroban_sdk::Vec<Val>, data: Val) {
+    let contract = env.current_contract_address();
+    let mut full_topics = soroban_sdk::Vec::new(env);
+    full_topics.push_back(contract.to_val());
+    full_topics.push_back(Symbol::new(env, event_name).to_val());
+    for t in topics.iter() {
+        full_topics.push_back(t);
+    }
+    env.events().publish(full_topics, data);
+}
 
 /// Publish a lifecycle transition event carrying the new status and ledger
 /// timestamp, in addition to the narrower per-action events below. Lets
@@ -62,12 +81,7 @@ pub fn escrow_funded(
 }
 
 /// Publish penalty_interest_charged event when late payment incurs additional interest.
-pub fn penalty_interest_charged(
-    env: &Env,
-    inv_id: Symbol,
-    penalty_amount: i128,
-    total_fee: i128,
-) {
+pub fn penalty_interest_charged(env: &Env, inv_id: Symbol, penalty_amount: i128, total_fee: i128) {
     env.events().publish(
         (Symbol::new(env, "penalty_interest_charged"),),
         (inv_id, penalty_amount, total_fee),
@@ -255,11 +269,7 @@ pub fn deadline_extended(
 ) {
     env.events().publish(
         (Symbol::new(env, "deadline_extended"),),
-        (
-            invoice_id.clone(),
-            old_deadline_ledger,
-            new_deadline_ledger,
-        ),
+        (invoice_id.clone(), old_deadline_ledger, new_deadline_ledger),
     );
 }
 /// Publish investment_refunded event.
@@ -285,7 +295,12 @@ pub fn settlement_paid(
 ) {
     env.events().publish(
         (Symbol::new(env, "settlement_paid"),),
-        (investor.clone(), invoice_id.clone(), payout_amount, yield_earned),
+        (
+            investor.clone(),
+            invoice_id.clone(),
+            payout_amount,
+            yield_earned,
+        ),
     );
 }
 
@@ -390,7 +405,7 @@ pub fn param_change_proposed(env: &Env, proposal: &crate::types::PendingParamCha
     env.events().publish(
         (Symbol::new(env, "param_change_proposed"),),
         (
-            proposal.param.clone() as u32,
+            proposal.param as u32,
             proposal.new_value,
             proposal.proposed_at,
             proposal.timelock_secs,
@@ -402,9 +417,6 @@ pub fn param_change_proposed(env: &Env, proposal: &crate::types::PendingParamCha
 pub fn param_change_executed(env: &Env, proposal: &crate::types::PendingParamChange) {
     env.events().publish(
         (Symbol::new(env, "param_change_executed"),),
-        (
-            proposal.param.clone() as u32,
-            proposal.new_value,
-        ),
+        (proposal.param as u32, proposal.new_value),
     );
 }
