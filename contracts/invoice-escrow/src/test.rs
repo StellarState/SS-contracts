@@ -10030,3 +10030,126 @@ fn test_set_installment_schedule_emits_schedule_set_event() {
     });
     assert!(found, "expected installment_schedule_set event");
 }
+
+// ── Issue #470: Invariant tests for storage key uniqueness ────────────────────
+
+/// Verify that all StorageKey variants produce distinct serialized keys.
+/// This prevents prefix collisions where two different logical keys
+/// accidentally map to the same storage location.
+#[test]
+fn test_storage_key_uniqueness() {
+    let env = Env::default();
+
+    // Create test addresses and symbols
+    let addr1 = Address::generate(&env);
+    let addr2 = Address::generate(&env);
+    let sym1 = Symbol::new(&env, "INV001");
+    let sym2 = Symbol::new(&env, "INV002");
+    let bytes1 = test_commitment(&env, "test1");
+    let bytes2 = test_commitment(&env, "test2");
+
+    // Build all key variants
+    let keys = soroban_sdk::vec![
+        &env,
+        storage::StorageKey::Config,
+        storage::StorageKey::Escrow(sym1.clone()),
+        storage::StorageKey::Escrow(sym2.clone()),
+        storage::StorageKey::FunderAmount(sym1.clone(), addr1.clone()),
+        storage::StorageKey::FunderAmount(sym1.clone(), addr2.clone()),
+        storage::StorageKey::FunderAmount(sym2.clone(), addr1.clone()),
+        storage::StorageKey::Nonce(addr1.clone()),
+        storage::StorageKey::Nonce(addr2.clone()),
+        storage::StorageKey::BuyerWhitelist(addr1.clone()),
+        storage::StorageKey::BuyerWhitelist(addr2.clone()),
+        storage::StorageKey::Invoice(bytes1.clone()),
+        storage::StorageKey::Invoice(bytes2.clone()),
+        storage::StorageKey::InvestorPosition(bytes1.clone(), addr1.clone()),
+        storage::StorageKey::InvestorPosition(bytes1.clone(), addr2.clone()),
+        storage::StorageKey::InvestorPosition(bytes2.clone(), addr1.clone()),
+        storage::StorageKey::EmergencyConfig,
+        storage::StorageKey::EmergencyApprovals(sym1.clone()),
+        storage::StorageKey::EscrowCount,
+        storage::StorageKey::EscrowIdByIndex(0),
+        storage::StorageKey::EscrowIdByIndex(1),
+        storage::StorageKey::InvoiceRecord(bytes1.clone()),
+        storage::StorageKey::InvoiceRecord(bytes2.clone()),
+        storage::StorageKey::CategoryFee(types::InvoiceCategory::TradeFinance),
+        storage::StorageKey::CategoryFee(types::InvoiceCategory::SupplyChain),
+        storage::StorageKey::MaxInvestors,
+        storage::StorageKey::InvestorCount(bytes1.clone()),
+        storage::StorageKey::InvestorCount(bytes2.clone()),
+        storage::StorageKey::Dispute(sym1.clone()),
+        storage::StorageKey::Dispute(sym2.clone()),
+        storage::StorageKey::InstallmentSchedule(sym1.clone()),
+        storage::StorageKey::InstallmentSchedule(sym2.clone()),
+        storage::StorageKey::PendingParamChange,
+    ];
+
+    // Verify all keys are unique by checking no two produce the same XDR
+    let mut serialized = soroban_sdk::vec![&env];
+    for i in 0..keys.len() {
+        let key = keys.get_unchecked(i);
+        let xdr = env.storage().to_xdr(&key);
+        // Check for duplicates
+        for j in 0..serialized.len() {
+            let existing = serialized.get_unchecked(j);
+            if xdr == existing {
+                panic!(
+                    "Storage key at index {} collides with index {}",
+                    i, j
+                );
+            }
+        }
+        serialized.push_back(xdr);
+    }
+}
+
+/// Verify that different key types with similar prefixes don't collide.
+#[test]
+fn test_storage_key_prefix_no_collision() {
+    let env = Env::default();
+    let sym = Symbol::new(&env, "INV001");
+
+    let key1 = storage::StorageKey::Escrow(sym.clone());
+    let key2 = storage::StorageKey::EscrowIdByIndex(0);
+
+    let xdr1 = env.storage().to_xdr(&key1);
+    let xdr2 = env.storage().to_xdr(&key2);
+    assert_ne!(xdr1, xdr2, "Escrow and EscrowIdByIndex must not collide");
+}
+
+/// Verify that the same key with different parameters produces different
+/// storage locations (no parameter folding).
+#[test]
+fn test_storage_key_params_distinct() {
+    let env = Env::default();
+
+    let addr1 = Address::generate(&env);
+    let addr2 = Address::generate(&env);
+    let sym = Symbol::new(&env, "INV001");
+    let bytes = test_commitment(&env, "test");
+
+    let key_a = storage::StorageKey::FunderAmount(sym.clone(), addr1.clone());
+    let key_b = storage::StorageKey::FunderAmount(sym.clone(), addr2.clone());
+    assert_ne!(
+        env.storage().to_xdr(&key_a),
+        env.storage().to_xdr(&key_b),
+        "FunderAmount must differ by funder address"
+    );
+
+    let key_c = storage::StorageKey::InvestorPosition(bytes.clone(), addr1.clone());
+    let key_d = storage::StorageKey::InvestorPosition(bytes.clone(), addr2.clone());
+    assert_ne!(
+        env.storage().to_xdr(&key_c),
+        env.storage().to_xdr(&key_d),
+        "InvestorPosition must differ by investor address"
+    );
+
+    let key_e = storage::StorageKey::EscrowIdByIndex(0);
+    let key_f = storage::StorageKey::EscrowIdByIndex(1);
+    assert_ne!(
+        env.storage().to_xdr(&key_e),
+        env.storage().to_xdr(&key_f),
+        "EscrowIdByIndex must differ by index"
+    );
+}
