@@ -364,3 +364,34 @@ pub fn remove_installment_schedule(env: &Env, inv_id: &Symbol) {
         .persistent()
         .remove(&StorageKey::InstallmentSchedule(inv_id.clone()));
 }
+
+/// Count unique investors recorded for a registered invoice.
+pub fn get_investor_count(env: &Env, inv_id: &BytesN<32>) -> u32 {
+    let key = StorageKey::InvestorCount(inv_id.clone());
+    let count = env.storage().persistent().get(&key).unwrap_or(0);
+    if env.storage().persistent().has(&key) {
+        bump_persistent(env, &key);
+    }
+    count
+}
+
+/// Store the unique investor count for a registered invoice.
+pub fn set_investor_count(env: &Env, inv_id: &BytesN<32>, count: u32) {
+    let key = StorageKey::InvestorCount(inv_id.clone());
+    env.storage().persistent().set(&key, &count);
+    bump_persistent(env, &key);
+}
+
+/// Return configured investor cap, defaulting to 500 for existing deployments.
+pub fn get_max_investors(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&StorageKey::MaxInvestors)
+        .unwrap_or(500)
+}
+
+pub fn set_max_investors(env: &Env, count: u32) {
+    env.storage()
+        .instance()
+        .set(&StorageKey::MaxInvestors, &count);
+}

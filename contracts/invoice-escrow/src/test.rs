@@ -8828,6 +8828,110 @@ fn test_register_invoice_non_admin_rejected() {
 }
 
 #[test]
+fn test_cancel_invoice_admin_cancels_open_invoice_and_allows_immediate_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let investor = Address::generate(&env);
+    let invoice_id = BytesN::from_array(&env, &[41u8; 32]);
+
+    c.initialize(&admin, &300);
+    c.register_invoice(&invoice_id, &100_000, &80_000, &500, &1000);
+    c.invest(&invoice_id, &investor, &20_000);
+    c.cancel_invoice(&invoice_id);
+
+    assert_eq!(c.get_invoice_record(&invoice_id).status, EscrowStatus::Cancelled);
+    let events = env.events().all();
+    let event = events.events().last().unwrap();
+    let (_, topics, data) = parse_event(&env, event);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        Symbol::new(&env, "invoice_cancelled")
+    );
+    let event_invoice: BytesN<32> = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    let event_admin: Address = data.try_into_val(&env).unwrap();
+    assert_eq!(event_invoice, invoice_id);
+    assert_eq!(event_admin, admin);
+
+    c.refund(&invoice_id, &investor);
+    assert_eq!(c.get_investor_position(&invoice_id, &investor), 0);
+    assert_eq!(c.get_invoice_record(&invoice_id).total_raised, 0);
+
+}
+
+#[test]
+fn test_cancel_invoice_rejects_funded_and_unauthorized_calls() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let investor = Address::generate(&env);
+    let invoice_id = BytesN::from_array(&env, &[42u8; 32]);
+
+    c.initialize(&admin, &300);
+    c.register_invoice(&invoice_id, &100_000, &80_000, &500, &1000);
+    c.invest(&invoice_id, &investor, &80_000);
+    c.finalise_funding(&invoice_id);
+    assert_eq!(
+        c.try_cancel_invoice(&invoice_id),
+        Err(Ok(Error::InvalidInvoiceStatus))
+    );
+
+    let open_id = BytesN::from_array(&env, &[43u8; 32]);
+    c.register_invoice(&open_id, &100_000, &80_000, &500, &1000);
+    env.set_auths(&[]);
+    assert!(c.try_cancel_invoice(&open_id).is_err());
+}
+
+#[test]
+fn test_investor_cap_counts_unique_wallets_and_is_configurable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let invoice_id = BytesN::from_array(&env, &[44u8; 32]);
+
+    c.initialize(&admin, &300);
+    c.set_max_investors(&1);
+    c.register_invoice(&invoice_id, &100_000, &80_000, &500, &1000);
+    c.invest(&invoice_id, &first, &10_000);
+    c.invest(&invoice_id, &first, &10_000);
+    assert_eq!(c.get_invoice_investor_count(&invoice_id), 1);
+    assert_eq!(
+        c.try_invest(&invoice_id, &second, &10_000),
+        Err(Ok(Error::MaxInvestorsReached))
+    );
+    assert_eq!(c.get_invoice_record(&invoice_id).total_raised, 20_000);
+    assert_eq!(
+        c.try_set_max_investors(&0),
+        Err(Ok(Error::InvalidMaxInvestors))
+    );
+    assert_eq!(
+        c.try_set_max_investors(&501),
+        Err(Ok(Error::InvalidMaxInvestors))
+    );
+}
+
+#[test]
+fn test_set_max_investors_requires_admin_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let c = InvoiceEscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    c.initialize(&admin, &300);
+
+    env.set_auths(&[]);
+    assert!(c.try_set_max_investors(&25).is_err());
+}
+
+#[test]
 fn test_refund_happy_path() {
     let env = Env::default();
     env.mock_all_auths();

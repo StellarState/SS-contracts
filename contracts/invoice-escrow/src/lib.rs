@@ -43,6 +43,7 @@ fn ensure_non_zero_address(env: &Env, address: &Address) -> Result<(), Error> {
 }
 
 const MAX_BPS: u32 = 10_000;
+const MAX_INVESTORS_HARD_LIMIT: u32 = 500;
 const DISTRIBUTE_PAYMENT_FN: &str = "distribute_payment";
 const DISTRIBUTE_REFUND_FN: &str = "distribute_refund";
 
@@ -162,6 +163,19 @@ impl InvoiceEscrow {
             penalty_interest_bps: 0,
         };
         storage::set_config(&env, &config);
+        Ok(())
+    }
+
+    /// Set the per-invoice unique investor limit. The hard ceiling keeps
+    /// settlement iteration bounded even when the admin changes the default.
+    pub fn set_max_investors(env: Env, count: u32) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        config.admin.require_auth();
+        if !(1..=MAX_INVESTORS_HARD_LIMIT).contains(&count) {
+            return Err(Error::InvalidMaxInvestors);
+        }
+        storage::set_max_investors(&env, count);
+        events::max_investors_updated(&env, count);
         Ok(())
     }
 
@@ -1599,6 +1613,7 @@ impl InvoiceEscrow {
         };
 
         storage::set_invoice_record(&env, &invoice_id, &data);
+        storage::set_investor_count(&env, &invoice_id, 0);
         events::invoice_registered(
             &env,
             &invoice_id,
@@ -1607,6 +1622,22 @@ impl InvoiceEscrow {
             yield_bps,
             deadline_ledger,
         );
+        Ok(())
+    }
+
+    /// Cancel a registered invoice before funding completes. Open positions
+    /// remain refundable through `refund`; funded invoices cannot be cancelled.
+    pub fn cancel_invoice(env: Env, invoice_id: BytesN<32>) -> Result<(), Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        config.admin.require_auth();
+        let mut record =
+            storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)?;
+        if record.status != EscrowStatus::Created || record.total_raised >= record.funding_target {
+            return Err(Error::InvalidInvoiceStatus);
+        }
+        record.status = EscrowStatus::Cancelled;
+        storage::set_invoice_record(&env, &invoice_id, &record);
+        events::invoice_cancelled(&env, &invoice_id, &config.admin);
         Ok(())
     }
 
@@ -1707,20 +1738,29 @@ impl InvoiceEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        let current_pos = storage::get_investor_position(&env, &invoice_id, &investor);
-        let new_pos = current_pos.checked_add(amount).ok_or(Error::Overflow)?;
-        storage::set_investor_position(&env, &invoice_id, &investor, new_pos);
-
         let mut already_in = false;
-        for inv in record.investors.iter() {
-            if inv == investor {
+        for existing in record.investors.iter() {
+            if existing == investor {
                 already_in = true;
                 break;
             }
         }
         if !already_in {
+            let investor_count = storage::get_investor_count(&env, &invoice_id);
+            if investor_count >= storage::get_max_investors(&env) {
+                return Err(Error::MaxInvestorsReached);
+            }
+            storage::set_investor_count(
+                &env,
+                &invoice_id,
+                investor_count.checked_add(1).ok_or(Error::Overflow)?,
+            );
             record.investors.push_back(investor.clone());
         }
+
+        let current_pos = storage::get_investor_position(&env, &invoice_id, &investor);
+        let new_pos = current_pos.checked_add(amount).ok_or(Error::Overflow)?;
+        storage::set_investor_position(&env, &invoice_id, &investor, new_pos);
 
         record.total_raised = new_raised;
         if record.total_raised == record.funding_target {
@@ -1869,8 +1909,9 @@ impl InvoiceEscrow {
             return Err(Error::InvalidInvoiceStatus);
         }
 
-        let current_ledger = env.ledger().sequence();
-        if current_ledger <= record.deadline_ledger {
+        if record.status != EscrowStatus::Cancelled
+            && env.ledger().sequence() <= record.deadline_ledger
+        {
             return Err(Error::FundingDeadlineNotPassed);
         }
 
@@ -1956,6 +1997,11 @@ impl InvoiceEscrow {
     /// View: return registered invoice data.
     pub fn get_invoice_record(env: Env, invoice_id: BytesN<32>) -> Result<InvoiceData, Error> {
         storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)
+    }
+
+    /// View: number of unique investors admitted to the registered invoice.
+    pub fn get_invoice_investor_count(env: Env, invoice_id: BytesN<32>) -> u32 {
+        storage::get_investor_count(&env, &invoice_id)
     }
 
     /// View: return investor position amount for an invoice.
