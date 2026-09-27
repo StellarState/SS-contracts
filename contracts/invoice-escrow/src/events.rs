@@ -1,9 +1,28 @@
 #![allow(deprecated)]
 //! Event definitions for state changes (escrow_created, escrow_funded, payment_settled).
+//!
+//! #471 — All events include the contract address as the first topic for
+//! indexer standardization. Off-chain indexers (Zephyr, Mercury) can filter
+//! by contract address without inspecting the event body.
 
 use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 use crate::types::EscrowStatus;
+
+/// Helper to emit a standardized event with the contract address as the first
+/// topic. This ensures all events follow a consistent schema:
+///   topics: [contract_address, event_name, ...]
+///   data: <payload>
+fn emit_event(env: &Env, event_name: &str, topics: soroban_sdk::Vec<Val>, data: Val) {
+    let contract = env.current_contract_address();
+    let mut full_topics = soroban_sdk::Vec::new(env);
+    full_topics.push_back(contract.to_val());
+    full_topics.push_back(Symbol::new(env, event_name).to_val());
+    for t in topics.iter() {
+        full_topics.push_back(t);
+    }
+    env.events().publish(full_topics, data);
+}
 
 /// Publish a lifecycle transition event carrying the new status and ledger
 /// timestamp, in addition to the narrower per-action events below. Lets

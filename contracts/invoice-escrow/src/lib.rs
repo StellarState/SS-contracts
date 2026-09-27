@@ -2170,6 +2170,51 @@ impl InvoiceEscrow {
     pub fn get_pending_param_change(env: Env) -> Option<types::PendingParamChange> {
         storage::get_pending_param_change(&env)
     }
+
+    // ── Issue #469: Batch TTL extension for off-chain keeper bots ─────────────
+
+    /// Extend the TTL of multiple persistent storage keys in a single call.
+    /// Off-chain keeper bots can use this to keep active escrows alive without
+    /// issuing separate transactions per key. Only extends keys that exist;
+    /// missing keys are silently skipped.
+    pub fn batch_extend_ttl(env: Env, keys: Vec<storage::StorageKey>) {
+        storage::batch_extend_ttl(&env, &keys);
+    }
+
+    // ── Issue #468: Storage footprint compaction for completed invoices ───────
+
+    /// Remove all persistent storage entries associated with a completed
+    /// invoice to reclaim storage footprint. Only callable by admin and only
+    /// after the invoice has reached a terminal state (Settled, Refunded, or
+    /// Cancelled).
+    ///
+    /// Returns the number of storage keys removed.
+    pub fn compact_invoice_storage(
+        env: Env,
+        admin: Address,
+        inv_id: Symbol,
+        funder_addresses: Vec<Address>,
+    ) -> Result<u32, Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if admin != config.admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        // Verify invoice is in a terminal state
+        let escrow = storage::get_escrow(&env, inv_id.clone())
+            .ok_or(Error::InvalidEscrow)?;
+        match escrow.status {
+            types::EscrowStatus::Settled
+            | types::EscrowStatus::Refunded
+            | types::EscrowStatus::Cancelled => {}
+            _ => return Err(Error::InvalidStatus),
+        }
+
+        let removed = storage::compact_invoice_storage(&env, &inv_id, &funder_addresses);
+        events::escrow_cleaned_up(&env, inv_id);
+        Ok(removed)
+    }
 }
 
 #[cfg(test)]
