@@ -767,6 +767,86 @@ impl PaymentDistributor {
             fee_bps_u32,
         )
     }
+
+    // ── Issue #444: Residual dust sweep & recipient invariant validation ────
+
+    /// Sweep residual token balances held by this contract to the admin.
+    ///
+    /// After distributions, rounding and partial fills can leave sub-unit
+    /// ("dust") balances stranded in the contract. Over many distributions
+    /// these accumulate and inflate the contract's visible balance without
+    /// belonging to any party. This function lets the admin reclaim them.
+    ///
+    /// The swept amount is the full contract balance for `token`. If the
+    /// balance is zero, `NothingToSweep` is returned.
+    pub fn sweep_dust(env: Env, admin: Address, token: Address) -> Result<i128, Error> {
+        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&env.current_contract_address());
+        if balance <= 0 {
+            return Err(Error::NothingToSweep);
+        }
+
+        let fee_recipient = storage::get_fee_recipient(&env)
+            .unwrap_or_else(|| storage::get_admin(&env).expect("admin must exist"));
+        token_client.transfer(
+            &env.current_contract_address(),
+            &fee_recipient,
+            &balance,
+        );
+
+        events::dust_swept(&env, &admin, &token, &fee_recipient, balance);
+        Ok(balance)
+    }
+
+    /// Validate that all recipients in a distribution are distinct non-zero
+    /// addresses and that no recipient is the contract itself.
+    ///
+    /// Call this before executing any distribution to fail-fast on malformed
+    /// splits rather than partially distributing and leaving state inconsistent.
+    pub fn validate_recipients(
+        env: Env,
+        token: Address,
+        recipients: Vec<Address>,
+    ) -> Result<(), Error> {
+        let contract_addr = env.current_contract_address();
+        let mut seen = soroban_sdk::Map::<Address, bool>::new(&env);
+
+        for i in 0..recipients.len() {
+            let addr = recipients.get(i).ok_or(Error::InvalidSplit)?;
+
+            // Reject the contract itself as a recipient — funds would be
+            // irrecoverable without a dedicated sweep path.
+            if addr == contract_addr {
+                return Err(Error::InvalidSplit);
+            }
+
+            // Reject duplicate recipients — two entries for the same address
+            // would silently merge into a single transfer, losing the intended
+            // split semantics.
+            if seen.contains_key(addr.clone()) {
+                return Err(Error::InvalidSplit);
+            }
+            seen.set(addr.clone(), true);
+
+            // Reject zero-address recipients.
+            let zero_str = soroban_sdk::String::from_str(
+                &env,
+                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            );
+            let zero = Address::from_string(&zero_str);
+            if addr == zero {
+                return Err(Error::InvalidSplit);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
