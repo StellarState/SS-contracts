@@ -144,6 +144,19 @@ jobs:
       - name: Run cargo audit
         run: cargo audit
 
+  deny:
+    name: Licence & Source Policy (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+      - name: Check advisories, licences, bans and sources
+        run: cargo deny --all-features check
+
   wasm-size-check:
     name: WASM Size Regression Check
     runs-on: ubuntu-latest

@@ -8019,8 +8019,28 @@ fn test_event_escrow_created_snapshot() {
         if let Some(first) = topics.get(0) {
             let topic: Symbol = first.try_into_val(&env).unwrap();
             if topic == Symbol::new(&env, "escrow_created") {
-                let (ev_id, ev_seller, ev_debtor, ev_face, ev_price, ev_due, ev_token, ev_inv, _commit, _milestone): (
-                    Symbol, Address, Address, i128, i128, u64, Address, Address, soroban_sdk::BytesN<32>, Option<i128>,
+                let (
+                    ev_id,
+                    ev_seller,
+                    ev_debtor,
+                    ev_face,
+                    ev_price,
+                    ev_due,
+                    ev_token,
+                    ev_inv,
+                    _commit,
+                    _milestone,
+                ): (
+                    Symbol,
+                    Address,
+                    Address,
+                    i128,
+                    i128,
+                    u64,
+                    Address,
+                    Address,
+                    soroban_sdk::BytesN<32>,
+                    Option<i128>,
                 ) = data.try_into_val(&env).unwrap();
                 assert_eq!(ev_id, c.invoice_id);
                 assert_eq!(ev_seller, c.seller);
@@ -8055,8 +8075,16 @@ fn test_event_escrow_funded_snapshot() {
     pt_asset.mint(&buyer, &10_000);
 
     escrow_client.create_escrow(
-        &invoice_id, &seller, &buyer, &10_000, &10_000, &1_000_000,
-        &pt_id.address(), &inv_token_id, &test_commitment(&env, "funded_ev"), &None,
+        &invoice_id,
+        &seller,
+        &buyer,
+        &10_000,
+        &10_000,
+        &1_000_000,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "funded_ev"),
+        &None,
         &None,
     );
     escrow_client.fund_escrow(&invoice_id, &buyer, &10_000);
@@ -8064,13 +8092,15 @@ fn test_event_escrow_funded_snapshot() {
     let events = env.events().all();
     let found = events.events().iter().rev().find(|e| {
         let (_, topics, _) = parse_event(&env, e);
-        topics.get(0).map(|t| {
-            Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_funded")
-        }).unwrap_or(false)
+        topics
+            .get(0)
+            .map(|t| Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_funded"))
+            .unwrap_or(false)
     });
     assert!(found.is_some(), "escrow_funded event not emitted");
     let (_, _, data) = parse_event(&env, found.unwrap());
-    let (ev_id, ev_funder, ev_amount, ev_funded, ev_price): (Symbol, Address, i128, i128, i128) = data.try_into_val(&env).unwrap();
+    let (ev_id, ev_funder, ev_amount, ev_funded, ev_price): (Symbol, Address, i128, i128, i128) =
+        data.try_into_val(&env).unwrap();
     assert_eq!(ev_id, invoice_id);
     assert_eq!(ev_funder, buyer);
     assert_eq!(ev_amount, 10_000);
@@ -8089,13 +8119,17 @@ fn test_event_payment_settled_snapshot() {
     let events = env.events().all();
     let found = events.events().iter().rev().find(|e| {
         let (_, topics, _) = parse_event(&env, e);
-        topics.get(0).map(|t| {
-            Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "payment_settled")
-        }).unwrap_or(false)
+        topics
+            .get(0)
+            .map(|t| {
+                Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "payment_settled")
+            })
+            .unwrap_or(false)
     });
     assert!(found.is_some(), "payment_settled event not emitted");
     let (_, _, data) = parse_event(&env, found.unwrap());
-    let (ev_id, ev_amount, ev_fee, ev_investor): (Symbol, i128, i128, i128) = data.try_into_val(&env).unwrap();
+    let (ev_id, ev_amount, ev_fee, ev_investor): (Symbol, i128, i128, i128) =
+        data.try_into_val(&env).unwrap();
     assert_eq!(ev_id, c.invoice_id);
     assert_eq!(ev_amount, 10_000);
     assert_eq!(ev_fee, 300);
@@ -8116,9 +8150,12 @@ fn test_event_escrow_refunded_snapshot() {
     let events = env.events().all();
     let found = events.events().iter().rev().find(|e| {
         let (_, topics, _) = parse_event(&env, e);
-        topics.get(0).map(|t| {
-            Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_refunded")
-        }).unwrap_or(false)
+        topics
+            .get(0)
+            .map(|t| {
+                Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_refunded")
+            })
+            .unwrap_or(false)
     });
     assert!(found.is_some(), "escrow_refunded event not emitted");
     let (_, _, data) = parse_event(&env, found.unwrap());
@@ -8144,8 +8181,16 @@ fn test_event_escrow_cancelled_snapshot() {
 
     escrow_client.initialize(&admin, &300);
     escrow_client.create_escrow(
-        &invoice_id, &seller, &payer, &10_000, &10_000, &1_000_000,
-        &pt_id.address(), &inv_token_id, &test_commitment(&env, "cancel_ev"), &None,
+        &invoice_id,
+        &seller,
+        &payer,
+        &10_000,
+        &10_000,
+        &1_000_000,
+        &pt_id.address(),
+        &inv_token_id,
+        &test_commitment(&env, "cancel_ev"),
+        &None,
         &None,
     );
 
@@ -8154,9 +8199,12 @@ fn test_event_escrow_cancelled_snapshot() {
     let events = env.events().all();
     let found = events.events().iter().rev().find(|e| {
         let (_, topics, _) = parse_event(&env, e);
-        topics.get(0).map(|t| {
-            Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_cancelled")
-        }).unwrap_or(false)
+        topics
+            .get(0)
+            .map(|t| {
+                Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "escrow_cancelled")
+            })
+            .unwrap_or(false)
     });
     assert!(found.is_some(), "escrow_cancelled event not emitted");
     let (_, _, data) = parse_event(&env, found.unwrap());
@@ -8178,7 +8226,9 @@ fn test_settlement_wrong_payer_rejected() {
 
     let wrong_payer = Address::generate(&env);
     c.payment_token.asset.mint(&wrong_payer, &10_000);
-    let result = c.escrow_client.try_record_payment(&c.invoice_id, &wrong_payer, &10_000);
+    let result = c
+        .escrow_client
+        .try_record_payment(&c.invoice_id, &wrong_payer, &10_000);
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidPayer)));
 }
 
@@ -8191,7 +8241,9 @@ fn test_settlement_invalid_payer_rejected() {
 
     let wrong_payer = Address::generate(&env);
     c.payment_token.asset.mint(&wrong_payer, &10_000);
-    let result = c.escrow_client.try_record_payment(&c.invoice_id, &wrong_payer, &10_000);
+    let result = c
+        .escrow_client
+        .try_record_payment(&c.invoice_id, &wrong_payer, &10_000);
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidPayer)));
 }
 
@@ -8208,7 +8260,10 @@ fn test_settlement_pro_rata_fee_calculation() {
     let investor_share = 20_000 - fee; // = 19_000
     assert_eq!(c.payment_token.client.balance(&c.seller), 20_000);
     assert_eq!(c.payment_token.client.balance(&c.admin), fee);
-    assert_eq!(c.payment_token.client.balance(&c.buyer), 20_000 - 20_000 + investor_share);
+    assert_eq!(
+        c.payment_token.client.balance(&c.buyer),
+        20_000 - 20_000 + investor_share
+    );
 }
 
 #[test]
@@ -8220,7 +8275,9 @@ fn test_settlement_duplicate_rejected() {
 
     c.record_payment(10_000);
 
-    let result = c.escrow_client.try_record_payment(&c.invoice_id, &c.payer, &10_000);
+    let result = c
+        .escrow_client
+        .try_record_payment(&c.invoice_id, &c.payer, &10_000);
     assert_eq!(result, Err(Ok(crate::errors::Error::AlreadySettled)));
 }
 
@@ -8287,7 +8344,10 @@ fn test_create_escrow_exact_min_duration() {
         &None,
         &None,
     );
-    assert_eq!(c.get_escrow_status(&Symbol::new(&env, "DUR_MIN")), EscrowStatus::Created);
+    assert_eq!(
+        c.get_escrow_status(&Symbol::new(&env, "DUR_MIN")),
+        EscrowStatus::Created
+    );
 }
 
 #[test]
@@ -8352,7 +8412,10 @@ fn test_create_escrow_exact_max_duration() {
         &None,
         &None,
     );
-    assert_eq!(c.get_escrow_status(&Symbol::new(&env, "DUR_MAX")), EscrowStatus::Created);
+    assert_eq!(
+        c.get_escrow_status(&Symbol::new(&env, "DUR_MAX")),
+        EscrowStatus::Created
+    );
 }
 
 #[test]
@@ -8569,7 +8632,13 @@ fn test_emergency_release_duplicate_approval() {
 
     let admin2 = Address::generate(&env);
     let admins = soroban_sdk::vec![&env, admin.clone(), admin2];
-    c.set_emergency_config(&admin, &MultiSigConfig { admins, threshold: 2 });
+    c.set_emergency_config(
+        &admin,
+        &MultiSigConfig {
+            admins,
+            threshold: 2,
+        },
+    );
 
     c.emergency_release(&admin, &Symbol::new(&env, "EM3")); // first — ok
     let result = c.try_emergency_release(&admin, &Symbol::new(&env, "EM3")); // duplicate
@@ -8611,7 +8680,13 @@ fn test_emergency_release_non_admin() {
     c.fund_escrow(&Symbol::new(&env, "EM4"), &buyer, &1000);
 
     let admins = soroban_sdk::vec![&env, admin.clone()];
-    c.set_emergency_config(&admin, &MultiSigConfig { admins, threshold: 1 });
+    c.set_emergency_config(
+        &admin,
+        &MultiSigConfig {
+            admins,
+            threshold: 1,
+        },
+    );
 
     let non_admin = Address::generate(&env);
     let result = c.try_emergency_release(&non_admin, &Symbol::new(&env, "EM4"));
@@ -8629,7 +8704,7 @@ fn test_get_escrows_empty_contract() {
 fn test_get_escrows_pagination() {
     let (env, c, pt, inv_token, admin, seller) = setup_escrow_test();
     let now = env.ledger().timestamp();
-    
+
     for i in 0..5 {
         let invoice_id = Symbol::new(&env, &format!("inv{}", i));
         c.create_escrow(
@@ -8646,13 +8721,13 @@ fn test_get_escrows_pagination() {
             &None,
         );
     }
-    
+
     let page1 = c.get_escrows(&0, &2).unwrap();
     assert_eq!(page1.len(), 2);
-    
+
     let page2 = c.get_escrows(&2, &2).unwrap();
     assert_eq!(page2.len(), 2);
-    
+
     let page3 = c.get_escrows(&4, &2).unwrap();
     assert_eq!(page3.len(), 1);
 }
@@ -8675,7 +8750,7 @@ fn test_get_escrows_limit_exceeded() {
 fn test_get_escrows_start_beyond_count() {
     let (env, c, pt, inv_token, admin, seller) = setup_escrow_test();
     let now = env.ledger().timestamp();
-    
+
     c.create_escrow(
         &Symbol::new(&env, "inv1"),
         &seller,
@@ -8689,7 +8764,7 @@ fn test_get_escrows_start_beyond_count() {
         &None,
         &None,
     );
-    
+
     let result = c.get_escrows(&10, &5).unwrap();
     assert_eq!(result.len(), 0);
 }
@@ -8699,7 +8774,7 @@ fn test_fund_escrow_signed_expired_signature_rejected() {
     let (env, c, pt, inv_token, admin, seller) = setup_escrow_test();
     let buyer = Address::generate(&env);
     pt.asset.mint(&buyer, &1000);
-    
+
     let now = env.ledger().timestamp();
     c.create_escrow(
         &Symbol::new(&env, "inv1"),
@@ -8714,10 +8789,11 @@ fn test_fund_escrow_signed_expired_signature_rejected() {
         &None,
         &None,
     );
-    
+
     env.ledger().with_mut(|li| li.timestamp = now + 3600);
-    
-    let result = c.try_fund_escrow_signed(&Symbol::new(&env, "inv1"), &buyer, &500, &1, &(now + 1800));
+
+    let result =
+        c.try_fund_escrow_signed(&Symbol::new(&env, "inv1"), &buyer, &500, &1, &(now + 1800));
     assert_eq!(result, Err(Ok(Error::SignatureExpired)));
 }
 
@@ -8726,7 +8802,7 @@ fn test_fund_escrow_signed_future_timestamp_succeeds() {
     let (env, c, pt, inv_token, admin, seller) = setup_escrow_test();
     let buyer = Address::generate(&env);
     pt.asset.mint(&buyer, &1000);
-    
+
     let now = env.ledger().timestamp();
     c.create_escrow(
         &Symbol::new(&env, "inv1"),
@@ -8741,7 +8817,7 @@ fn test_fund_escrow_signed_future_timestamp_succeeds() {
         &None,
         &None,
     );
-    
+
     let result = c.fund_escrow_signed(&Symbol::new(&env, "inv1"), &buyer, &500, &1, &(now + 3600));
     assert!(result.is_ok());
 }
@@ -8763,7 +8839,13 @@ fn test_register_invoice_happy_path() {
     let yield_bps = 500u32; // 5%
     let deadline_ledger = 1000u32;
 
-    c.register_invoice(&inv_id, &face_value, &funding_target, &yield_bps, &deadline_ledger);
+    c.register_invoice(
+        &inv_id,
+        &face_value,
+        &funding_target,
+        &yield_bps,
+        &deadline_ledger,
+    );
 
     let record = c.get_invoice_record(&inv_id);
     assert_eq!(record.invoice_id, inv_id);
@@ -8842,7 +8924,10 @@ fn test_cancel_invoice_admin_cancels_open_invoice_and_allows_immediate_refund() 
     c.invest(&invoice_id, &investor, &20_000);
     c.cancel_invoice(&invoice_id);
 
-    assert_eq!(c.get_invoice_record(&invoice_id).status, EscrowStatus::Cancelled);
+    assert_eq!(
+        c.get_invoice_record(&invoice_id).status,
+        EscrowStatus::Cancelled
+    );
     let events = env.events().all();
     let event = events.events().last().unwrap();
     let (_, topics, data) = parse_event(&env, event);
@@ -8858,7 +8943,6 @@ fn test_cancel_invoice_admin_cancels_open_invoice_and_allows_immediate_refund() 
     c.refund(&invoice_id, &investor);
     assert_eq!(c.get_investor_position(&invoice_id, &investor), 0);
     assert_eq!(c.get_invoice_record(&invoice_id).total_raised, 0);
-
 }
 
 #[test]
@@ -9152,7 +9236,9 @@ fn test_settlement_within_grace_period_succeeds() {
     test_env.record_payment(1000);
 
     assert_eq!(
-        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
         EscrowStatus::Settled
     );
 }
@@ -9170,11 +9256,10 @@ fn test_settlement_after_grace_period_is_rejected() {
     // due_date (1_000_000) + 3601s: just past the grace window.
     env.ledger().set_timestamp(1_000_000 + 3601);
 
-    let result = test_env.escrow_client.try_record_payment(
-        &test_env.invoice_id,
-        &test_env.payer,
-        &1000,
-    );
+    let result =
+        test_env
+            .escrow_client
+            .try_record_payment(&test_env.invoice_id, &test_env.payer, &1000);
     assert_eq!(result, Err(Ok(Error::EscrowOverdue)));
 }
 
@@ -9210,12 +9295,12 @@ fn test_refund_after_grace_period_expiration_succeeds() {
     // due_date (1_000_000) + 3601s: grace window has fully lapsed.
     env.ledger().set_timestamp(1_000_000 + 3601);
 
-    test_env
-        .escrow_client
-        .refund_escrow(&test_env.invoice_id);
+    test_env.escrow_client.refund_escrow(&test_env.invoice_id);
 
     assert_eq!(
-        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
         EscrowStatus::Refunded
     );
 }
@@ -9227,7 +9312,13 @@ fn test_refund_after_grace_period_expiration_succeeds() {
 fn setup_categorized_escrow(
     env: &Env,
     category: Option<InvoiceCategory>,
-) -> (InvoiceEscrowClient<'static>, Address, Symbol, TokenClient<'static>, Address) {
+) -> (
+    InvoiceEscrowClient<'static>,
+    Address,
+    Symbol,
+    TokenClient<'static>,
+    Address,
+) {
     env.mock_all_auths();
     let escrow_id = env.register_contract(None, InvoiceEscrow);
     let client = InvoiceEscrowClient::new(env, &escrow_id);
@@ -9332,8 +9423,7 @@ fn test_unauthorized_category_fee_configuration_is_rejected() {
 #[test]
 fn test_settlement_fee_enforces_admin_and_ten_percent_ceiling() {
     let env = Env::default();
-    let (client, admin, _invoice_id, _pt_client, _debtor) =
-        setup_categorized_escrow(&env, None);
+    let (client, admin, _invoice_id, _pt_client, _debtor) = setup_categorized_escrow(&env, None);
 
     client.set_settlement_fee(&admin, &0);
     assert_eq!(client.get_category_fee(&InvoiceCategory::Standard), 0);
@@ -9366,9 +9456,12 @@ fn test_settlement_fee_is_paid_to_admin_treasury_and_emits_event() {
     let events = env.events().all();
     let fee_event = events.events().iter().rev().find(|event| {
         let (_, topics, _) = parse_event(&env, event);
-        topics.get(0).map(|topic| {
-            Symbol::try_from_val(&env, &topic).unwrap() == Symbol::new(&env, "fee_collected")
-        }).unwrap_or(false)
+        topics
+            .get(0)
+            .map(|topic| {
+                Symbol::try_from_val(&env, &topic).unwrap() == Symbol::new(&env, "fee_collected")
+            })
+            .unwrap_or(false)
     });
     let (_, _, data) = parse_event(&env, fee_event.expect("fee_collected event missing"));
     let (invoice_id, amount, treasury): (Symbol, i128, Address) = data.try_into_val(&env).unwrap();
@@ -9394,7 +9487,9 @@ fn test_dispute_raised_by_buyer_and_seller() {
             &soroban_sdk::Bytes::from_slice(&env, b"quality dispute"),
         );
         assert_eq!(
-            test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+            test_env
+                .escrow_client
+                .get_escrow_status(&test_env.invoice_id),
             EscrowStatus::Disputed
         );
     }
@@ -9409,7 +9504,9 @@ fn test_dispute_raised_by_buyer_and_seller() {
             &soroban_sdk::Bytes::from_slice(&env, b"late delivery"),
         );
         assert_eq!(
-            test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+            test_env
+                .escrow_client
+                .get_escrow_status(&test_env.invoice_id),
             EscrowStatus::Disputed
         );
     }
@@ -9448,10 +9545,15 @@ fn test_resolve_dispute_in_favor_of_seller() {
     );
 
     assert_eq!(
-        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
         EscrowStatus::Settled
     );
-    assert_eq!(test_env.payment_token.client.balance(&test_env.seller), 1000);
+    assert_eq!(
+        test_env.payment_token.client.balance(&test_env.seller),
+        1000
+    );
 }
 
 #[test]
@@ -9472,7 +9574,9 @@ fn test_resolve_dispute_in_favor_of_buyer() {
     );
 
     assert_eq!(
-        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
         EscrowStatus::Refunded
     );
     assert_eq!(test_env.payment_token.client.balance(&test_env.buyer), 1000);
@@ -9501,7 +9605,9 @@ fn test_resolve_dispute_after_timeout_defaults_to_buyer_refund() {
     );
 
     assert_eq!(
-        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
         EscrowStatus::Refunded
     );
     assert_eq!(test_env.payment_token.client.balance(&test_env.buyer), 1000);
@@ -9568,10 +9674,7 @@ fn test_raise_dispute_requires_funded_status() {
 
 /// Build an installment input pair for schedule tests.
 fn installment(_env: &Env, due_ts: u64, amount: i128) -> types::InstallmentInput {
-    types::InstallmentInput {
-        due_ts,
-        amount,
-    }
+    types::InstallmentInput { due_ts, amount }
 }
 
 #[test]
@@ -9780,7 +9883,9 @@ fn test_record_payment_settles_installment_milestones_progressively() {
         .get_installment_schedule(&test_env.invoice_id);
     assert!(stored.iter().all(|m| m.settled));
     assert_eq!(
-        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
         EscrowStatus::Settled
     );
     let next = test_env
@@ -9795,10 +9900,15 @@ fn test_failed_zero_funding_preserves_created_escrow() {
     let env = Env::default();
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     assert_eq!(
-        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &0),
+        test_env
+            .escrow_client
+            .try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &0),
         Err(Ok(Error::ZeroAmount))
     );
-    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap();
+    let data = test_env
+        .escrow_client
+        .get_escrow(&test_env.invoice_id)
+        .unwrap();
     assert_eq!(data.funded_amt, 0);
     assert_eq!(data.status, EscrowStatus::Created);
 }
@@ -9809,11 +9919,23 @@ fn test_failed_negative_funding_preserves_buyer_balance() {
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     let before = test_env.payment_token.client.balance(&test_env.buyer);
     assert_eq!(
-        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &-1),
+        test_env
+            .escrow_client
+            .try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &-1),
         Err(Ok(Error::InvalidAmount))
     );
-    assert_eq!(test_env.payment_token.client.balance(&test_env.buyer), before);
-    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().funded_amt, 0);
+    assert_eq!(
+        test_env.payment_token.client.balance(&test_env.buyer),
+        before
+    );
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow(&test_env.invoice_id)
+            .unwrap()
+            .funded_amt,
+        0
+    );
 }
 
 #[test]
@@ -9822,10 +9944,19 @@ fn test_failed_overfund_preserves_partial_funding() {
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     test_env.fund(400);
     assert_eq!(
-        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &601),
+        test_env
+            .escrow_client
+            .try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &601),
         Err(Ok(Error::InvalidAmount))
     );
-    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().funded_amt, 400);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow(&test_env.invoice_id)
+            .unwrap()
+            .funded_amt,
+        400
+    );
 }
 
 #[test]
@@ -9834,10 +9965,17 @@ fn test_second_funding_after_full_subscription_does_not_change_state() {
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     test_env.fund(1000);
     assert_eq!(
-        test_env.escrow_client.try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &1),
+        test_env
+            .escrow_client
+            .try_fund_escrow(&test_env.invoice_id, &test_env.buyer, &1),
         Err(Ok(Error::EscrowFunded))
     );
-    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Funded));
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
+        Ok(EscrowStatus::Funded)
+    );
 }
 
 #[test]
@@ -9845,10 +9983,19 @@ fn test_payment_before_funding_leaves_payment_state_unchanged() {
     let env = Env::default();
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     assert_eq!(
-        test_env.escrow_client.try_record_payment(&test_env.invoice_id, &test_env.payer, &1),
+        test_env
+            .escrow_client
+            .try_record_payment(&test_env.invoice_id, &test_env.payer, &1),
         Err(Ok(Error::AlreadySettled))
     );
-    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().paid_amt, 0);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow(&test_env.invoice_id)
+            .unwrap()
+            .paid_amt,
+        0
+    );
 }
 
 #[test]
@@ -9859,12 +10006,29 @@ fn test_failed_overpayment_preserves_prior_partial_payment() {
     test_env.record_payment(400);
     let before = test_env.payment_token.client.balance(&test_env.payer);
     assert_eq!(
-        test_env.escrow_client.try_record_payment(&test_env.invoice_id, &test_env.payer, &601),
+        test_env
+            .escrow_client
+            .try_record_payment(&test_env.invoice_id, &test_env.payer, &601),
         Err(Ok(Error::InvalidAmount))
     );
-    assert_eq!(test_env.payment_token.client.balance(&test_env.payer), before);
-    assert_eq!(test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap().paid_amt, 400);
-    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Funded));
+    assert_eq!(
+        test_env.payment_token.client.balance(&test_env.payer),
+        before
+    );
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow(&test_env.invoice_id)
+            .unwrap()
+            .paid_amt,
+        400
+    );
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
+        Ok(EscrowStatus::Funded)
+    );
 }
 
 #[test]
@@ -9874,10 +10038,15 @@ fn test_wrong_payer_failure_preserves_funded_escrow() {
     test_env.fund(1000);
     let wrong_payer = Address::generate(&env);
     assert_eq!(
-        test_env.escrow_client.try_record_payment(&test_env.invoice_id, &wrong_payer, &1),
+        test_env
+            .escrow_client
+            .try_record_payment(&test_env.invoice_id, &wrong_payer, &1),
         Err(Ok(Error::InvalidPayer))
     );
-    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap();
+    let data = test_env
+        .escrow_client
+        .get_escrow(&test_env.invoice_id)
+        .unwrap();
     assert_eq!(data.paid_amt, 0);
     assert_eq!(data.status, EscrowStatus::Funded);
 }
@@ -9887,10 +10056,17 @@ fn test_refund_before_funding_is_rejected_without_mutation() {
     let env = Env::default();
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     assert_eq!(
-        test_env.escrow_client.try_refund_escrow(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .try_refund_escrow(&test_env.invoice_id),
         Err(Ok(Error::RefundNotAllowed))
     );
-    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Created));
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
+        Ok(EscrowStatus::Created)
+    );
 }
 
 #[test]
@@ -9899,10 +10075,17 @@ fn test_refund_before_due_date_preserves_funded_escrow() {
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     test_env.fund(1000);
     assert_eq!(
-        test_env.escrow_client.try_refund_escrow(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .try_refund_escrow(&test_env.invoice_id),
         Err(Ok(Error::EscrowNotOverdue))
     );
-    assert_eq!(test_env.escrow_client.get_escrow_status(&test_env.invoice_id), Ok(EscrowStatus::Funded));
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
+        Ok(EscrowStatus::Funded)
+    );
 }
 
 #[test]
@@ -9911,9 +10094,16 @@ fn test_sequential_partial_contributions_reach_target_once() {
     let test_env = MockTokenEnvironment::new(&env, 200, 1000, 1000);
     let second_buyer = Address::generate(&env);
     test_env.payment_token.asset.mint(&second_buyer, &600);
-    test_env.escrow_client.fund_escrow(&test_env.invoice_id, &test_env.buyer, &400);
-    test_env.escrow_client.fund_escrow(&test_env.invoice_id, &second_buyer, &600);
-    let data = test_env.escrow_client.get_escrow(&test_env.invoice_id).unwrap();
+    test_env
+        .escrow_client
+        .fund_escrow(&test_env.invoice_id, &test_env.buyer, &400);
+    test_env
+        .escrow_client
+        .fund_escrow(&test_env.invoice_id, &second_buyer, &600);
+    let data = test_env
+        .escrow_client
+        .get_escrow(&test_env.invoice_id)
+        .unwrap();
     assert_eq!(data.funded_amt, 1000);
     assert_eq!(data.status, EscrowStatus::Funded);
     assert_eq!(data.funders.len(), 2);
@@ -9942,7 +10132,9 @@ fn test_get_installment_schedule_unknown_invoice_errors() {
     test_env.fund(1000);
 
     let missing = Symbol::new(&env, "NOPE");
-    let result = test_env.escrow_client.try_get_installment_schedule(&missing);
+    let result = test_env
+        .escrow_client
+        .try_get_installment_schedule(&missing);
     assert_eq!(result, Err(Ok(Error::EscrowNotFound)));
 }
 
@@ -9965,7 +10157,9 @@ fn test_cleanup_escrow_removes_installment_schedule() {
 
     test_env.record_payment(1000);
     assert_eq!(
-        test_env.escrow_client.get_escrow_status(&test_env.invoice_id),
+        test_env
+            .escrow_client
+            .get_escrow_status(&test_env.invoice_id),
         EscrowStatus::Settled
     );
 
@@ -10029,4 +10223,127 @@ fn test_set_installment_schedule_emits_schedule_set_event() {
             .unwrap_or(false)
     });
     assert!(found, "expected installment_schedule_set event");
+}
+
+// ── Issue #470: Invariant tests for storage key uniqueness ────────────────────
+
+/// Verify that all StorageKey variants produce distinct serialized keys.
+/// This prevents prefix collisions where two different logical keys
+/// accidentally map to the same storage location.
+#[test]
+fn test_storage_key_uniqueness() {
+    let env = Env::default();
+
+    // Create test addresses and symbols
+    let addr1 = Address::generate(&env);
+    let addr2 = Address::generate(&env);
+    let sym1 = Symbol::new(&env, "INV001");
+    let sym2 = Symbol::new(&env, "INV002");
+    let bytes1 = test_commitment(&env, "test1");
+    let bytes2 = test_commitment(&env, "test2");
+
+    // Build all key variants
+    let keys = soroban_sdk::vec![
+        &env,
+        storage::StorageKey::Config,
+        storage::StorageKey::Escrow(sym1.clone()),
+        storage::StorageKey::Escrow(sym2.clone()),
+        storage::StorageKey::FunderAmount(sym1.clone(), addr1.clone()),
+        storage::StorageKey::FunderAmount(sym1.clone(), addr2.clone()),
+        storage::StorageKey::FunderAmount(sym2.clone(), addr1.clone()),
+        storage::StorageKey::Nonce(addr1.clone()),
+        storage::StorageKey::Nonce(addr2.clone()),
+        storage::StorageKey::BuyerWhitelist(addr1.clone()),
+        storage::StorageKey::BuyerWhitelist(addr2.clone()),
+        storage::StorageKey::Invoice(bytes1.clone()),
+        storage::StorageKey::Invoice(bytes2.clone()),
+        storage::StorageKey::InvestorPosition(bytes1.clone(), addr1.clone()),
+        storage::StorageKey::InvestorPosition(bytes1.clone(), addr2.clone()),
+        storage::StorageKey::InvestorPosition(bytes2.clone(), addr1.clone()),
+        storage::StorageKey::EmergencyConfig,
+        storage::StorageKey::EmergencyApprovals(sym1.clone()),
+        storage::StorageKey::EscrowCount,
+        storage::StorageKey::EscrowIdByIndex(0),
+        storage::StorageKey::EscrowIdByIndex(1),
+        storage::StorageKey::InvoiceRecord(bytes1.clone()),
+        storage::StorageKey::InvoiceRecord(bytes2.clone()),
+        storage::StorageKey::CategoryFee(types::InvoiceCategory::TradeFinance),
+        storage::StorageKey::CategoryFee(types::InvoiceCategory::SupplyChain),
+        storage::StorageKey::MaxInvestors,
+        storage::StorageKey::InvestorCount(bytes1.clone()),
+        storage::StorageKey::InvestorCount(bytes2.clone()),
+        storage::StorageKey::Dispute(sym1.clone()),
+        storage::StorageKey::Dispute(sym2.clone()),
+        storage::StorageKey::InstallmentSchedule(sym1.clone()),
+        storage::StorageKey::InstallmentSchedule(sym2.clone()),
+        storage::StorageKey::PendingParamChange,
+    ];
+
+    // Verify all keys are unique by checking no two produce the same XDR
+    let mut serialized = soroban_sdk::vec![&env];
+    for i in 0..keys.len() {
+        let key = keys.get_unchecked(i);
+        let xdr = env.storage().to_xdr(&key);
+        // Check for duplicates
+        for j in 0..serialized.len() {
+            let existing = serialized.get_unchecked(j);
+            if xdr == existing {
+                panic!(
+                    "Storage key at index {} collides with index {}",
+                    i, j
+                );
+            }
+        }
+        serialized.push_back(xdr);
+    }
+}
+
+/// Verify that different key types with similar prefixes don't collide.
+#[test]
+fn test_storage_key_prefix_no_collision() {
+    let env = Env::default();
+    let sym = Symbol::new(&env, "INV001");
+
+    let key1 = storage::StorageKey::Escrow(sym.clone());
+    let key2 = storage::StorageKey::EscrowIdByIndex(0);
+
+    let xdr1 = env.storage().to_xdr(&key1);
+    let xdr2 = env.storage().to_xdr(&key2);
+    assert_ne!(xdr1, xdr2, "Escrow and EscrowIdByIndex must not collide");
+}
+
+/// Verify that the same key with different parameters produces different
+/// storage locations (no parameter folding).
+#[test]
+fn test_storage_key_params_distinct() {
+    let env = Env::default();
+
+    let addr1 = Address::generate(&env);
+    let addr2 = Address::generate(&env);
+    let sym = Symbol::new(&env, "INV001");
+    let bytes = test_commitment(&env, "test");
+
+    let key_a = storage::StorageKey::FunderAmount(sym.clone(), addr1.clone());
+    let key_b = storage::StorageKey::FunderAmount(sym.clone(), addr2.clone());
+    assert_ne!(
+        env.storage().to_xdr(&key_a),
+        env.storage().to_xdr(&key_b),
+        "FunderAmount must differ by funder address"
+    );
+
+    let key_c = storage::StorageKey::InvestorPosition(bytes.clone(), addr1.clone());
+    let key_d = storage::StorageKey::InvestorPosition(bytes.clone(), addr2.clone());
+    assert_ne!(
+        env.storage().to_xdr(&key_c),
+        env.storage().to_xdr(&key_d),
+        "InvestorPosition must differ by investor address"
+    );
+
+    let key_e = storage::StorageKey::EscrowIdByIndex(0);
+    let key_f = storage::StorageKey::EscrowIdByIndex(1);
+    assert_ne!(
+        env.storage().to_xdr(&key_e),
+        env.storage().to_xdr(&key_f),
+        "EscrowIdByIndex must differ by index"
+    );
 }

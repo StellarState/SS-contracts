@@ -204,9 +204,22 @@ pub struct EscrowData {
     /// Commitment hash: immutable on-chain anchor for off-chain invoice data (PDF hash, ERP ID, etc.).
     /// Set at creation, cannot be modified. SHA-256 hash (32 bytes).
     pub commitment: soroban_sdk::BytesN<32>,
-    /// Optional early-settlement discount hook. If present, payments made before
-    /// `cutoff_date` receive a reduced effective face value.
-    pub early_settlement: Option<EarlySettlementConfig>,
+    /// Discount in basis points applied to `face_value` when payment is early.
+    /// `0` means the hook is not configured. A 0-bps discount is rejected by
+    /// `set_early_settlement` as a no-op, so 0 is unambiguous as "unset".
+    ///
+    /// Stored as two scalar fields rather than an
+    /// `Option<EarlySettlementConfig>` because soroban-sdk 27's
+    /// `#[contracttype]` derive cannot convert a nested custom struct inside an
+    /// `Option` — it emits an XDR conversion requiring
+    /// `From<EarlySettlementConfig> for ScVal`, which the derive never
+    /// generates. That made the type fail to build whenever the `testutils`
+    /// feature was unified in, which is what any consumer with a dev-dependency
+    /// on this crate ends up doing.
+    pub early_settlement_discount_bps: u32,
+    /// Ledger timestamp cutoff (exclusive) for the early-settlement discount.
+    /// Only meaningful when `early_settlement_discount_bps` is non-zero.
+    pub early_settlement_cutoff: u64,
     /// Commercial invoicing sector. Selects which `CategoryFeeSchedule` (if any)
     /// overrides `Config::fee_bps` for this escrow. Defaults to `Standard`.
     pub category: InvoiceCategory,
