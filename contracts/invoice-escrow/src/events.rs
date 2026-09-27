@@ -390,7 +390,7 @@ pub fn param_change_proposed(env: &Env, proposal: &crate::types::PendingParamCha
     env.events().publish(
         (Symbol::new(env, "param_change_proposed"),),
         (
-            proposal.param.clone() as u32,
+            proposal.param as u32,
             proposal.new_value,
             proposal.proposed_at,
             proposal.timelock_secs,
@@ -403,7 +403,7 @@ pub fn param_change_executed(env: &Env, proposal: &crate::types::PendingParamCha
     env.events().publish(
         (Symbol::new(env, "param_change_executed"),),
         (
-            proposal.param.clone() as u32,
+            proposal.param as u32,
             proposal.new_value,
         ),
     );

@@ -366,7 +366,7 @@ impl InvoiceEscrow {
             return Err(Error::InvalidDueDate);
         }
         let duration = due_date.saturating_sub(current_timestamp);
-        if duration < MIN_ESCROW_DURATION_SECS || duration > MAX_ESCROW_DURATION_SECS {
+        if !(MIN_ESCROW_DURATION_SECS..=MAX_ESCROW_DURATION_SECS).contains(&duration) {
             return Err(Error::InvalidDuration);
         }
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
@@ -1404,7 +1404,7 @@ impl InvoiceEscrow {
         if stored_config.admin != admin {
             return Err(Error::Unauthorized);
         }
-        if config.threshold == 0 || config.threshold > config.admins.len() as u32 {
+        if config.threshold == 0 || config.threshold > config.admins.len() {
             return Err(Error::InvalidFeeBps); // reuse for invalid threshold
         }
         storage::set_emergency_config(&env, &config);
@@ -1442,7 +1442,7 @@ impl InvoiceEscrow {
         approvals.approvals.push_back(caller.clone());
         storage::set_emergency_approvals(&env, &invoice_id, &approvals);
 
-        if (approvals.approvals.len() as u32) < config.threshold {
+        if approvals.approvals.len() < config.threshold {
             return Ok(false);
         }
 
@@ -1582,7 +1582,7 @@ impl InvoiceEscrow {
         let token_client = token::Client::new(&env, &invoice.token);
         token_client.transfer(
             &investor,
-            &env.current_contract_address(),
+            env.current_contract_address(),
             &additional_amount,
         );
         storage::set_investor_position(&env, &invoice_id, &investor, new_total_position);
@@ -1733,7 +1733,7 @@ impl InvoiceEscrow {
                 }
             }
             let token_client = token::Client::new(&env, &invoice.token);
-            token_client.transfer(&investor, &env.current_contract_address(), &amount);
+            token_client.transfer(&investor, env.current_contract_address(), &amount);
             storage::set_investor_position(&env, &invoice_id, &investor, new_pos);
             invoice.total_raised = new_total;
             storage::set_invoice(&env, invoice_id, &invoice);

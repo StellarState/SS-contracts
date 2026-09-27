@@ -85,12 +85,10 @@ fn parse_fee_bps(fee_bps: i128) -> Result<u32, Error> {
 fn select_fee_tier(env: &Env, payment_amount: i128, default_fee_bps: u32) -> u32 {
     if let Some(tiers) = storage::get_fee_tiers(env) {
         for tier in tiers.iter() {
-            if let Some(tier_data) = tier {
-                if payment_amount >= tier_data.min_amount
-                    && (tier_data.max_amount == 0 || payment_amount <= tier_data.max_amount)
-                {
-                    return tier_data.fee_bps;
-                }
+            if payment_amount >= tier.min_amount
+                && (tier.max_amount == 0 || payment_amount <= tier.max_amount)
+            {
+                return tier.fee_bps;
             }
         }
     }
@@ -426,13 +424,13 @@ impl PaymentDistributor {
 
         // Validate all tiers
         for tier in tiers.iter() {
-            if let Some(tier_data) = tier {
-                if tier_data.fee_bps > MAX_FEE_BPS {
-                    return Err(Error::InvalidBps);
-                }
-                if tier_data.min_amount < 0 || (tier_data.max_amount > 0 && tier_data.max_amount < tier_data.min_amount) {
-                    return Err(Error::InvalidAmount);
-                }
+            if tier.fee_bps > MAX_FEE_BPS {
+                return Err(Error::InvalidBps);
+            }
+            if tier.min_amount < 0
+                || (tier.max_amount > 0 && tier.max_amount < tier.min_amount)
+            {
+                return Err(Error::InvalidAmount);
             }
         }
 
@@ -649,32 +647,6 @@ impl PaymentDistributor {
         Ok(())
     }
 
-    /// Issue #119: Implement Dust Amount Collector and Sweep Function.
-    ///
-    /// Admin-only function to sweep leftover token balances to the configured
-    /// fee recipient (or admin if not set).
-    pub fn sweep_dust(env: Env, admin: Address, token: Address) -> Result<(), Error> {
-        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        admin.require_auth();
-
-        let token_client = token::Client::new(&env, &token);
-        let contract_addr = env.current_contract_address();
-        let balance = token_client.balance(&contract_addr);
-        if balance <= 0 {
-            return Err(Error::NothingToSweep);
-        }
-
-        let fee_recipient =
-            storage::get_fee_recipient(&env).unwrap_or_else(|| stored_admin.clone());
-
-        token_client.transfer(&contract_addr, &fee_recipient, &balance);
-        events::dust_swept(&env, &admin, &token, &fee_recipient, balance);
-        Ok(())
-    }
-
     /// View: return the current admin.
     pub fn get_admin(env: Env) -> Result<Address, Error> {
         storage::get_admin(&env).ok_or(Error::NotInit)
@@ -811,7 +783,7 @@ impl PaymentDistributor {
     /// splits rather than partially distributing and leaving state inconsistent.
     pub fn validate_recipients(
         env: Env,
-        token: Address,
+        _token: Address,
         recipients: Vec<Address>,
     ) -> Result<(), Error> {
         let contract_addr = env.current_contract_address();

@@ -40,7 +40,6 @@ pub fn get_balance(env: &soroban_sdk::Env, addr: &Address) -> i128 {
 
     // Extend TTL to prevent key expiration during active use
     let current_ledger = env.ledger().sequence();
-    let ttl_seconds = 6_312_000; // ~4 months in ledger slots (assuming 5s per slot)
     env.storage().persistent().extend_ttl(&key, current_ledger + 1_000, current_ledger + 1_000);
 
     balance
