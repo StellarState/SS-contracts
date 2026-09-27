@@ -1346,6 +1346,88 @@ fn test_integration_unpause_restores_behavior() {
     );
 }
 
+/// Emergency pause must preserve the funded escrow and token lock, then allow
+/// normal settlement and token recovery after the circuit breaker is released.
+#[test]
+fn test_integration_circuit_breaker_pause_and_recovery_drill() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "INVCIRCUIT", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    assert!(ctx.inv_token.transfer_locked());
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
+
+    // Exercise both pause switches as an emergency operator would. The token
+    // contract is separately paused to ensure that unpausing only escrow does
+    // not accidentally resume token movement.
+    ctx.escrow.set_paused(&true);
+    ctx.inv_token.set_paused(&true);
+    assert!(ctx.escrow.paused());
+    assert!(ctx.inv_token.paused());
+
+    let blocked_payment = ctx
+        .escrow
+        .try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(blocked_payment, Err(Ok(errors::Error::Paused)));
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Funded);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 0);
+
+    ctx.escrow.set_paused(&false);
+    assert!(!ctx.escrow.paused());
+    assert!(ctx.inv_token.paused());
+    ctx.inv_token.set_paused(&false);
+    assert!(!ctx.inv_token.paused());
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Settled);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 970);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
+    assert!(!ctx.inv_token.transfer_locked());
+}
+
+/// A stale dispute is resolved through the timeout fallback across escrow and
+/// invoice-token contracts. Even a seller-favouring resolution request after
+/// timeout must return the funder's held collateral and unlock the invoice token.
+#[test]
+fn test_integration_dispute_timeout_refunds_buyer_and_recovers_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "INVDISPTIME", 1_000, 1_000);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    ctx.escrow.raise_dispute(
+        &ctx.payer,
+        &ctx.invoice_id,
+        &soroban_sdk::Bytes::from_slice(&env, b"delivery not received"),
+    );
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Disputed);
+    assert!(ctx.inv_token.transfer_locked());
+
+    let blocked_payment = ctx
+        .escrow
+        .try_record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(blocked_payment, Err(Ok(errors::Error::InvalidInvoiceStatus)));
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
+
+    let raised_at = env.ledger().timestamp();
+    env.ledger().set_timestamp(raised_at + 604_801);
+    ctx.escrow.resolve_dispute(
+        &ctx.admin,
+        &ctx.invoice_id,
+        &Symbol::new(&env, "seller"),
+    );
+
+    assert_eq!(ctx.escrow.get_escrow_status(&ctx.invoice_id), EscrowStatus::Refunded);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert!(!ctx.inv_token.transfer_locked());
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Issue #390: Comprehensive refund test suite
 // ──────────────────────────────────────────────────────────────────────────────
