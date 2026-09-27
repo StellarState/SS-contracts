@@ -1,7 +1,7 @@
 #![allow(deprecated, unused_variables, dead_code, unused_mut, clippy::all)]
 
 use super::*;
-use crate::types::FeeTier;
+use crate::types::{FeeTier, StorageKey};
 use alloc::vec;
 use invoice_escrow::{EscrowStatus, InvoiceEscrow, InvoiceEscrowClient};
 use invoice_token::{InvoiceToken, InvoiceTokenClient};
@@ -780,6 +780,72 @@ fn test_reentrancy_guard_rejects_when_locked() {
     );
 
     assert_eq!(result, Err(Ok(Error::ReentrancyDetected)));
+}
+
+/// Issue #492: the re-entrancy lock is a transient guard, so it must live in
+/// temporary storage. This asserts the tier directly rather than inferring it
+/// from behaviour, so a regression back to instance storage is caught even if
+/// the guard still happens to work.
+#[test]
+fn test_reentrancy_lock_stored_in_temporary_tier() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, distributor_id, distributor) = distributor_only(&env);
+    let escrow = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let funder = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "TIER");
+    let (token, asset) = make_token(&env);
+
+    let args = (
+        &escrow,
+        &invoice_id,
+        &soroban_sdk::vec![&env, token.address.clone(), seller, funder, admin],
+        &soroban_sdk::vec![&env, 100i128, 100i128, 0i128, 0i128],
+        &2u32,
+    );
+
+    // Before any guarded call: nothing written anywhere.
+    env.as_contract(&distributor_id, || {
+        assert!(!crate::storage::is_locked(&env));
+        assert!(!env.storage().instance().has(&StorageKey::Locked));
+    });
+
+    // Fund the distributor so the happy path gets past the balance check and
+    // actually reaches the lock acquire/release pair.
+    asset.mint(&distributor_id, &1_000);
+
+    distributor.distribute_payment(args.0, args.1, args.2, args.3, args.4);
+
+    // The guard is released on the success path, so the lock is not still held
+    // once the call returns.
+    env.as_contract(&distributor_id, || {
+        assert!(!crate::storage::is_locked(&env));
+    });
+
+    // Now hold the lock and confirm it is only reachable via the temporary
+    // ledger in the footprint, i.e. it is not part of the archived instance
+    // that every invocation has to load.
+    env.as_contract(&distributor_id, || {
+        crate::storage::set_lock(&env, true);
+    });
+
+    assert!(env.as_contract(&distributor_id, || {
+        env.storage().temporary().has(&StorageKey::Locked) && crate::storage::is_locked(&env)
+    }));
+
+    // Instance and persistent tiers must never have carried the flag.
+    env.as_contract(&distributor_id, || {
+        assert!(!env.storage().instance().has(&StorageKey::Locked));
+        assert!(!env.storage().persistent().has(&StorageKey::Locked));
+    });
+
+    // And the guard still rejects while held.
+    assert_eq!(
+        distributor.try_distribute_payment(args.0, args.1, args.2, args.3, args.4,),
+        Err(Ok(Error::ReentrancyDetected))
+    );
 }
 
 #[test]
