@@ -81,12 +81,7 @@ pub fn escrow_funded(
 }
 
 /// Publish penalty_interest_charged event when late payment incurs additional interest.
-pub fn penalty_interest_charged(
-    env: &Env,
-    inv_id: Symbol,
-    penalty_amount: i128,
-    total_fee: i128,
-) {
+pub fn penalty_interest_charged(env: &Env, inv_id: Symbol, penalty_amount: i128, total_fee: i128) {
     env.events().publish(
         (Symbol::new(env, "penalty_interest_charged"),),
         (inv_id, penalty_amount, total_fee),
@@ -274,11 +269,7 @@ pub fn deadline_extended(
 ) {
     env.events().publish(
         (Symbol::new(env, "deadline_extended"),),
-        (
-            invoice_id.clone(),
-            old_deadline_ledger,
-            new_deadline_ledger,
-        ),
+        (invoice_id.clone(), old_deadline_ledger, new_deadline_ledger),
     );
 }
 /// Publish investment_refunded event.
@@ -304,7 +295,12 @@ pub fn settlement_paid(
 ) {
     env.events().publish(
         (Symbol::new(env, "settlement_paid"),),
-        (investor.clone(), invoice_id.clone(), payout_amount, yield_earned),
+        (
+            investor.clone(),
+            invoice_id.clone(),
+            payout_amount,
+            yield_earned,
+        ),
     );
 }
 
@@ -409,7 +405,7 @@ pub fn param_change_proposed(env: &Env, proposal: &crate::types::PendingParamCha
     env.events().publish(
         (Symbol::new(env, "param_change_proposed"),),
         (
-            proposal.param.clone() as u32,
+            proposal.param as u32,
             proposal.new_value,
             proposal.proposed_at,
             proposal.timelock_secs,
@@ -421,9 +417,6 @@ pub fn param_change_proposed(env: &Env, proposal: &crate::types::PendingParamCha
 pub fn param_change_executed(env: &Env, proposal: &crate::types::PendingParamChange) {
     env.events().publish(
         (Symbol::new(env, "param_change_executed"),),
-        (
-            proposal.param.clone() as u32,
-            proposal.new_value,
-        ),
+        (proposal.param as u32, proposal.new_value),
     );
 }

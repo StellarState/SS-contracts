@@ -197,7 +197,10 @@ fn transfer_negative_amount_is_rejected() {
 
     let recipient = Address::generate(&env);
     let result = client.try_transfer(&admin, &recipient, &-1);
-    assert!(result.is_err(), "negative-amount transfer should be rejected");
+    assert!(
+        result.is_err(),
+        "negative-amount transfer should be rejected"
+    );
 }
 
 // ── Edge case: insufficient balance ───────────────────────────────────────────
@@ -212,7 +215,10 @@ fn transfer_exceeding_balance_is_rejected() {
 
     let recipient = Address::generate(&env);
     let result = client.try_transfer(&admin, &recipient, &200);
-    assert!(result.is_err(), "transfer exceeding balance should be rejected");
+    assert!(
+        result.is_err(),
+        "transfer exceeding balance should be rejected"
+    );
 }
 
 // ── Edge case: expired allowance ──────────────────────────────────────────────
@@ -240,7 +246,10 @@ fn transfer_from_with_expired_allowance_is_rejected() {
     });
 
     let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
-    assert!(result.is_err(), "transfer_from with expired allowance should fail");
+    assert!(
+        result.is_err(),
+        "transfer_from with expired allowance should fail"
+    );
 }
 
 // ── Edge case: allowance exceeded ─────────────────────────────────────────────
@@ -259,7 +268,10 @@ fn transfer_from_exceeding_allowance_is_rejected() {
     client.approve(&admin, &spender, &50, &1000);
 
     let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
-    assert!(result.is_err(), "transfer_from exceeding allowance should fail");
+    assert!(
+        result.is_err(),
+        "transfer_from exceeding allowance should fail"
+    );
 }
 
 // ── Zero address rejection ────────────────────────────────────────────────────
@@ -283,7 +295,10 @@ fn transfer_to_zero_address_is_rejected() {
     .unwrap();
 
     let result = client.try_transfer(&admin, &zero, &100);
-    assert!(result.is_err(), "transfer to zero address should be rejected");
+    assert!(
+        result.is_err(),
+        "transfer to zero address should be rejected"
+    );
 }
 
 // ── Initialization guard ──────────────────────────────────────────────────────

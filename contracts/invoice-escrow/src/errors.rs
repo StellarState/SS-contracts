@@ -120,7 +120,7 @@ pub enum Error {
     /// Settlement fee exceeds the protocol's 10% safety ceiling.
     FeeTooHigh = 55,
     /// A registered invoice has reached its configured unique-investor cap.
-    MaxInvestorsReached = 55,
+    MaxInvestorsReached = 57,
     /// Investor cap is outside the supported range.
     InvalidMaxInvestors = 56,
 }
