@@ -144,7 +144,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
-              "function_name": "create_escrow",
+              "function_name": "create_escrow_legacy",
               "args": [
                 {
                   "symbol": "INV_FLOW"
@@ -335,6 +335,18 @@
               "durability": "persistent",
               "val": {
                 "map": [
+                  {
+                    "key": {
+                      "symbol": "accepted_tokens"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "address": "CCFPZOCU33AWX2NKX47XD6W5JNYFP7MU57DTQFB5XOOQSJLSSC4PMX25"
+                        }
+                      ]
+                    }
+                  },
                   {
                     "key": {
                       "symbol": "category"
