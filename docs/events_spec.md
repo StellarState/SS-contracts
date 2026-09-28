@@ -34,6 +34,16 @@ This specification documents the exact event topics and payload schemas emitted 
 - **Data Payload**: `(invoice_id: Symbol, index: u32, cumulative_amount: i128, paid_amt: i128)`
 - **Description**: Emitted each time cumulative repayments reach a milestone's cumulative target (or the escrow fully settles, closing any remaining milestones).
 
+### `settlement_proposed`
+- **Topics**: `(Symbol("settlement_proposed"),)`
+- **Data Payload**: `(invoice_id: BytesN<32>, proposer: Address, repayment_amount: i128)`
+- **Description**: Emitted when an authorized admin proposes a registered-invoice settlement.
+
+### `settlement_approved`
+- **Topics**: `(Symbol("settlement_approved"),)`
+- **Data Payload**: `(invoice_id: BytesN<32>, approver: Address, repayment_amount: i128)`
+- **Description**: Emitted after a different authorized admin approves and executes the proposal.
+
 ## Invoice Token Event Schema Coverage
 
 Token event payloads are emitted by `contracts/invoice-token/src/events.rs`. Contract tests validate the emitted topic tuple and typed data payload for transfer, approval, mint, burn, lock changes, minter changes, pause changes, fee updates, freeze/unfreeze, nonce queries, and multi-event transfer flows. Keep one assertion for every event helper when changing a topic or payload; event topic names are part of the external integration contract.

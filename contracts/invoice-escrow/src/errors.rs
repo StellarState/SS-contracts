@@ -123,4 +123,10 @@ pub enum Error {
     MaxInvestorsReached = 57,
     /// Investor cap is outside the supported range.
     InvalidMaxInvestors = 56,
+    /// The requested payment token is outside the escrow's accepted token set.
+    TokenNotAccepted = 58,
+    /// The same administrator cannot propose and approve one settlement.
+    SameAdminApproval = 59,
+    /// No settlement proposal exists for the invoice.
+    SettlementNotProposed = 60,
 }

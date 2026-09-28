@@ -1195,6 +1195,66 @@
           "type": "object",
           "properties": {
             "contract": {
+              "const": "invoice-escrow"
+            },
+            "name": {
+              "const": "TokenNotAccepted"
+            },
+            "code": {
+              "const": 58
+            }
+          },
+          "required": [
+            "contract",
+            "name",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "const": "invoice-escrow"
+            },
+            "name": {
+              "const": "SameAdminApproval"
+            },
+            "code": {
+              "const": 59
+            }
+          },
+          "required": [
+            "contract",
+            "name",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "const": "invoice-escrow"
+            },
+            "name": {
+              "const": "SettlementNotProposed"
+            },
+            "code": {
+              "const": 60
+            }
+          },
+          "required": [
+            "contract",
+            "name",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
               "const": "invoice-token"
             },
             "name": {
@@ -2142,6 +2202,26 @@
             },
             "code": {
               "const": 27
+            }
+          },
+          "required": [
+            "contract",
+            "name",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "const": "payment-distributor"
+            },
+            "name": {
+              "const": "NothingToRefund"
+            },
+            "code": {
+              "const": 28
             }
           },
           "required": [

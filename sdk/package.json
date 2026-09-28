@@ -15,7 +15,7 @@
   "scripts": {
     "generate": "node scripts/generate-errors.mjs",
     "build": "npm run generate && tsc -p tsconfig.json",
-    "test": "npm run build && node --test"
+    "test": "npm run build && node --test test/*.test.js"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

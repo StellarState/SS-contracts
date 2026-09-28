@@ -16,3 +16,4 @@ soroban-sdk = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 invoice-escrow = { path = "../invoice-escrow" }
 invoice-token = { path = "../invoice-token" }
+proptest = { workspace = true }

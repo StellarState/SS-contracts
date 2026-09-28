@@ -4,7 +4,7 @@ use soroban_sdk::{Address, BytesN, Env, Symbol};
 
 use crate::types::{
     CategoryFeeSchedule, Config, DisputeData, EmergencyApprovals, EscrowData, InstallmentMilestone,
-    InvoiceCategory, InvoiceData, MultiSigConfig, StorageKey,
+    InvoiceCategory, InvoiceData, MultiSigConfig, SettlementProposal, StorageKey,
 };
 
 /// Ledgers below which a persistent entry's TTL is extended (~7 days at 5s/ledger).
@@ -216,6 +216,27 @@ pub fn set_invoice_record(env: &Env, inv_id: &BytesN<32>, data: &InvoiceData) {
     bump_persistent(env, &key);
 }
 
+pub fn get_settlement_proposal(env: &Env, inv_id: &BytesN<32>) -> Option<SettlementProposal> {
+    let key = StorageKey::SettlementProposal(inv_id.clone());
+    let proposal = env.storage().persistent().get(&key);
+    if proposal.is_some() {
+        bump_persistent(env, &key);
+    }
+    proposal
+}
+
+pub fn set_settlement_proposal(env: &Env, inv_id: &BytesN<32>, proposal: &SettlementProposal) {
+    let key = StorageKey::SettlementProposal(inv_id.clone());
+    env.storage().persistent().set(&key, proposal);
+    bump_persistent(env, &key);
+}
+
+pub fn remove_settlement_proposal(env: &Env, inv_id: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&StorageKey::SettlementProposal(inv_id.clone()));
+}
+
 /// Check if an invoice record exists for BytesN<32>.
 pub fn has_invoice_record(env: &Env, inv_id: &BytesN<32>) -> bool {
     let key = StorageKey::InvoiceRecord(inv_id.clone());
@@ -424,7 +445,11 @@ pub fn batch_extend_ttl(env: &Env, keys: &soroban_sdk::Vec<StorageKey>) {
 /// events have been emitted.
 ///
 /// Returns the number of storage keys removed.
-pub fn compact_invoice_storage(env: &Env, inv_id: &Symbol, funder_addresses: &soroban_sdk::Vec<Address>) -> u32 {
+pub fn compact_invoice_storage(
+    env: &Env,
+    inv_id: &Symbol,
+    funder_addresses: &soroban_sdk::Vec<Address>,
+) -> u32 {
     let mut removed = 0u32;
 
     // Remove per-funder contribution records

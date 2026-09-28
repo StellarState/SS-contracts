@@ -5,6 +5,7 @@ use crate::types::{FeeTier, StorageKey};
 use alloc::vec;
 use invoice_escrow::{EscrowStatus, InvoiceEscrow, InvoiceEscrowClient};
 use invoice_token::{InvoiceToken, InvoiceTokenClient};
+use proptest::prelude::*;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as AssetClient};
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
@@ -87,7 +88,7 @@ fn setup(env: &Env, fee_bps: u32, configure_distributor: bool) -> TestContext<'_
 
 fn create_and_fund(ctx: &TestContext<'_>, amount: i128, due_date: u64) {
     ctx.payment_asset.mint(&ctx.buyer, &amount);
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -100,7 +101,7 @@ fn create_and_fund(ctx: &TestContext<'_>, amount: i128, due_date: u64) {
         &None,
         &None,
     );
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
+    ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &amount);
 }
 
 #[test]
@@ -115,6 +116,63 @@ fn test_double_initialize_fails() {
 
     let result = distributor.try_initialize(&admin);
     assert_eq!(result, Err(Ok(Error::AlreadyInit)));
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+
+    #[test]
+    fn differential_pro_rata_matches_reference_and_attributes_dust(
+        weights in prop::collection::vec(1i128..1_000_001, 1..20),
+        refund in 1i128..1_000_000_001,
+    ) {
+        // Independent rational reference: floor every share except the final
+        // recipient, who receives the exact remainder.
+        let total: i128 = weights.iter().sum();
+        let actual = pro_rata_shares(refund, &weights).unwrap();
+        let mut expected = alloc::vec::Vec::new();
+        let mut allocated = 0i128;
+        for (index, weight) in weights.iter().enumerate() {
+            let share = if index + 1 == weights.len() {
+                refund - allocated
+            } else {
+                refund * *weight / total
+            };
+            expected.push(share);
+            allocated += share;
+        }
+        prop_assert_eq!(&actual, &expected);
+        prop_assert_eq!(actual.iter().sum::<i128>(), refund);
+        prop_assert!(actual.iter().all(|share| *share >= 0));
+    }
+
+    #[test]
+    fn differential_fee_split_conserves_amount_and_assigns_dust_to_primary(
+        amount in 1i128..1_000_000_001,
+        fee_weights in prop::collection::vec(1u32..10_001, 1..20),
+        referral_choice in 0u32..=10_000,
+    ) {
+        let total_weight: u64 = fee_weights.iter().map(|weight| *weight as u64).sum();
+        let shares: alloc::vec::Vec<u32> = fee_weights.iter()
+            .map(|weight| (*weight as u64 * 10_000 / total_weight) as u32)
+            .collect();
+        let max_referral = 10_000 - shares.iter().sum::<u32>();
+        let referral_bps = referral_choice % (max_referral + 1);
+        let (actual_referral, actual) = fee_split_amounts(amount, &shares, referral_bps).unwrap();
+        let expected_referral = amount * referral_bps as i128 / 10_000;
+        let mut expected = alloc::vec::Vec::new();
+        let mut allocated = expected_referral;
+        for (index, bps) in shares.iter().enumerate() {
+            let share = if index == 0 { 0 } else { amount * *bps as i128 / 10_000 };
+            expected.push(share);
+            allocated += share;
+        }
+        expected[0] = amount - allocated;
+        prop_assert_eq!(actual_referral, expected_referral);
+        prop_assert_eq!(&actual, &expected);
+        prop_assert_eq!(actual.iter().sum::<i128>() + actual_referral, amount);
+        prop_assert!(actual.iter().all(|share| *share >= 0));
+    }
 }
 
 #[test]
@@ -5086,7 +5144,8 @@ fn issue456_fee_recipient_migration_redirects_settlement_fees() {
 
     create_and_fund(&ctx, 1_000, 50_000);
     ctx.payment_asset.mint(&ctx.payer, &1_000);
-    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    ctx.escrow
+        .record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
 
     // Seller gets the payment, funder gets principal (no bonus), and the
     // platform fee lands on the migrated recipient, not the admin.
@@ -5115,14 +5174,16 @@ fn issue456_fee_recipient_change_applies_mid_escrow() {
     ctx.payment_asset.mint(&ctx.payer, &2_000);
 
     // First installment: fees still go to the default recipient (admin).
-    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    ctx.escrow
+        .record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
     assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
     assert_eq!(ctx.payment_token.balance(&recipient2), 0);
 
     // Migrate mid-escrow, before the second installment.
     ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
 
-    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    ctx.escrow
+        .record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
     assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
     assert_eq!(ctx.payment_token.balance(&recipient2), 30);
     assert_eq!(ctx.payment_token.balance(&ctx.seller), 2_000);
@@ -5143,7 +5204,8 @@ fn issue456_fee_recipient_migration_rejects_non_admin() {
     let recipient2 = Address::generate(&env);
 
     assert_eq!(
-        ctx.distributor.try_set_fee_recipient(&ctx.seller, &recipient2),
+        ctx.distributor
+            .try_set_fee_recipient(&ctx.seller, &recipient2),
         Err(Ok(Error::Unauthorized))
     );
     assert!(ctx
@@ -5167,7 +5229,8 @@ fn issue456_fee_recipient_migration_repeats_and_round_trips() {
 
     create_and_fund(&ctx, 1_000, 50_000);
     ctx.payment_asset.mint(&ctx.payer, &1_000);
-    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    ctx.escrow
+        .record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
 
     // Fees follow the final routing decision; earlier recipients got nothing.
     assert_eq!(ctx.payment_token.balance(&ctx.admin), 10);
@@ -5188,7 +5251,7 @@ fn issue456_fee_recipient_migration_does_not_affect_refund_path() {
     ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
 
     env.ledger().set_timestamp(2_001);
-    ctx.escrow.refund(&ctx.invoice_id);
+    ctx.escrow.refund_escrow(&ctx.invoice_id);
 
     // Refund fan-out is independent of the fee recipient routing.
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 970);
@@ -5196,10 +5259,11 @@ fn issue456_fee_recipient_migration_does_not_affect_refund_path() {
     assert_eq!(ctx.payment_token.balance(&ctx.admin), 12);
     assert_eq!(ctx.payment_token.balance(&recipient2), 0);
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
-    assert!(ctx
-        .distributor
-        .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id)
-        .refund_distributed);
+    assert!(
+        ctx.distributor
+            .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id)
+            .refund_distributed
+    );
 }
 
 #[test]
@@ -5212,13 +5276,14 @@ fn issue456_fee_recipient_migrates_per_contract_not_per_invoice() {
     // Invoice 1 settles while the admin is still the default recipient.
     create_and_fund(&ctx, 1_000, 50_000);
     ctx.payment_asset.mint(&ctx.payer, &1_000);
-    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    ctx.escrow
+        .record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
     assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
 
     // Invoice 2: migrate before funding, then settle — routing is global.
     let inv2 = Symbol::new(&ctx.env, "INV2_D");
     ctx.payment_asset.mint(&ctx.buyer, &1_000);
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &inv2,
         &ctx.seller,
         &ctx.payer,
@@ -5232,7 +5297,7 @@ fn issue456_fee_recipient_migrates_per_contract_not_per_invoice() {
         &None,
     );
     ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
-    ctx.escrow.fund_escrow(&inv2, &ctx.buyer, &1_000);
+    ctx.escrow.fund_escrow_legacy(&inv2, &ctx.buyer, &1_000);
     ctx.payment_asset.mint(&ctx.payer, &1_000);
     ctx.escrow.record_payment(&inv2, &ctx.payer, &1_000);
 
@@ -5268,7 +5333,7 @@ fn issue456_migrated_recipient_accumulates_fees_across_invoices() {
     ];
     for id in ids.iter() {
         ctx.payment_asset.mint(&ctx.buyer, &1_000);
-        ctx.escrow.create_escrow(
+        ctx.escrow.create_escrow_legacy(
             &id,
             &ctx.seller,
             &ctx.payer,
@@ -5280,8 +5345,8 @@ fn issue456_migrated_recipient_accumulates_fees_across_invoices() {
             &test_commitment(&ctx.escrow.env),
             &None,
             &None,
-    );
-        ctx.escrow.fund_escrow(&id, &ctx.buyer, &1_000);
+        );
+        ctx.escrow.fund_escrow_legacy(&id, &ctx.buyer, &1_000);
         ctx.payment_asset.mint(&ctx.payer, &1_000);
         ctx.escrow.record_payment(&id, &ctx.payer, &1_000);
     }
