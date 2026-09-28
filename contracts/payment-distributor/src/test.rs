@@ -173,6 +173,168 @@ proptest! {
         prop_assert_eq!(actual.iter().sum::<i128>() + actual_referral, amount);
         prop_assert!(actual.iter().all(|share| *share >= 0));
     }
+
+    /// Issue #484: Proptest fuzzing for fee calculation monotonicity.
+    /// 
+    /// Monotonicity property: for any fixed payment amount, if fee_bps increases,
+    /// the calculated platform fee must also increase (or remain equal for edge cases).
+    /// This ensures fee calculations behave predictably across all basis point permutations.
+    #[test]
+    fn fee_calculation_monotonicity_holds_for_arbitrary_basis_points(
+        payment_amount in 1i128..1_000_000_001,
+        fee_bps_1 in 0u32..=10_000,
+        fee_bps_2 in 0u32..=10_000,
+    ) {
+        let already_distributed = 0i128;
+        let investor_amount = payment_amount / 2; // arbitrary fixed investor share
+        
+        let result_1 = compute_split(
+            payment_amount,
+            already_distributed,
+            investor_amount,
+            fee_bps_1,
+        );
+        
+        let result_2 = compute_split(
+            payment_amount,
+            already_distributed,
+            investor_amount,
+            fee_bps_2,
+        );
+        
+        // Both computations should succeed for valid inputs
+        prop_assert!(result_1.is_ok(), "compute_split failed for fee_bps_1={}", fee_bps_1);
+        prop_assert!(result_2.is_ok(), "compute_split failed for fee_bps_2={}", fee_bps_2);
+        
+        let preview_1 = result_1.unwrap();
+        let preview_2 = result_2.unwrap();
+        
+        // Monotonicity: if fee_bps_2 >= fee_bps_1, then platform_fee_2 >= platform_fee_1
+        if fee_bps_2 >= fee_bps_1 {
+            prop_assert!(
+                preview_2.platform_fee >= preview_1.platform_fee,
+                "Monotonicity violation: fee_bps_1={}, platform_fee_1={}, fee_bps_2={}, platform_fee_2={}",
+                fee_bps_1, preview_1.platform_fee, fee_bps_2, preview_2.platform_fee
+            );
+        }
+        
+        // Symmetric check
+        if fee_bps_1 >= fee_bps_2 {
+            prop_assert!(
+                preview_1.platform_fee >= preview_2.platform_fee,
+                "Monotonicity violation: fee_bps_2={}, platform_fee_2={}, fee_bps_1={}, platform_fee_1={}",
+                fee_bps_2, preview_2.platform_fee, fee_bps_1, preview_1.platform_fee
+            );
+        }
+        
+        // Equality case: same fee_bps should produce same platform fee
+        if fee_bps_1 == fee_bps_2 {
+            prop_assert_eq!(
+                preview_1.platform_fee,
+                preview_2.platform_fee,
+                "Equal fee_bps should produce equal platform fees"
+            );
+        }
+        
+        // Boundary verification: 0 bps should always yield 0 fee
+        if fee_bps_1 == 0 {
+            prop_assert_eq!(preview_1.platform_fee, 0, "Zero fee_bps should yield zero fee");
+        }
+        if fee_bps_2 == 0 {
+            prop_assert_eq!(preview_2.platform_fee, 0, "Zero fee_bps should yield zero fee");
+        }
+        
+        // Upper bound check: fee should never exceed payment amount
+        prop_assert!(
+            preview_1.platform_fee <= payment_amount,
+            "Platform fee {} exceeds payment amount {}",
+            preview_1.platform_fee,
+            payment_amount
+        );
+        prop_assert!(
+            preview_2.platform_fee <= payment_amount,
+            "Platform fee {} exceeds payment amount {}",
+            preview_2.platform_fee,
+            payment_amount
+        );
+    }
+    
+    /// Issue #484: Additional monotonicity test with incremental fee basis point steps.
+    /// 
+    /// Tests that for any payment, fees increase monotonically as basis points
+    /// increase in small increments (1 bps steps).
+    #[test]
+    fn fee_calculation_incremental_monotonicity(
+        payment_amount in 100i128..10_000_001,
+        start_bps in 0u32..10_000,
+    ) {
+        let already_distributed = 0i128;
+        let investor_amount = payment_amount / 3;
+        
+        let end_bps = (start_bps + 100).min(10_000);
+        
+        let mut prev_fee = None;
+        for fee_bps in start_bps..=end_bps {
+            let result = compute_split(
+                payment_amount,
+                already_distributed,
+                investor_amount,
+                fee_bps,
+            );
+            
+            prop_assert!(result.is_ok(), "compute_split failed for fee_bps={}", fee_bps);
+            let preview = result.unwrap();
+            
+            if let Some(prev) = prev_fee {
+                prop_assert!(
+                    preview.platform_fee >= prev,
+                    "Incremental monotonicity violated at fee_bps={}: {} < prev {}",
+                    fee_bps, preview.platform_fee, prev
+                );
+            }
+            
+            prev_fee = Some(preview.platform_fee);
+        }
+    }
+    
+    /// Issue #484: Monotonicity with partial distributions.
+    /// 
+    /// Verifies that monotonicity holds even when some payment has already
+    /// been distributed (common in incremental payment scenarios).
+    #[test]
+    fn fee_calculation_monotonicity_with_partial_distribution(
+        total_payment in 1000i128..1_000_000_001,
+        already_distributed_fraction in 0u32..80, // 0-80% already distributed
+        fee_bps_1 in 0u32..=10_000,
+        fee_bps_2 in 0u32..=10_000,
+    ) {
+        let already_distributed = total_payment * already_distributed_fraction as i128 / 100;
+        let remaining = total_payment - already_distributed;
+        
+        if remaining <= 0 {
+            return Ok(());
+        }
+        
+        let investor_amount = remaining / 4;
+        
+        let result_1 = compute_split(total_payment, already_distributed, investor_amount, fee_bps_1);
+        let result_2 = compute_split(total_payment, already_distributed, investor_amount, fee_bps_2);
+        
+        if result_1.is_err() || result_2.is_err() {
+            return Ok(());
+        }
+        
+        let preview_1 = result_1.unwrap();
+        let preview_2 = result_2.unwrap();
+        
+        if fee_bps_2 > fee_bps_1 {
+            prop_assert!(
+                preview_2.platform_fee >= preview_1.platform_fee,
+                "Monotonicity with partial distribution: fee_bps {} -> {}, fees {} -> {} (already_distributed: {})",
+                fee_bps_1, fee_bps_2, preview_1.platform_fee, preview_2.platform_fee, already_distributed
+            );
+        }
+    }
 }
 
 #[test]
