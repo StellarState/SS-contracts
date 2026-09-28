@@ -173,6 +173,68 @@ fn test_integration_escrow_lifecycle_happy_path() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[test]
+fn test_integration_multi_contract_partial_funding_and_repayment_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 250, "INVMULTI", 400, 1_200);
+    let face_value = 1_200i128;
+    let purchase_price = 1_000i128;
+    let due_date = 100_000u64;
+
+    ctx.escrow.create_escrow(
+        &ctx.invoice_id,
+        &ctx.seller,
+        &ctx.payer,
+        &face_value,
+        &purchase_price,
+        &due_date,
+        &ctx.payment_token.address,
+        &ctx.inv_token_id,
+        &test_commitment(&ctx.env, "multi-contract"),
+        &None,
+        &None,
+    );
+
+    // The same Soroban environment hosts escrow, SEP-41 invoice token, and
+    // Stellar payment asset contracts through a partial then final funding.
+    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &400);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Created
+    );
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 400);
+    assert_eq!(ctx.inv_token.balance(&ctx.buyer), 400);
+
+    let second_investor = Address::generate(&env);
+    ctx.payment_asset.mint(&second_investor, &600);
+    ctx.escrow
+        .fund_escrow(&ctx.invoice_id, &second_investor, &600);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Funded
+    );
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
+    assert!(ctx.inv_token.transfer_locked());
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &500);
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Funded
+    );
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &700);
+
+    assert_eq!(
+        ctx.escrow.get_escrow_status(&ctx.invoice_id),
+        EscrowStatus::Settled
+    );
+    assert_eq!(ctx.payment_token.balance(&ctx.payer), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), face_value);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
+    assert!(!ctx.inv_token.transfer_locked());
+}
+
+#[test]
 fn test_integration_refund_lifecycle() {
     let env = Env::default();
     env.mock_all_auths();
