@@ -578,6 +578,219 @@ fn test_mint_rejects_frozen_recipient() {
     assert_eq!(client.total_supply(), 0);
 }
 
+// ========== Clawback Tests (Issue #483: SEP-41 Regulatory Compliance) ==========
+
+#[test]
+fn test_clawback_requires_admin_auth() {
+    let env = Env::default();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    // Mint some tokens and freeze account
+    env.mock_all_auths();
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+    env.mock_all_auths_allowing_non_root_auth();
+    
+    // Non-admin cannot clawback
+    let stranger = Address::generate(&env);
+    assert!(client.try_clawback(&account, &50).is_err());
+}
+
+#[test]
+fn test_clawback_only_works_on_frozen_accounts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    client.mint(&account, &100, &minter);
+    
+    // Cannot clawback from unfrozen account
+    assert_eq!(
+        client.try_clawback(&account, &50),
+        Err(Ok(crate::errors::Error::AccountNotFrozen))
+    );
+    assert_eq!(client.balance(&account), 100);
+}
+
+#[test]
+fn test_clawback_full_balance_from_frozen_account() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+    
+    let supply_before = client.total_supply();
+    client.clawback(&account, &100);
+    
+    assert_eq!(client.balance(&account), 0);
+    assert_eq!(client.total_supply(), supply_before - 100);
+}
+
+#[test]
+fn test_clawback_partial_balance_from_frozen_account() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+    
+    let supply_before = client.total_supply();
+    client.clawback(&account, &60);
+    
+    assert_eq!(client.balance(&account), 40);
+    assert_eq!(client.total_supply(), supply_before - 60);
+    
+    // Can clawback again
+    client.clawback(&account, &40);
+    assert_eq!(client.balance(&account), 0);
+    assert_eq!(client.total_supply(), supply_before - 100);
+}
+
+#[test]
+fn test_clawback_insufficient_balance_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+    
+    assert_eq!(
+        client.try_clawback(&account, &150),
+        Err(Ok(crate::errors::Error::InsufficientBalance))
+    );
+    assert_eq!(client.balance(&account), 100);
+}
+
+#[test]
+fn test_clawback_zero_or_negative_amount_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+    
+    assert_eq!(
+        client.try_clawback(&account, &0),
+        Err(Ok(crate::errors::Error::InvalidAmount))
+    );
+    assert_eq!(
+        client.try_clawback(&account, &-10),
+        Err(Ok(crate::errors::Error::InvalidAmount))
+    );
+    assert_eq!(client.balance(&account), 100);
+}
+
+#[test]
+fn test_clawback_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+    client.clawback(&account, &60);
+    
+    let clawback_event = env.events().all().events().last().unwrap().clone();
+    let (_contract_addr, topics, data) = parse_event(&env, &clawback_event);
+    
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "clawback"), account.clone()).into_val(&env)
+    );
+    let amount: i128 = data.try_into_val(&env).unwrap();
+    assert_eq!(amount, 60);
+}
+
+#[test]
+fn test_clawback_multiple_frozen_accounts_independence() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account1 = Address::generate(&env);
+    let account2 = Address::generate(&env);
+    
+    client.mint(&account1, &100, &minter);
+    client.mint(&account2, &200, &minter);
+    client.freeze_account(&account1);
+    client.freeze_account(&account2);
+    
+    let supply_before = client.total_supply();
+    
+    client.clawback(&account1, &50);
+    assert_eq!(client.balance(&account1), 50);
+    assert_eq!(client.balance(&account2), 200);
+    assert_eq!(client.total_supply(), supply_before - 50);
+    
+    client.clawback(&account2, &100);
+    assert_eq!(client.balance(&account1), 50);
+    assert_eq!(client.balance(&account2), 100);
+    assert_eq!(client.total_supply(), supply_before - 150);
+}
+
+#[test]
+fn test_clawback_then_unfreeze_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+    client.clawback(&account, &60);
+    
+    assert_eq!(client.balance(&account), 40);
+    
+    // Unfreeze and verify account can transact again
+    client.unfreeze_account(&account);
+    client.set_transfer_locked(&admin, &false);
+    
+    let recipient = Address::generate(&env);
+    client.transfer(&account, &recipient, &20);
+    
+    assert_eq!(client.balance(&account), 20);
+    assert_eq!(client.balance(&recipient), 20);
+}
+
+#[test]
+fn test_clawback_conserves_supply_invariant() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    
+    let account1 = Address::generate(&env);
+    let account2 = Address::generate(&env);
+    let account3 = Address::generate(&env);
+    
+    client.mint(&account1, &100, &minter);
+    client.mint(&account2, &200, &minter);
+    client.mint(&account3, &300, &minter);
+    
+    let initial_supply = client.total_supply();
+    assert_eq!(initial_supply, 600);
+    
+    client.freeze_account(&account2);
+    client.clawback(&account2, &150);
+    
+    // Supply should decrease by clawback amount
+    assert_eq!(client.total_supply(), initial_supply - 150);
+    assert_eq!(
+        client.balance(&account1) + client.balance(&account2) + client.balance(&account3),
+        client.total_supply()
+    );
+}
+
 #[test]
 fn test_transfer_locked_with_sufficient_balance() {
     let env = Env::default();
