@@ -33,3 +33,13 @@ This specification documents the exact event topics and payload schemas emitted 
 - **Topics**: `(Symbol("installment_settled"),)`
 - **Data Payload**: `(invoice_id: Symbol, index: u32, cumulative_amount: i128, paid_amt: i128)`
 - **Description**: Emitted each time cumulative repayments reach a milestone's cumulative target (or the escrow fully settles, closing any remaining milestones).
+
+### `settlement_proposed`
+- **Topics**: `(Symbol("settlement_proposed"),)`
+- **Data Payload**: `(invoice_id: BytesN<32>, proposer: Address, repayment_amount: i128)`
+- **Description**: Emitted when an authorized admin proposes a registered-invoice settlement.
+
+### `settlement_approved`
+- **Topics**: `(Symbol("settlement_approved"),)`
+- **Data Payload**: `(invoice_id: BytesN<32>, approver: Address, repayment_amount: i128)`
+- **Description**: Emitted after a different authorized admin approves and executes the proposal.

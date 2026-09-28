@@ -11,9 +11,9 @@ mod events;
 mod storage;
 mod types;
 
-use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, IntoVal, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, IntoVal, Symbol, Vec};
 
-use types::MultiSigConfig;
+use types::{MultiSigConfig, SettlementProposal};
 
 // EscrowStatus is re-exported publicly; Config, EscrowData, and InvoiceData are crate-private.
 pub use types::EscrowStatus;
@@ -349,11 +349,11 @@ impl InvoiceEscrow {
         Ok(config.penalty_interest_bps)
     }
 
-    /// Create an escrow for an invoice. Caller (seller) must be authenticated.
+    /// Create a single-token escrow for legacy callers. Caller (seller) must be authenticated.
     /// face_value: what the debtor owes (amount to be paid at settlement)
     /// purchase_price: what the investor pays (discount applied here)
     /// commitment: immutable on-chain anchor (SHA-256 hash of off-chain invoice data)
-    pub fn create_escrow(
+    pub fn create_escrow_legacy(
         env: Env,
         invoice_id: Symbol,
         seller: Address,
@@ -421,6 +421,7 @@ impl InvoiceEscrow {
             funders: soroban_sdk::Vec::new(&env),
             due_dt: due_date,
             token: payment_token.clone(),
+            accepted_tokens: soroban_sdk::vec![&env, payment_token.clone()],
             inv_token: invoice_token.clone(),
             paid_amt: 0,
             status: EscrowStatus::Created,
@@ -453,6 +454,71 @@ impl InvoiceEscrow {
         );
         events::escrow_status_changed(&env, invoice_id, EscrowStatus::Created, current_timestamp);
         Ok(())
+    }
+
+    /// Create an escrow with an explicit whitelist of acceptable funding tokens.
+    /// The `create_escrow_legacy` entry point remains available and accepts only
+    /// its `payment_token` argument.
+    pub fn create_escrow(
+        env: Env,
+        invoice_id: Symbol,
+        seller: Address,
+        debtor: Address,
+        face_value: i128,
+        purchase_price: i128,
+        due_date: u64,
+        payment_token: Address,
+        invoice_token: Address,
+        commitment: soroban_sdk::BytesN<32>,
+        funding_milestone: Option<i128>,
+        category: Option<InvoiceCategory>,
+        accepted_tokens: soroban_sdk::Vec<Address>,
+    ) -> Result<(), Error> {
+        if accepted_tokens.is_empty() || !accepted_tokens.iter().any(|token| token == payment_token)
+        {
+            return Err(Error::TokenNotAccepted);
+        }
+        let key = invoice_id.clone();
+        Self::create_escrow_legacy(
+            env.clone(),
+            invoice_id,
+            seller,
+            debtor,
+            face_value,
+            purchase_price,
+            due_date,
+            payment_token,
+            invoice_token,
+            commitment,
+            funding_milestone,
+            category,
+        )?;
+        let mut data = storage::get_escrow(&env, key.clone()).ok_or(Error::EscrowNotFound)?;
+        data.accepted_tokens = accepted_tokens;
+        storage::set_escrow(&env, key, &data);
+        Ok(())
+    }
+
+    /// Explicitly named alias for clients migrating from the legacy API.
+    pub fn create_escrow_with_tokens(
+        env: Env,
+        invoice_id: Symbol,
+        seller: Address,
+        debtor: Address,
+        face_value: i128,
+        purchase_price: i128,
+        due_date: u64,
+        payment_token: Address,
+        invoice_token: Address,
+        commitment: soroban_sdk::BytesN<32>,
+        funding_milestone: Option<i128>,
+        category: Option<InvoiceCategory>,
+        accepted_tokens: soroban_sdk::Vec<Address>,
+    ) -> Result<(), Error> {
+        Self::create_escrow(
+            env, invoice_id, seller, debtor, face_value, purchase_price, due_date,
+            payment_token, invoice_token, commitment, funding_milestone, category, accepted_tokens,
+        )
     }
 
     /// Cancel an escrow in Created state, refunding any partial funds to the funders.
@@ -685,7 +751,7 @@ impl InvoiceEscrow {
 
     /// Fund the escrow (investor buys part or all of the invoice at purchase_price).
     /// Transfers `amount` from buyer to this contract. Multiple investors can fund until fully subscribed.
-    pub fn fund_escrow(
+    pub fn fund_escrow_legacy(
         env: Env,
         invoice_id: Symbol,
         buyer: Address,
@@ -693,6 +759,29 @@ impl InvoiceEscrow {
     ) -> Result<(), Error> {
         buyer.require_auth();
         Self::fund_escrow_core(&env, invoice_id, &buyer, amount)
+    }
+
+    /// Fund using an explicitly selected token from the escrow whitelist.
+    pub fn fund_escrow(
+        env: Env,
+        invoice_id: Symbol,
+        buyer: Address,
+        amount: i128,
+        funding_token: Address,
+    ) -> Result<(), Error> {
+        buyer.require_auth();
+        Self::fund_escrow_core_with_token(&env, invoice_id, &buyer, amount, &funding_token)
+    }
+
+    /// Explicitly named alias for clients migrating from the legacy API.
+    pub fn fund_escrow_with_token(
+        env: Env,
+        invoice_id: Symbol,
+        buyer: Address,
+        amount: i128,
+        funding_token: Address,
+    ) -> Result<(), Error> {
+        Self::fund_escrow(env, invoice_id, buyer, amount, funding_token)
     }
 
     /// Fund the escrow on behalf of `buyer` using a signed off-chain approval that a relayer
@@ -736,6 +825,17 @@ impl InvoiceEscrow {
         buyer: &Address,
         amount: i128,
     ) -> Result<(), Error> {
+        let data = storage::get_escrow(env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        Self::fund_escrow_core_with_token(env, invoice_id, buyer, amount, &data.token)
+    }
+
+    fn fund_escrow_core_with_token(
+        env: &Env,
+        invoice_id: Symbol,
+        buyer: &Address,
+        amount: i128,
+        funding_token: &Address,
+    ) -> Result<(), Error> {
         // Fail fast: validate amount before hitting storage.
         if amount == 0 {
             return Err(Error::ZeroAmount);
@@ -772,6 +872,19 @@ impl InvoiceEscrow {
             return Err(Error::EscrowFunded);
         }
 
+        if !data
+            .accepted_tokens
+            .iter()
+            .any(|token| token == *funding_token)
+        {
+            return Err(Error::TokenNotAccepted);
+        }
+        if data.funded_amt == 0 {
+            data.token = funding_token.clone();
+        } else if data.token != *funding_token {
+            return Err(Error::TokenNotAccepted);
+        }
+
         // Check that funding doesn't exceed purchase_price
         let new_funded = data.funded_amt.checked_add(amount).ok_or(Error::Overflow)?;
         if new_funded > data.purchase_price {
@@ -801,9 +914,8 @@ impl InvoiceEscrow {
             }
         }
 
-        let token = token::Client::new(env, &data.token);
         let contract = env.current_contract_address();
-        token.transfer(buyer, &contract, &amount);
+        token::Client::new(env, funding_token).transfer(buyer, &contract, &amount);
 
         // Mint invoice tokens to the buyer to represent their ownership share
         env.invoke_contract::<()>(
@@ -1969,7 +2081,8 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// Settle invoice pro-rata across investors when seller repays. Callable only by admin.
+    /// Backward-compatible proposal entry point. Settlement now requires a second
+    /// configured administrator to call `approve_settlement` before execution.
     pub fn settle_invoice(
         env: Env,
         invoice_id: BytesN<32>,
@@ -1977,21 +2090,92 @@ impl InvoiceEscrow {
     ) -> Result<(), Error> {
         let config = storage::get_config(&env).ok_or(Error::NotInit)?;
         config.admin.require_auth();
+        Self::propose_settlement_core(&env, &config.admin, &invoice_id, repayment_amount)
+    }
 
-        let mut record =
-            storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)?;
+    /// Propose a settlement. Only an administrator in the configured
+    /// multi-signature set may propose; a different administrator must approve.
+    pub fn propose_settlement(
+        env: Env,
+        admin: Address,
+        invoice_id: BytesN<32>,
+        repayment_amount: i128,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::propose_settlement_core(&env, &admin, &invoice_id, repayment_amount)
+    }
 
+    fn propose_settlement_core(
+        env: &Env,
+        admin: &Address,
+        invoice_id: &BytesN<32>,
+        repayment_amount: i128,
+    ) -> Result<(), Error> {
+        let record = storage::get_invoice_record(env, invoice_id).ok_or(Error::EscrowNotFound)?;
         if record.status != EscrowStatus::Funded {
             return Err(Error::InvalidInvoiceStatus);
         }
-
         if repayment_amount < record.total_raised {
             return Err(Error::InsufficientRepayment);
         }
+        let multisig = storage::get_emergency_config(env).ok_or(Error::EmergencyNotConfigured)?;
+        if multisig.threshold != 2 || !multisig.admins.iter().any(|member| member == *admin) {
+            return Err(Error::NotEmergencyAdmin);
+        }
+        if storage::get_settlement_proposal(env, invoice_id).is_some() {
+            return Err(Error::InvalidInvoiceStatus);
+        }
+        storage::set_settlement_proposal(
+            env,
+            invoice_id,
+            &SettlementProposal {
+                proposer: admin.clone(),
+                repayment_amount,
+            },
+        );
+        events::settlement_proposed(env, invoice_id, admin, repayment_amount);
+        Ok(())
+    }
 
+    /// Approve and execute a proposed settlement. The proposer cannot approve
+    /// their own proposal, and the approval set is always exactly two admins.
+    pub fn approve_settlement(
+        env: Env,
+        admin: Address,
+        invoice_id: BytesN<32>,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let multisig = storage::get_emergency_config(&env).ok_or(Error::EmergencyNotConfigured)?;
+        if multisig.threshold != 2 || !multisig.admins.iter().any(|member| member == admin) {
+            return Err(Error::NotEmergencyAdmin);
+        }
+        let proposal = storage::get_settlement_proposal(&env, &invoice_id)
+            .ok_or(Error::SettlementNotProposed)?;
+        if proposal.proposer == admin {
+            return Err(Error::SameAdminApproval);
+        }
+        Self::execute_settlement(&env, &invoice_id, proposal.repayment_amount)?;
+        storage::remove_settlement_proposal(&env, &invoice_id);
+        events::settlement_approved(&env, &invoice_id, &admin, proposal.repayment_amount);
+        Ok(())
+    }
+
+    fn execute_settlement(
+        env: &Env,
+        invoice_id: &BytesN<32>,
+        repayment_amount: i128,
+    ) -> Result<(), Error> {
+        let mut record =
+            storage::get_invoice_record(env, invoice_id).ok_or(Error::EscrowNotFound)?;
+        if record.status != EscrowStatus::Funded {
+            return Err(Error::InvalidInvoiceStatus);
+        }
+        if repayment_amount < record.total_raised {
+            return Err(Error::InsufficientRepayment);
+        }
         let mut total_payouts: i128 = 0;
         for investor in record.investors.iter() {
-            let committed = storage::get_investor_position(&env, &invoice_id, &investor);
+            let committed = storage::get_investor_position(env, invoice_id, &investor);
             if committed > 0 {
                 let payout = committed
                     .checked_mul(repayment_amount)
@@ -2000,16 +2184,14 @@ impl InvoiceEscrow {
                     .ok_or(Error::Overflow)?;
                 let yield_earned = payout.saturating_sub(committed);
                 total_payouts = total_payouts.checked_add(payout).ok_or(Error::Overflow)?;
-                events::settlement_paid(&env, &investor, &invoice_id, payout, yield_earned);
+                events::settlement_paid(env, &investor, invoice_id, payout, yield_earned);
             }
         }
-
         let _dust = repayment_amount
             .checked_sub(total_payouts)
             .ok_or(Error::Overflow)?;
-
         record.status = EscrowStatus::Settled;
-        storage::set_invoice_record(&env, &invoice_id, &record);
+        storage::set_invoice_record(env, invoice_id, &record);
         Ok(())
     }
 
@@ -2196,7 +2378,7 @@ impl InvoiceEscrow {
     /// Off-chain keeper bots can use this to keep active escrows alive without
     /// issuing separate transactions per key. Only extends keys that exist;
     /// missing keys are silently skipped.
-    pub fn batch_extend_ttl(env: Env, keys: Vec<storage::StorageKey>) {
+    pub fn batch_extend_ttl(env: Env, keys: Vec<types::StorageKey>) {
         storage::batch_extend_ttl(&env, &keys);
     }
 
@@ -2221,13 +2403,12 @@ impl InvoiceEscrow {
         admin.require_auth();
 
         // Verify invoice is in a terminal state
-        let escrow = storage::get_escrow(&env, inv_id.clone())
-            .ok_or(Error::InvalidEscrow)?;
+        let escrow = storage::get_escrow(&env, inv_id.clone()).ok_or(Error::EscrowNotFound)?;
         match escrow.status {
             types::EscrowStatus::Settled
             | types::EscrowStatus::Refunded
             | types::EscrowStatus::Cancelled => {}
-            _ => return Err(Error::InvalidStatus),
+            _ => return Err(Error::InvalidInvoiceStatus),
         }
 
         let removed = storage::compact_invoice_storage(&env, &inv_id, &funder_addresses);
@@ -2242,8 +2423,6 @@ mod benchmarks;
 mod integration_test;
 #[cfg(test)]
 mod test;
-#[cfg(test)]
-mod benchmarks;
 
 // Modules added for batch resolution of #479, #480, #481
 pub mod insurance_pool;

@@ -5,7 +5,7 @@
 //! indexer standardization. Off-chain indexers (Zephyr, Mercury) can filter
 //! by contract address without inspecting the event body.
 
-use soroban_sdk::{Address, BytesN, Env, Symbol};
+use soroban_sdk::{Address, BytesN, Env, Symbol, Val};
 
 use crate::types::EscrowStatus;
 
@@ -301,6 +301,20 @@ pub fn settlement_paid(
             payout_amount,
             yield_earned,
         ),
+    );
+}
+
+pub fn settlement_proposed(env: &Env, invoice_id: &BytesN<32>, proposer: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_proposed"),),
+        (invoice_id, proposer, amount),
+    );
+}
+
+pub fn settlement_approved(env: &Env, invoice_id: &BytesN<32>, approver: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_approved"),),
+        (invoice_id, approver, amount),
     );
 }
 

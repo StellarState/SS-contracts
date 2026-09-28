@@ -25,6 +25,8 @@ pub enum StorageKey {
     EmergencyConfig,
     /// Persistent: approvals collected for a given invoice's emergency release.
     EmergencyApprovals(soroban_sdk::Symbol),
+    /// Persistent: pending two-admin settlement proposal by invoice id.
+    SettlementProposal(soroban_sdk::BytesN<32>),
     /// Instance: total count of escrows created for indexing.
     EscrowCount,
     /// Persistent: invoice_id indexed by sequential creation order.
@@ -193,6 +195,8 @@ pub struct EscrowData {
     pub due_dt: u64,
     /// Payment token contract address.
     pub token: soroban_sdk::Address,
+    /// Allowed payment tokens; the first contribution locks `token` to one of these.
+    pub accepted_tokens: soroban_sdk::Vec<soroban_sdk::Address>,
     /// Invoice token contract address (ownership/claim).
     pub inv_token: soroban_sdk::Address,
     /// Amount already paid by payer.
@@ -225,6 +229,14 @@ pub struct EscrowData {
     pub category: InvoiceCategory,
     /// Timestamp when escrow was fully funded (0 if not yet funded).
     pub funded_dt: u64,
+}
+
+/// A settlement awaiting approval from an admin other than its proposer.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementProposal {
+    pub proposer: soroban_sdk::Address,
+    pub repayment_amount: i128,
 }
 
 /// Status for BytesN<32> funding invoices (position management).

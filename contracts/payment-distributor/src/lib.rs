@@ -137,6 +137,78 @@ fn compute_split(
     })
 }
 
+/// Calculate proportional refund shares with integer remainder assigned to the
+/// final recipient. Kept pure so property tests exercise the same code path as
+/// on-chain distribution.
+fn pro_rata_shares(refund_amount: i128, weights: &[i128]) -> Result<alloc::vec::Vec<i128>, Error> {
+    if refund_amount <= 0 || weights.is_empty() || weights.iter().any(|weight| *weight < 0) {
+        return Err(Error::InvalidRefundWeight);
+    }
+    let total_weight = weights.iter().try_fold(0i128, |sum, weight| {
+        sum.checked_add(*weight).ok_or(Error::Overflow)
+    })?;
+    if total_weight <= 0 {
+        return Err(Error::InvalidRefundWeight);
+    }
+    let mut allocated = 0i128;
+    let mut shares = alloc::vec::Vec::with_capacity(weights.len());
+    for (index, weight) in weights.iter().enumerate() {
+        let share = if index + 1 == weights.len() {
+            refund_amount
+                .checked_sub(allocated)
+                .ok_or(Error::Overflow)?
+        } else {
+            refund_amount
+                .checked_mul(*weight)
+                .ok_or(Error::Overflow)?
+                .checked_div(total_weight)
+                .ok_or(Error::Overflow)?
+        };
+        if share < 0 {
+            return Err(Error::InvalidRefundWeight);
+        }
+        allocated = allocated.checked_add(share).ok_or(Error::Overflow)?;
+        shares.push(share);
+    }
+    Ok(shares)
+}
+
+fn fee_split_amounts(
+    amount: i128,
+    shares_bps: &[u32],
+    referral_bps: u32,
+) -> Result<(i128, alloc::vec::Vec<i128>), Error> {
+    if amount <= 0 || shares_bps.is_empty() || referral_bps > MAX_FEE_BPS {
+        return Err(Error::InvalidSplit);
+    }
+    let referral = amount
+        .checked_mul(referral_bps as i128)
+        .ok_or(Error::Overflow)?
+        .checked_div(10_000)
+        .ok_or(Error::Overflow)?;
+    let mut allocated = referral;
+    let mut recipients = alloc::vec::Vec::with_capacity(shares_bps.len());
+    for (index, share_bps) in shares_bps.iter().enumerate() {
+        let share = if index == 0 {
+            0 // Filled with the exact residual after the other shares.
+        } else {
+            amount
+                .checked_mul(*share_bps as i128)
+                .ok_or(Error::Overflow)?
+                .checked_div(10_000)
+                .ok_or(Error::Overflow)?
+        };
+        allocated = allocated.checked_add(share).ok_or(Error::Overflow)?;
+        recipients.push(share);
+    }
+    let primary = amount.checked_sub(allocated).ok_or(Error::Overflow)?;
+    if primary < 0 {
+        return Err(Error::InvalidSplit);
+    }
+    recipients[0] = primary;
+    Ok((referral, recipients))
+}
+
 /// Issue #126 / #130: Distribute a single asset `amount` across `split`, taking the
 /// optional referral cut off the top and allocating any rounding remainder to the
 /// primary (index 0) recipient so the full amount is distributed with no dust.
@@ -154,41 +226,13 @@ fn distribute_split(
 
     let token_client = token::Client::new(env, token);
 
-    // Referral cut off the top.
-    let referral_amount = if split.referral_bps > 0 {
-        amount
-            .checked_mul(split.referral_bps as i128)
-            .ok_or(Error::Overflow)?
-            .checked_div(10_000)
-            .ok_or(Error::Overflow)?
-    } else {
-        0
-    };
-
-    // Compute recipient amounts: recipients[1..] by their basis-point share and
-    // recipients[0] as the exact residual so the total equals `amount`.
-    let n = split.recipients.len();
-    let mut allocated = referral_amount;
+    let share_bps: alloc::vec::Vec<u32> = split.shares_bps.iter().collect();
+    let (referral_amount, allocated) = fee_split_amounts(amount, &share_bps, split.referral_bps)?;
     let mut rec_amounts: Vec<i128> = Vec::new(env);
-    for i in 0..n {
-        if i == 0 {
-            rec_amounts.push_back(0); // residual placeholder, set below
-        } else {
-            let share = split.shares_bps.get(i).ok_or(Error::InvalidSplit)?;
-            let amt = amount
-                .checked_mul(share as i128)
-                .ok_or(Error::Overflow)?
-                .checked_div(10_000)
-                .ok_or(Error::Overflow)?;
-            allocated = allocated.checked_add(amt).ok_or(Error::Overflow)?;
-            rec_amounts.push_back(amt);
-        }
+    for amount in allocated {
+        rec_amounts.push_back(amount);
     }
-    let primary = amount.checked_sub(allocated).ok_or(Error::Overflow)?;
-    if primary < 0 {
-        return Err(Error::InvalidSplit);
-    }
-    rec_amounts.set(0, primary);
+    let n = split.recipients.len();
 
     let mut recipients_out: Vec<Address> = Vec::new(env);
     let mut amounts_out: Vec<i128> = Vec::new(env);
@@ -505,35 +549,15 @@ impl PaymentDistributor {
                 return Err(Error::InvalidAmount);
             }
 
-            let mut total_weight: i128 = 0;
+            let mut weights = alloc::vec::Vec::with_capacity(funder_count as usize);
             for i in 0..funder_count {
                 let weight = amounts.get(1 + i).ok_or(Error::InvalidAmount)?;
-                if weight < 0 {
-                    return Err(Error::InvalidRefundWeight);
-                }
-                total_weight = total_weight.checked_add(weight).ok_or(Error::Overflow)?;
+                weights.push(weight);
             }
-            if total_weight <= 0 {
-                return Err(Error::InvalidRefundWeight);
-            }
-
-            let mut distributed: i128 = 0;
+            let shares = pro_rata_shares(refund_amount, &weights)?;
             for i in 0..funder_count {
                 let funder = addresses.get(1 + i).ok_or(Error::InvalidAmount)?;
-                let share = if i == funder_count - 1 {
-                    // Last funder absorbs any rounding dust to conserve the total.
-                    refund_amount
-                        .checked_sub(distributed)
-                        .ok_or(Error::Overflow)?
-                } else {
-                    let weight = amounts.get(1 + i).ok_or(Error::InvalidAmount)?;
-                    refund_amount
-                        .checked_mul(weight)
-                        .ok_or(Error::Overflow)?
-                        .checked_div(total_weight)
-                        .ok_or(Error::Overflow)?
-                };
-                distributed = distributed.checked_add(share).ok_or(Error::Overflow)?;
+                let share = *shares.get(i as usize).ok_or(Error::InvalidAmount)?;
                 recipients.push_back(funder);
                 recipient_amounts.push_back(share);
             }

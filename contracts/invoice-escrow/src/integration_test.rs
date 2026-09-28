@@ -104,7 +104,7 @@ fn setup<'a>(
 
 /// Create and fully fund an escrow using face_value == purchase_price == `amount`.
 fn create_and_fund(ctx: &Ctx<'_>, amount: i128, due_date: u64) {
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -117,7 +117,7 @@ fn create_and_fund(ctx: &Ctx<'_>, amount: i128, due_date: u64) {
         &None,
         &None,
     );
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
+    ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &amount);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -315,7 +315,7 @@ fn test_integration_cancel_escrow_happy_path() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCAN", 0, 0);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -358,7 +358,7 @@ fn test_integration_cancel_non_seller_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCNR", 0, 0);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -383,7 +383,7 @@ fn test_integration_fund_cancelled_escrow_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCFC", 1_000, 0);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -400,7 +400,7 @@ fn test_integration_fund_cancelled_escrow_rejected() {
 
     let result = ctx
         .escrow
-        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+        .try_fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &1_000);
     assert_eq!(result, Err(Ok(errors::Error::EscrowCancelled)));
 }
 
@@ -414,7 +414,7 @@ fn test_integration_pause_blocks_fund_and_payment() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVPSE", 1_000, 1_000);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -434,12 +434,12 @@ fn test_integration_pause_blocks_fund_and_payment() {
     // fund_escrow must fail while paused.
     let r = ctx
         .escrow
-        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+        .try_fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &1_000);
     assert_eq!(r, Err(Ok(errors::Error::Paused)));
 
     // Unpause and fund.
     ctx.escrow.set_paused(&false);
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+    ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &1_000);
 
     // Re-pause and try to record payment.
     ctx.escrow.set_paused(&true);
@@ -566,7 +566,7 @@ fn test_integration_over_funding_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVOVF", 2_000, 0);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -583,7 +583,7 @@ fn test_integration_over_funding_rejected() {
     // Purchase price is 1000; funding 1001 must fail.
     let result = ctx
         .escrow
-        .try_fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_001);
+        .try_fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &1_001);
     assert_eq!(result, Err(Ok(errors::Error::InvalidAmount)));
 }
 
@@ -598,7 +598,7 @@ fn test_integration_competing_funders_cannot_overfund_invoice() {
     let competitor = Address::generate(&env);
     ctx.payment_asset.mint(&competitor, &1_000);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -612,8 +612,8 @@ fn test_integration_competing_funders_cannot_overfund_invoice() {
         &None,
     );
 
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
-    let losing_funder = ctx.escrow.try_fund_escrow(&ctx.invoice_id, &competitor, &1_000);
+    ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &1_000);
+    let losing_funder = ctx.escrow.try_fund_escrow_legacy(&ctx.invoice_id, &competitor, &1_000);
 
     assert!(losing_funder.is_err());
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_000);
@@ -667,7 +667,7 @@ fn test_integration_duplicate_invoice_id_rejected() {
     let ctx = setup(&env, 300, "INVDUP", 0, 0);
 
     let commitment = test_commitment(&env, "dup");
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -681,7 +681,7 @@ fn test_integration_duplicate_invoice_id_rejected() {
         &None,
     );
 
-    let result = ctx.escrow.try_create_escrow(
+    let result = ctx.escrow.try_create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -708,7 +708,7 @@ fn test_integration_past_due_date_rejected() {
     let ctx = setup(&env, 300, "INVPDD", 0, 0);
 
     // due_date = 49_999 < current timestamp (50_000) → must fail.
-    let result = ctx.escrow.try_create_escrow(
+    let result = ctx.escrow.try_create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -729,7 +729,7 @@ fn test_integration_zero_due_date_rejected() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVZDD", 0, 0);
 
-    let result = ctx.escrow.try_create_escrow(
+    let result = ctx.escrow.try_create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -762,7 +762,7 @@ fn test_integration_create_escrow_not_initialized() {
     let token = Address::generate(&env);
     let inv_token = Address::generate(&env);
 
-    let result = escrow.try_create_escrow(
+    let result = escrow.try_create_escrow_legacy(
         &Symbol::new(&env, "INV"),
         &seller,
         &payer,
@@ -788,7 +788,7 @@ fn test_integration_state_persistence_after_create() {
     let ctx = setup(&env, 300, "INVPST", 0, 0);
 
     let commitment = test_commitment(&env, "persistence");
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -897,7 +897,7 @@ fn test_integration_commitment_immutable_after_lifecycle() {
     let ctx = setup(&env, 300, "INVCMT", 1_000, 1_000);
 
     let original = test_commitment(&env, "original_pdf_hash");
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -912,7 +912,7 @@ fn test_integration_commitment_immutable_after_lifecycle() {
     );
 
     // Fund.
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &1_000);
+    ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &1_000);
     assert_eq!(ctx.escrow.get_escrow(&ctx.invoice_id).commitment, original);
 
     // Settle.
@@ -953,7 +953,7 @@ fn test_integration_two_independent_escrows() {
     ctx_a.payment_asset.mint(&buyer_b, &500);
     ctx_a.payment_asset.mint(&payer_b, &500);
 
-    ctx_a.escrow.create_escrow(
+    ctx_a.escrow.create_escrow_legacy(
         &inv_b_id,
         &ctx_a.seller,
         &payer_b,
@@ -966,7 +966,7 @@ fn test_integration_two_independent_escrows() {
         &None,
         &None,
     );
-    ctx_a.escrow.fund_escrow(&inv_b_id, &buyer_b, &500);
+    ctx_a.escrow.fund_escrow_legacy(&inv_b_id, &buyer_b, &500);
 
     // Settle A.
     ctx_a
@@ -1020,7 +1020,7 @@ fn test_integration_escrow_created_event_emitted() {
     let ctx = setup(&env, 300, "INVECE", 0, 0);
 
     let commitment = test_commitment(&env, "event_emitted");
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -1076,7 +1076,7 @@ fn test_integration_escrow_cancelled_event_emitted() {
     env.mock_all_auths();
     let ctx = setup(&env, 300, "INVCNE", 0, 0);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -1188,7 +1188,7 @@ fn test_integration_discounted_purchase_price() {
     // Escrow out: 900 (investor, 0% fee) + 900 (seller release) = 1800.
     let ctx = setup(&env, 0, "INVDSC", 900, 900);
 
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -1201,7 +1201,7 @@ fn test_integration_discounted_purchase_price() {
         &None,
         &None,
     );
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &900);
+    ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &900);
 
     assert_eq!(ctx.payment_token.balance(&ctx.buyer), 0);
     assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 900);
@@ -1555,7 +1555,7 @@ fn test_integration_refund_restores_capacity() {
 
     // Buyer can fund again after refund
     let ctx2 = setup(&env, 300, "INVREFC2", 1_000, 0);
-    ctx2.escrow.create_escrow(
+    ctx2.escrow.create_escrow_legacy(
         &ctx2.invoice_id,
         &ctx2.seller,
         &ctx2.payer,
@@ -1569,7 +1569,7 @@ fn test_integration_refund_restores_capacity() {
         &None,
     );
     ctx2.escrow
-        .fund_escrow(&ctx2.invoice_id, &ctx2.buyer, &1_000);
+        .fund_escrow_legacy(&ctx2.invoice_id, &ctx2.buyer, &1_000);
     assert_eq!(ctx2.payment_token.balance(&ctx2.buyer), 0);
     assert_eq!(ctx2.payment_token.balance(&ctx2.escrow_id), 1_000);
 }

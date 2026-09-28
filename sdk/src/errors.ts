@@ -58,7 +58,10 @@ export const CONTRACT_ERRORS = {
     "InvalidInstallmentSchedule": 54,
     "FeeTooHigh": 55,
     "MaxInvestorsReached": 57,
-    "InvalidMaxInvestors": 56
+    "InvalidMaxInvestors": 56,
+    "TokenNotAccepted": 58,
+    "SameAdminApproval": 59,
+    "SettlementNotProposed": 60
   },
   "invoice-token": {
     "AlreadyInit": 1,
@@ -110,7 +113,8 @@ export const CONTRACT_ERRORS = {
     "InvalidFeeSplit": 24,
     "InvalidBonusRate": 25,
     "TooManyRefundRecipients": 26,
-    "InvalidRefundWeight": 27
+    "InvalidRefundWeight": 27,
+    "NothingToRefund": 28
   }
 } as const;
 

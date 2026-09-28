@@ -84,7 +84,7 @@ fn setup(env: &Env, fee_bps: u32, configure_distributor: bool) -> FlowContext<'_
 fn create_and_fund(ctx: &FlowContext<'_>, amount: i128, due_date: u64) {
     ctx.payment_asset.mint(&ctx.buyer, &amount);
     ctx.payment_asset.mint(&ctx.payer, &amount);
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &ctx.invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -97,7 +97,7 @@ fn create_and_fund(ctx: &FlowContext<'_>, amount: i128, due_date: u64) {
         &None,
         &None,
     );
-    ctx.escrow.fund_escrow(&ctx.invoice_id, &ctx.buyer, &amount);
+    ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &amount);
 }
 
 #[test]
@@ -948,7 +948,7 @@ fn test_integration_state_persistence_after_reentrancy_attempt() {
 
     // Create and fund escrow, then settle a payment to establish state.
     payment_asset.mint(&buyer, &1_000);
-    escrow.create_escrow(
+    escrow.create_escrow_legacy(
         &invoice_id,
         &seller,
         &payer,
@@ -961,7 +961,7 @@ fn test_integration_state_persistence_after_reentrancy_attempt() {
         &None,
         &None,
     );
-    escrow.fund_escrow(&invoice_id, &buyer, &1_000);
+    escrow.fund_escrow_legacy(&invoice_id, &buyer, &1_000);
     payment_asset.mint(&payer, &1_000);
     escrow.record_payment(&invoice_id, &payer, &1_000);
 
@@ -1015,7 +1015,7 @@ fn test_integration_lock_cleared_after_distribute_refund_success() {
     let invoice_id2 = Symbol::new(&env, "INV_LOCK");
     ctx.payment_asset.mint(&ctx.buyer, &500);
     ctx.payment_asset.mint(&ctx.payer, &500);
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &invoice_id2,
         &ctx.seller,
         &ctx.payer,
@@ -1028,7 +1028,7 @@ fn test_integration_lock_cleared_after_distribute_refund_success() {
         &None,
         &None,
     );
-    ctx.escrow.fund_escrow(&invoice_id2, &ctx.buyer, &500);
+    ctx.escrow.fund_escrow_legacy(&invoice_id2, &ctx.buyer, &500);
     ctx.payment_asset.mint(&ctx.payer, &500);
     ctx.escrow.record_payment(&invoice_id2, &ctx.payer, &500);
 
@@ -1050,7 +1050,7 @@ fn test_invariant_distributor_balance_solvency() {
     let invoice_id = Symbol::new(&env, "INV_SOLV");
 
     // Create escrow: seller=1000, funding_target=50000
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -1066,7 +1066,7 @@ fn test_invariant_distributor_balance_solvency() {
 
     // Fund the escrow
     ctx.payment_asset.mint(&ctx.buyer, &50_000);
-    ctx.escrow.fund_escrow(&invoice_id, &ctx.buyer, &50_000);
+    ctx.escrow.fund_escrow_legacy(&invoice_id, &ctx.buyer, &50_000);
 
     // Verify distributor balance before payment
     let balance_before = ctx.payment_token.balance(&ctx.distributor_id);
@@ -1111,7 +1111,7 @@ fn test_invariant_refund_balance_conservation() {
     let invoice_id = Symbol::new(&env, "INV_REFUND");
 
     // Create and fund escrow
-    ctx.escrow.create_escrow(
+    ctx.escrow.create_escrow_legacy(
         &invoice_id,
         &ctx.seller,
         &ctx.payer,
@@ -1127,7 +1127,7 @@ fn test_invariant_refund_balance_conservation() {
 
     // Fund with buyer
     ctx.payment_asset.mint(&ctx.buyer, &50_000);
-    ctx.escrow.fund_escrow(&invoice_id, &ctx.buyer, &50_000);
+    ctx.escrow.fund_escrow_legacy(&invoice_id, &ctx.buyer, &50_000);
 
     // Refund the escrow (no payment recorded)
     env.ledger().set_timestamp(100_001);
