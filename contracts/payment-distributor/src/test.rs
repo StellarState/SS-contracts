@@ -5060,3 +5060,235 @@ fn test_refund_excess_rejects_unbound_escrow() {
         Err(Ok(Error::UnauthorizedEscrow))
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #456: platform fee recipient migration during active settlement.
+// Covers default routing, live migration between payments, cross-invoice
+// effects, refund-path independence, and accounting after round-trips.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn issue456_fee_recipient_defaults_to_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, true);
+    assert_eq!(ctx.distributor.get_fee_recipient(), ctx.admin);
+}
+
+#[test]
+fn issue456_fee_recipient_migration_redirects_settlement_fees() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, true);
+    let recipient2 = Address::generate(&env);
+    ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
+    assert_eq!(ctx.distributor.get_fee_recipient(), recipient2);
+
+    create_and_fund(&ctx, 1_000, 50_000);
+    ctx.payment_asset.mint(&ctx.payer, &1_000);
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+
+    // Seller gets the payment, funder gets principal (no bonus), and the
+    // platform fee lands on the migrated recipient, not the admin.
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 970);
+    assert_eq!(ctx.payment_token.balance(&recipient2), 30);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.distributor_id), 0);
+    assert_eq!(
+        ctx.distributor
+            .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id)
+            .paid_distributed,
+        1_000
+    );
+}
+
+#[test]
+fn issue456_fee_recipient_change_applies_mid_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, true);
+    let recipient2 = Address::generate(&env);
+
+    create_and_fund(&ctx, 2_000, 50_000);
+    ctx.payment_asset.mint(&ctx.payer, &2_000);
+
+    // First installment: fees still go to the default recipient (admin).
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
+    assert_eq!(ctx.payment_token.balance(&recipient2), 0);
+
+    // Migrate mid-escrow, before the second installment.
+    ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
+    assert_eq!(ctx.payment_token.balance(&recipient2), 30);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 2_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1_940);
+    assert_eq!(
+        ctx.distributor
+            .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id)
+            .paid_distributed,
+        2_000
+    );
+}
+
+#[test]
+fn issue456_fee_recipient_migration_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, true);
+    let recipient2 = Address::generate(&env);
+
+    assert_eq!(
+        ctx.distributor.try_set_fee_recipient(&ctx.seller, &recipient2),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert!(ctx
+        .distributor
+        .try_set_fee_recipient(&recipient2, &recipient2)
+        .is_err());
+    assert_eq!(ctx.distributor.get_fee_recipient(), ctx.admin);
+}
+
+#[test]
+fn issue456_fee_recipient_migration_repeats_and_round_trips() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 100, true);
+    let r2 = Address::generate(&env);
+    let r3 = Address::generate(&env);
+
+    ctx.distributor.set_fee_recipient(&ctx.admin, &r2);
+    ctx.distributor.set_fee_recipient(&ctx.admin, &r3);
+    ctx.distributor.set_fee_recipient(&ctx.admin, &ctx.admin);
+
+    create_and_fund(&ctx, 1_000, 50_000);
+    ctx.payment_asset.mint(&ctx.payer, &1_000);
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+
+    // Fees follow the final routing decision; earlier recipients got nothing.
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 10);
+    assert_eq!(ctx.payment_token.balance(&r2), 0);
+    assert_eq!(ctx.payment_token.balance(&r3), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 990);
+}
+
+#[test]
+fn issue456_fee_recipient_migration_does_not_affect_refund_path() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, true);
+    env.ledger().set_timestamp(1_000);
+    create_and_fund(&ctx, 1_000, 2_000);
+    let recipient2 = Address::generate(&env);
+    ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
+
+    env.ledger().set_timestamp(2_001);
+    ctx.escrow.refund(&ctx.invoice_id);
+
+    // Refund fan-out is independent of the fee recipient routing.
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 970);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 400);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 12);
+    assert_eq!(ctx.payment_token.balance(&recipient2), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert!(ctx
+        .distributor
+        .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id)
+        .refund_distributed);
+}
+
+#[test]
+fn issue456_fee_recipient_migrates_per_contract_not_per_invoice() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, true);
+    let recipient2 = Address::generate(&env);
+
+    // Invoice 1 settles while the admin is still the default recipient.
+    create_and_fund(&ctx, 1_000, 50_000);
+    ctx.payment_asset.mint(&ctx.payer, &1_000);
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
+
+    // Invoice 2: migrate before funding, then settle — routing is global.
+    let inv2 = Symbol::new(&ctx.env, "INV2_D");
+    ctx.payment_asset.mint(&ctx.buyer, &1_000);
+    ctx.escrow.create_escrow(
+        &inv2,
+        &ctx.seller,
+        &ctx.payer,
+        &1_000,
+        &1_000,
+        &50_000,
+        &ctx.payment_token.address,
+        &ctx.inv_token.address,
+        &test_commitment(&ctx.escrow.env),
+        &None,
+        &None,
+    );
+    ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
+    ctx.escrow.fund_escrow(&inv2, &ctx.buyer, &1_000);
+    ctx.payment_asset.mint(&ctx.payer, &1_000);
+    ctx.escrow.record_payment(&inv2, &ctx.payer, &1_000);
+
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 30);
+    assert_eq!(ctx.payment_token.balance(&recipient2), 30);
+    assert_eq!(
+        ctx.distributor
+            .get_distribution_state(&ctx.escrow_id, &ctx.invoice_id)
+            .paid_distributed,
+        1_000
+    );
+    assert_eq!(
+        ctx.distributor
+            .get_distribution_state(&ctx.escrow_id, &inv2)
+            .paid_distributed,
+        1_000
+    );
+}
+
+#[test]
+fn issue456_migrated_recipient_accumulates_fees_across_invoices() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 500, true);
+    let recipient2 = Address::generate(&env);
+    ctx.distributor.set_fee_recipient(&ctx.admin, &recipient2);
+
+    let ids = soroban_sdk::vec![
+        &ctx.env,
+        Symbol::new(&ctx.env, "INV2_A"),
+        Symbol::new(&ctx.env, "INV2_B"),
+        Symbol::new(&ctx.env, "INV2_C"),
+    ];
+    for id in ids.iter() {
+        ctx.payment_asset.mint(&ctx.buyer, &1_000);
+        ctx.escrow.create_escrow(
+            &id,
+            &ctx.seller,
+            &ctx.payer,
+            &1_000,
+            &1_000,
+            &50_000,
+            &ctx.payment_token.address,
+            &ctx.inv_token.address,
+            &test_commitment(&ctx.escrow.env),
+            &None,
+            &None,
+    );
+        ctx.escrow.fund_escrow(&id, &ctx.buyer, &1_000);
+        ctx.payment_asset.mint(&ctx.payer, &1_000);
+        ctx.escrow.record_payment(&id, &ctx.payer, &1_000);
+    }
+
+    assert_eq!(ctx.payment_token.balance(&recipient2), 150);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 0);
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 3_000);
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 2_850);
+    assert_eq!(ctx.payment_token.balance(&ctx.distributor_id), 0);
+}

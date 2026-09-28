@@ -2947,3 +2947,202 @@ fn test_storage_key_ttl_after_multiple_operations() {
     let allowance = client.allowance(&recipient, &other);
     assert_eq!(allowance, 500);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #457: property-based tests for fractional balance conservation.
+// Invariant: for any sequence of splits/moves/burns, the sum of fractional
+// balances plus burned supply equals minted supply at every step.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Small deterministic LCG so failures are reproducible (no rand dep).
+fn lcg_next(state: &mut u64) -> u64 {
+    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *state >> 33
+}
+
+fn lcg_amount(state: &mut u64, max: i128) -> i128 {
+    1 + (lcg_next(state) as i128) % max
+}
+
+fn issue457_sum_balances(client: &InvoiceTokenClient, wallets: &soroban_sdk::Vec<Address>) -> i128 {
+    let mut sum: i128 = 0;
+    for w in wallets.iter() {
+        sum += client.balance(&w);
+    }
+    sum
+}
+
+#[test]
+fn issue457_mint_split_conserves_total_supply() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+
+    // Deterministic PRNG sweep: split 1_000_007 into 6 pseudo-random parts.
+    let mut state: u64 = 0x4557;
+    let mut wallets = soroban_sdk::vec![&env];
+    for _ in 0..6 {
+        wallets.push_back(Address::generate(&env));
+    }
+    let mut remaining: i128 = 1_000_007;
+    let mut minted: i128 = 0;
+    for i in 0..6 {
+        let part = if i == 5 { remaining } else { lcg_amount(&mut state, remaining / 3).min(remaining - (5 - i as i128)) };
+        client.mint(&wallets.get(i).unwrap(), &part, &minter);
+        minted += part;
+        remaining -= part;
+    }
+    assert_eq!(remaining, 0);
+    assert_eq!(client.total_supply(), minted);
+    assert_eq!(issue457_sum_balances(&client, &wallets), minted);
+    assert_eq!(client.balance(&admin), 0);
+}
+
+#[test]
+fn issue457_arbitrary_split_tree_conserves_balances() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    // Depth-3 binary split: each node forwards all it holds to two children
+    // with pseudo-random fractional shares; the leaf sum must equal the root.
+    let mut state: u64 = 0xBEEF;
+    let root = Address::generate(&env);
+    client.mint(&root, &9_999_983, &minter);
+    client.set_transfer_locked(&_admin, &false);
+
+    let mut frontier: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env, root.clone()];
+    for _depth in 0..3 {
+        let mut next: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env];
+        for node in frontier.iter() {
+            let bal = client.balance(&node);
+            let left = Address::generate(&env);
+            let right = Address::generate(&env);
+            if bal >= 2 {
+                let l_amt = 1 + (lcg_next(&mut state) as i128) % (bal - 1);
+                let r_amt = bal - l_amt;
+                if l_amt > 0 {
+                    client.transfer(&node, &left, &l_amt);
+                }
+                if r_amt > 0 {
+                    client.transfer(&node, &right, &r_amt);
+                }
+            }
+            next.push_back(left);
+            next.push_back(right);
+        }
+        frontier = next;
+    }
+    let mut leaf_sum: i128 = 0;
+    for node in frontier.iter() {
+        leaf_sum += client.balance(&node);
+    }
+    assert_eq!(leaf_sum, 9_999_983i128);
+}
+
+#[test]
+fn issue457_transfers_with_fee_conserve_supply() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.set_transfer_locked(&admin, &false);
+
+    // A nonzero transfer fee moves value to the fee recipient; it must not
+    // create or destroy supply. Sweep fee rates across the valid range.
+    let mut state: u64 = 0xFEED;
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let supply: i128 = 50_000_009;
+    client.mint(&alice, &supply, &minter);
+
+    for fee_bps in [1i128, 13, 250, 1_000, 5_000, 9_999, 10_000] {
+        client.set_fee_bps(&admin, &fee_bps);
+        let amt = lcg_amount(&mut state, supply / 20);
+        client.transfer(&alice, &bob, &amt);
+        let total = client.balance(&alice)
+            + client.balance(&bob)
+            + client.balance(&admin);
+        assert_eq!(total, supply, "conservation broke at fee_bps={}", fee_bps);
+        assert_eq!(client.total_supply(), supply);
+    }
+}
+
+#[test]
+fn issue457_burn_reduces_supply_and_conserves_identity() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+
+    let mut state: u64 = 0xACDC;
+    let mut wallets = soroban_sdk::vec![&env];
+    for _ in 0..4 {
+        wallets.push_back(Address::generate(&env));
+    }
+    let mut minted: i128 = 0;
+    for w in wallets.iter() {
+        let amt = lcg_amount(&mut state, 100_000);
+        client.mint(&w, &amt, &minter);
+        minted += amt;
+    }
+    assert_eq!(client.total_supply(), minted);
+
+    // Burn a pseudo-random slice from each wallet; supply must track exactly.
+    let mut burned: i128 = 0;
+    for w in wallets.iter() {
+        let bal = client.balance(&w);
+        let burn = 1 + (lcg_next(&mut state) as i128) % bal;
+        client.burn(&w, &burn);
+        burned += burn;
+        assert_eq!(client.total_supply(), minted - burned);
+    }
+    assert_eq!(issue457_sum_balances(&client, &wallets), minted - burned);
+}
+
+#[test]
+fn issue457_random_walk_mint_transfer_burn_conserves_every_step() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.set_transfer_locked(&admin, &false);
+
+    // 60-step deterministic random walk over mint/transfer/burn; the
+    // conservation identity must hold after every single step.
+    let mut state: u64 = 0x5EED_0001;
+    let mut wallets = soroban_sdk::vec![&env];
+    for _ in 0..5 {
+        wallets.push_back(Address::generate(&env));
+    }
+    let mut minted: i128 = 0;
+    let mut burned: i128 = 0;
+
+    for step in 0..60u64 {
+        let wi = (lcg_next(&mut state) % 5) as usize;
+        let w = &wallets.get(wi as u32).unwrap();
+        let bal = client.balance(&w);
+        match lcg_next(&mut state) % 3 {
+            0 => {
+                let amt = lcg_amount(&mut state, 50_000);
+                client.mint(&w, &amt, &minter);
+                minted += amt;
+            }
+            1 if bal >= 2 => {
+                let mut ti = (lcg_next(&mut state) % 5) as usize;
+                if ti == wi {
+                    ti = (ti + 1) % 5;
+                }
+                let to = &wallets.get(ti as u32).unwrap();
+                let amt = 1 + (lcg_next(&mut state) as i128) % (bal - 1);
+                client.transfer(w, to, &amt);
+            }
+            _ if bal >= 1 => {
+                let burn = 1 + (lcg_next(&mut state) as i128) % bal;
+                client.burn(&w, &burn);
+                burned += burn;
+            }
+            _ => {}
+        }
+        let held = issue457_sum_balances(&client, &wallets);
+        assert_eq!(held, minted - burned, "step {}", step);
+        assert_eq!(client.total_supply(), minted - burned, "step {}", step);
+    }
+}

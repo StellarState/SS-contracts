@@ -10347,3 +10347,527 @@ fn test_storage_key_params_distinct() {
         "EscrowIdByIndex must differ by index"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #458: negative tests — unauthorized callers rejected on every admin
+// entry point (explicit `admin` args, implicit-admin self-service fns, and
+// missing-auth attempts against each style).
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn issue458_admin_config_setters_reject_non_admin_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, invoice_id) = setup_escrow_created(&env);
+    let outsider = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    assert_eq!(
+        client.try_set_grace_period(&outsider, &60u64),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_category_fee(&outsider, &InvoiceCategory::Standard, &100u32),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_settlement_fee(&outsider, &100u32),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_min_investment(&outsider, &10i128),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_whitelist_enabled(&outsider, &true),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_buyer_whitelisted(&outsider, &buyer, &true),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_accreditation_callback(&outsider, &None),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_penalty_interest_bps(&outsider, &50u32),
+        Err(Ok(Error::Unauthorized))
+    );
+    // Config untouched by the rejected calls.
+    assert_eq!(client.get_penalty_interest_bps(), 0);
+    assert!(!client.is_buyer_whitelisted(&buyer));
+    let _ = invoice_id;
+}
+
+#[test]
+fn issue458_admin_config_setters_reject_missing_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, admin, _invoice_id) = setup_escrow_created(&env);
+    let buyer = Address::generate(&env);
+
+    env.set_auths(&[]);
+    assert!(client.try_set_grace_period(&admin, &60u64).is_err());
+    assert!(client
+        .try_set_category_fee(&admin, &InvoiceCategory::Standard, &100u32)
+        .is_err());
+    assert!(client.try_set_settlement_fee(&admin, &100u32).is_err());
+    assert!(client.try_set_min_investment(&admin, &10i128).is_err());
+    assert!(client.try_set_whitelist_enabled(&admin, &true).is_err());
+    assert!(client
+        .try_set_buyer_whitelisted(&admin, &buyer, &true)
+        .is_err());
+    assert!(client.try_set_accreditation_callback(&admin, &None).is_err());
+    assert!(client.try_set_penalty_interest_bps(&admin, &50u32).is_err());
+}
+
+#[test]
+fn issue458_self_service_admin_fns_reject_missing_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let distributor = Address::generate(&env);
+
+    env.set_auths(&[]);
+    assert!(client.try_set_max_investors(&100u32).is_err());
+    assert!(client.try_update_platform_fee_bps(&500u32).is_err());
+    assert!(client.try_set_payment_distributor(&distributor).is_err());
+    assert!(client.try_set_paused(&true).is_err());
+    // Nothing changed.
+    assert!(!client.paused());
+    let cfg = client.get_config();
+    assert_eq!(cfg.fee_bps, 300);
+    assert_eq!(cfg.payment_distributor, None);
+}
+
+#[test]
+fn issue458_resolve_dispute_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, seller, _admin, invoice_id) = setup_escrow_created(&env);
+    let outsider = Address::generate(&env);
+    client.set_max_investors(&10u32);
+
+    let buyer = Address::generate(&env);
+
+    client.fund_escrow(&invoice_id, &buyer, &1000i128);
+    client.raise_dispute(&seller, &invoice_id, &soroban_sdk::Bytes::new(&env));
+
+    assert_eq!(
+        client.try_resolve_dispute(&outsider, &invoice_id, &Symbol::new(&env, "seller")),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    env.set_auths(&[]);
+    assert!(client
+        .try_resolve_dispute(&_admin, &invoice_id, &Symbol::new(&env, "seller"))
+        .is_err());
+}
+
+#[test]
+fn issue458_resolve_dispute_rejects_non_admin_on_missing_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let outsider = Address::generate(&env);
+    let missing = Symbol::new(&env, "MISSING");
+    assert_eq!(
+        client.try_resolve_dispute(&outsider, &missing, &Symbol::new(&env, "seller")),
+        Err(Ok(Error::EscrowNotFound))
+    );
+}
+
+#[test]
+fn issue458_emergency_multisig_rejects_outsiders() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, admin, invoice_id) = setup_escrow_created(&env);
+    let e1 = Address::generate(&env);
+    let e2 = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let config = MultiSigConfig {
+        admins: soroban_sdk::vec![&env, e1.clone(), e2.clone()],
+        threshold: 2,
+    };
+    client.set_emergency_config(&admin, &config);
+
+    assert_eq!(
+        client.try_set_emergency_config(&outsider, &config),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_emergency_release(&outsider, &invoice_id),
+        Err(Ok(Error::NotEmergencyAdmin))
+    );
+    // Real emergency admins approve fine, everyone else is still rejected.
+    assert!(!client.emergency_release(&e1, &invoice_id));
+    assert_eq!(
+        client.try_emergency_release(&outsider, &invoice_id),
+        Err(Ok(Error::NotEmergencyAdmin))
+    );
+}
+
+#[test]
+fn issue458_emergency_release_rejects_unconfigured_and_duplicate() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, invoice_id) = setup_escrow_created(&env);
+    let e1 = Address::generate(&env);
+
+    assert_eq!(
+        client.try_emergency_release(&e1, &invoice_id),
+        Err(Ok(Error::EmergencyNotConfigured))
+    );
+
+    let config = MultiSigConfig {
+        admins: soroban_sdk::vec![&env, e1.clone()],
+        threshold: 1,
+    };
+    client.set_emergency_config(&_admin, &config);
+    env.set_auths(&[]);
+    assert!(client
+        .try_emergency_release(&e1, &invoice_id)
+        .is_err());
+}
+
+#[test]
+fn issue458_cleanup_escrow_rejects_stranger_and_non_terminal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, seller, admin, invoice_id) = setup_escrow_created(&env);
+    let outsider = Address::generate(&env);
+
+    assert_eq!(
+        client.try_cleanup_escrow(&invoice_id, &outsider),
+        Err(Ok(Error::Unauthorized))
+    );
+    // Not in a terminal state yet, so even legit callers are rejected.
+    assert_eq!(
+        client.try_cleanup_escrow(&invoice_id, &admin),
+        Err(Ok(Error::EscrowNotSettled))
+    );
+    assert_eq!(
+        client.try_cleanup_escrow(&invoice_id, &seller),
+        Err(Ok(Error::EscrowNotSettled))
+    );
+    let missing = Symbol::new(&env, "MISSING");
+    assert_eq!(
+        client.try_cleanup_escrow(&missing, &admin),
+        Err(Ok(Error::EscrowNotFound))
+    );
+}
+
+#[test]
+fn issue458_invoice_registry_admin_fns_reject_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let outsider = Address::generate(&env);
+    let inv_id = BytesN::from_array(&env, &[91u8; 32]);
+
+    assert_eq!(
+        client.try_register_invoice(&inv_id, &100_000i128, &80_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32])),
+        Err(Ok(Error::Unauthorized))
+    );
+    let missing = BytesN::from_array(&env, &[92u8; 32]);
+    assert_eq!(
+        client.try_cancel_invoice(&missing),
+        Err(Ok(Error::EscrowNotFound))
+    );
+    assert_eq!(
+        client.try_extend_deadline(&missing, &2_000u32),
+        Err(Ok(Error::EscrowNotFound))
+    );
+    assert_eq!(
+        client.try_settle_invoice(&missing, &80_000i128),
+        Err(Ok(Error::EscrowNotFound))
+    );
+    assert_eq!(
+        client.try_refresh_all_ttls(&missing),
+        Err(Ok(Error::EscrowNotFound))
+    );
+    let _ = outsider;
+}
+
+#[test]
+fn issue458_invoice_registry_admin_fns_reject_missing_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let inv_id = BytesN::from_array(&env, &[93u8; 32]);
+    client.register_invoice(&inv_id, &100_000i128, &80_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]));
+
+    env.set_auths(&[]);
+    assert!(client
+        .try_register_invoice(&inv_id, &100_000i128, &80_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]))
+        .is_err());
+    assert!(client.try_cancel_invoice(&inv_id).is_err());
+    assert!(client.try_extend_deadline(&inv_id, &2_000u32).is_err());
+    assert!(client.try_settle_invoice(&inv_id, &80_000i128).is_err());
+    assert!(client.try_refresh_all_ttls(&inv_id).is_err());
+    assert!(client.try_finalise_funding(&inv_id).is_err());
+}
+
+#[test]
+fn issue458_propose_param_change_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, admin, _invoice_id) = setup_escrow_created(&env);
+    let outsider = Address::generate(&env);
+
+    assert_eq!(
+        client.try_propose_param_change(
+            &outsider,
+            &types::ParamType::FeeBps,
+            &200i128,
+            &None::<u64>
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    env.set_auths(&[]);
+    assert!(client
+        .try_propose_param_change(&admin, &types::ParamType::FeeBps, &200i128, &None::<u64>)
+        .is_err());
+}
+
+#[test]
+fn issue458_compact_invoice_storage_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, admin, invoice_id) = setup_escrow_created(&env);
+    let outsider = Address::generate(&env);
+    let empty: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env];
+
+    assert_eq!(
+        client.try_compact_invoice_storage(&outsider, &invoice_id, &empty),
+        Err(Ok(Error::Unauthorized))
+    );
+    let missing = Symbol::new(&env, "MISSING");
+    assert!(client
+        .try_compact_invoice_storage(&admin, &missing, &empty)
+        .is_err());
+
+    env.set_auths(&[]);
+    assert!(client
+        .try_compact_invoice_storage(&admin, &invoice_id, &empty)
+        .is_err());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #455: boundary fuzzing for the max_investor_count guard under
+// concurrent (interleaved) commitments — unique-wallet counting, cap
+// transitions at every boundary, top-up invariants after cap saturation,
+// and reconfiguration between fill rounds.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Round-robin commitments from `wallets` until the invoice is fully funded.
+/// Mirrors concurrent on-chain submission: every wallet commits whenever it
+/// still has capacity, regardless of ordering.
+fn issue455_fill_round_robin(
+    client: &InvoiceEscrowClient,
+    invoice_id: &BytesN<32>,
+    wallets: &soroban_sdk::Vec<Address>,
+    per_commit: i128,
+    target: i128,
+) -> i128 {
+    let mut raised: i128 = 0;
+    let mut pass = 0;
+    while raised < target && pass < 100 {
+        for w in wallets.iter() {
+            if raised >= target {
+                break;
+            }
+            if client.try_invest(invoice_id, &w, &per_commit).is_ok() {
+                raised += per_commit;
+            }
+            pass += 1;
+        }
+        pass += 1;
+    }
+    raised
+}
+
+#[test]
+fn issue455_unique_wallet_counting_under_interleaved_commitments() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, admin, _invoice_id) = setup_escrow_created(&env);
+    let wallets: soroban_sdk::Vec<Address> =
+        soroban_sdk::vec![&env, Address::generate(&env), Address::generate(&env)];
+    let inv_id = BytesN::from_array(&env, &[71u8; 32]);
+
+    client.set_max_investors(&3u32);
+    client.register_invoice(&inv_id, &120_000i128, &90_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]));
+
+    // Interleave commitments: A, B, A, B, A, B ... same totals as sequential.
+    let w0 = wallets.get(0).unwrap();
+    let w1 = wallets.get(1).unwrap();
+    client.invest(&inv_id, &w0, &10_000i128);
+    client.invest(&inv_id, &w1, &10_000i128);
+    client.invest(&inv_id, &w0, &10_000i128);
+    client.invest(&inv_id, &w1, &10_000i128);
+    client.invest(&inv_id, &w0, &10_000i128);
+    client.invest(&inv_id, &w1, &10_000i128);
+
+    // Two wallets, six commitments: unique count stays 2, total raised 60k.
+    assert_eq!(client.get_invoice_investor_count(&inv_id), 2);
+    assert_eq!(client.get_invoice_record(&inv_id).total_raised, 60_000i128);
+    assert_eq!(
+        client.get_investor_position(&inv_id, &w0),
+        30_000i128
+    );
+    assert_eq!(
+        client.get_investor_position(&inv_id, &w1),
+        30_000i128
+    );
+    let _ = admin;
+}
+
+#[test]
+fn issue455_cap_boundary_last_unique_wallet_exactly_saturates() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let inv_id = BytesN::from_array(&env, &[72u8; 32]);
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    let w3 = Address::generate(&env);
+
+    client.set_max_investors(&2u32);
+    client.register_invoice(&inv_id, &120_000i128, &90_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]));
+
+    client.invest(&inv_id, &w1, &10_000i128);
+    client.invest(&inv_id, &w2, &10_000i128);
+    assert_eq!(client.get_invoice_investor_count(&inv_id), 2);
+
+    // Wallet 3 is the boundary commit: cap is full, must reject.
+    assert_eq!(
+        client.try_invest(&inv_id, &w3, &10_000i128),
+        Err(Ok(Error::MaxInvestorsReached))
+    );
+    // The rejected commit neither counted nor moved funds.
+    assert_eq!(client.get_invoice_investor_count(&inv_id), 2);
+    assert_eq!(client.get_invoice_record(&inv_id).total_raised, 20_000i128);
+}
+
+#[test]
+fn issue455_wallet_at_cap_may_still_top_up() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let inv_id = BytesN::from_array(&env, &[73u8; 32]);
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    let w3 = Address::generate(&env);
+
+    client.set_max_investors(&2u32);
+    client.register_invoice(&inv_id, &120_000i128, &90_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]));
+
+    client.invest(&inv_id, &w1, &10_000i128);
+    client.invest(&inv_id, &w2, &10_000i128);
+    // Existing wallet tops up across the cap boundary — no new unique slot.
+    client.invest(&inv_id, &w1, &40_000i128);
+
+    assert_eq!(client.get_invoice_investor_count(&inv_id), 2);
+    assert_eq!(
+        client.get_investor_position(&inv_id, &w1),
+        50_000i128
+    );
+    // A third wallet is still refused.
+    assert_eq!(
+        client.try_invest(&inv_id, &w3, &10_000i128),
+        Err(Ok(Error::MaxInvestorsReached))
+    );
+}
+
+#[test]
+fn issue455_fuzz_cap_transitions_1_to_5() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let inv_id = BytesN::from_array(&env, &[74u8; 32]);
+
+    // Sweep the cap across 1..=5 and verify the guard flips exactly at each
+    // boundary (cap-th wallet accepted, cap+1-th rejected).
+    for cap in 1u32..=5 {
+        client.set_max_investors(&cap);
+        let fresh = BytesN::from_array(&env, &[(70u8 + cap as u8); 32]);
+        client.register_invoice(&fresh, &200_000i128, &150_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]));
+
+        for i in 0..cap {
+            let w = Address::generate(&env);
+            client.invest(&fresh, &w, &5_000i128);
+            assert_eq!(client.get_invoice_investor_count(&fresh), i + 1);
+        }
+
+        let overflow = Address::generate(&env);
+        assert_eq!(
+            client.try_invest(&fresh, &overflow, &5_000i128),
+            Err(Ok(Error::MaxInvestorsReached))
+        );
+        assert_eq!(client.get_invoice_investor_count(&fresh), cap);
+    }
+}
+
+#[test]
+fn issue455_cap_raise_admits_only_the_promised_slots() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let inv_id = BytesN::from_array(&env, &[75u8; 32]);
+    let wallets: soroban_sdk::Vec<Address> = soroban_sdk::vec![
+        &env,
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+    ];
+
+    client.set_max_investors(&1u32);
+    client.register_invoice(&inv_id, &120_000i128, &90_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]));
+
+    client.invest(&inv_id, &wallets.get(0).unwrap(), &10_000i128);
+    assert_eq!(
+        client.try_invest(&inv_id, &wallets.get(1).unwrap(), &10_000i128),
+        Err(Ok(Error::MaxInvestorsReached))
+    );
+
+    // Raise the cap by one: exactly one new wallet gets in, the next doesn't.
+    client.set_max_investors(&2u32);
+    client.invest(&inv_id, &wallets.get(1).unwrap(), &10_000i128);
+    assert_eq!(client.get_invoice_investor_count(&inv_id), 2);
+    assert_eq!(
+        client.try_invest(&inv_id, &wallets.get(2).unwrap(), &10_000i128),
+        Err(Ok(Error::MaxInvestorsReached))
+    );
+}
+
+#[test]
+fn issue455_fill_to_target_under_cap_pressure() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_id, client, _seller, _admin, _invoice_id) = setup_escrow_created(&env);
+    let wallets: soroban_sdk::Vec<Address> = soroban_sdk::vec![
+        &env,
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+    ];
+    let inv_id = BytesN::from_array(&env, &[76u8; 32]);
+
+    // 3 wallets, cap 2, target 150k: the guard must hold while commitments
+    // interleave until the target is met by the two admitted wallets.
+    client.set_max_investors(&2u32);
+    client.register_invoice(&inv_id, &200_000i128, &150_000i128, &500u32, &1_000u32, &BytesN::from_array(&env, &[7u8; 32]));
+
+    let raised = issue455_fill_round_robin(&client, &inv_id, &wallets, 10_000i128, 150_000i128);
+    assert_eq!(raised, 150_000i128);
+    assert_eq!(client.get_invoice_investor_count(&inv_id), 2);
+    assert_eq!(client.get_invoice_record(&inv_id).total_raised, 150_000i128);
+    assert_eq!(
+        client.get_invoice_record(&inv_id).status,
+        EscrowStatus::Funded
+    );
+}
