@@ -17,6 +17,10 @@ members = [
     "contracts/payment-distributor",
     "contracts/yield-accrual",
     "contracts/yield-vesting",
+    "contracts/transfer-restriction",
+    "contracts/issuer-reputation",
+    "contracts/access-control-registry",
+    "contracts/maturity-enforcement",
 ]
 
 [workspace.dependencies]
