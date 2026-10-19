@@ -1,0 +1,15 @@
+[package]
+name = "yield-adjustment"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Invoice rating weighted yield adjustment contract for StellarSettle"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
