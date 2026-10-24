@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "accreditation-renewal"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1291,6 +1298,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "investor-portfolio-health"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
 name = "investor-scoring"
 version = "0.1.0"
 dependencies = [
@@ -1312,12 +1326,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "invoice-co-investment-pool"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
 name = "invoice-escrow"
 version = "0.1.0"
 dependencies = [
  "invoice-token",
  "proptest",
  "referral",
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
+name = "invoice-hardship-extension"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
+name = "invoice-issuer-verification"
+version = "0.1.0"
+dependencies = [
  "soroban-sdk 27.0.6",
 ]
 
@@ -1330,6 +1365,13 @@ dependencies = [
 
 [[package]]
 name = "invoice-metadata-registry"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
+name = "invoice-performance-alert"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 27.0.6",
@@ -1365,6 +1407,13 @@ dependencies = [
 
 [[package]]
 name = "invoice-token"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
+name = "invoice-tranche"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 27.0.6",
@@ -1699,6 +1748,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "portfolio-nav-snapshot"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
 name = "powerfmt"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1721,6 +1777,13 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "price-stabilisation"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
 ]
 
 [[package]]
@@ -1985,6 +2048,13 @@ dependencies = [
 
 [[package]]
 name = "secondary-market"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
+name = "secondary-trade-history"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 27.0.6",
@@ -2761,6 +2831,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "treasury-management"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
 ]
 
 [[package]]
