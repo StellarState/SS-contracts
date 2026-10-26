@@ -1652,6 +1652,7 @@ impl InvoiceEscrow {
         min_investment: i128,
         per_investor_cap: Option<i128>,
         token: Address,
+        fraction_token: Option<Address>,
     ) -> Result<(), Error> {
         seller.require_auth();
         if funding_target <= 0 {
@@ -1672,6 +1673,7 @@ impl InvoiceEscrow {
             per_investor_cap,
             status: InvoiceStatus::Open,
             token: token.clone(),
+            fraction_token,
         };
         storage::set_invoice(&env, invoice_id, &invoice);
         Ok(())
@@ -1865,8 +1867,27 @@ impl InvoiceEscrow {
             let token_client = token::Client::new(&env, &invoice.token);
             token_client.transfer(&investor, env.current_contract_address(), &amount);
             storage::set_investor_position(&env, &invoice_id, &investor, new_pos);
+            let fraction_token = invoice.fraction_token.clone();
             invoice.total_raised = new_total;
-            storage::set_invoice(&env, invoice_id, &invoice);
+            storage::set_invoice(&env, invoice_id.clone(), &invoice);
+
+            // Mint fraction tokens to the investor to represent their
+            // ownership share (#517), same pattern as the legacy
+            // create_escrow_with_tokens path's inv_token mint below.
+            if let Some(fraction_token) = fraction_token {
+                env.invoke_contract::<()>(
+                    &fraction_token,
+                    &Symbol::new(&env, "mint"),
+                    soroban_sdk::vec![
+                        &env,
+                        investor.to_val(),
+                        amount.into_val(&env),
+                        env.current_contract_address().to_val()
+                    ],
+                );
+            }
+
+            events::investment_made(&env, &investor, invoice_id, amount, new_pos);
             return Ok(());
         }
 
@@ -2425,13 +2446,13 @@ mod integration_test;
 mod test;
 
 // Modules added for batch resolution of #479, #480, #481
+pub mod earnest_deposit;
 pub mod insurance_pool;
 pub mod oracle_adapter;
-pub mod earnest_deposit;
 
 #[cfg(test)]
 mod test_batch_features;
 
+pub use earnest_deposit::{EarnestDeposit, EarnestDepositConfig, EarnestError, EarnestStatus};
 pub use insurance_pool::{InsuranceConfig, InsurancePool, InsuranceStorageKey};
 pub use oracle_adapter::{CurrencyOracleConfig, OracleError, OraclePriceAdapter, PriceData};
-pub use earnest_deposit::{EarnestDeposit, EarnestDepositConfig, EarnestError, EarnestStatus};
