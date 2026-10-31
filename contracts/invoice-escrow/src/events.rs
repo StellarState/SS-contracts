@@ -176,6 +176,27 @@ pub fn early_settlement_applied(
     );
 }
 
+/// Investment made event (#518): emitted when an investor locks funds into
+/// an invoice's escrow via `invest`. `investment_topped_up` below covers a
+/// separate, legacy top-up path; this is the primary event for the
+/// multi-investor `FundingInvoice` flow.
+pub fn investment_made(
+    env: &Env,
+    investor: &Address,
+    invoice_id: BytesN<32>,
+    amount: i128,
+    new_total_position: i128,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "investment_made"),
+            investor.clone(),
+            invoice_id.clone(),
+        ),
+        (amount, new_total_position),
+    );
+}
+
 /// Investment topped up event.
 pub fn investment_topped_up(
     env: &Env,

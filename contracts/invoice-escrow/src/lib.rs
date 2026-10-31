@@ -1751,6 +1751,7 @@ impl InvoiceEscrow {
             min_investment,
             per_investor_cap,
             token,
+            None,
         )
     }
 
@@ -1767,6 +1768,7 @@ impl InvoiceEscrow {
         min_investment: i128,
         per_investor_cap: Option<i128>,
         token: Address,
+        fraction_token: Option<Address>,
     ) -> Result<(), Error> {
         seller.require_auth();
         Self::create_invoice_core(
@@ -1780,6 +1782,7 @@ impl InvoiceEscrow {
             min_investment,
             per_investor_cap,
             token,
+            fraction_token,
         )
     }
 
@@ -1795,6 +1798,7 @@ impl InvoiceEscrow {
         min_investment: i128,
         per_investor_cap: Option<i128>,
         token: Address,
+        fraction_token: Option<Address>,
     ) -> Result<(), Error> {
         if funding_target <= 0 {
             return Err(Error::InvalidAmount);
@@ -1827,6 +1831,7 @@ impl InvoiceEscrow {
             min_funding_threshold,
             max_funding_threshold,
             threshold_reached: false,
+            fraction_token,
         };
         storage::set_invoice(env, invoice_id.clone(), &invoice);
         events::funding_thresholds_set(
@@ -2190,6 +2195,7 @@ impl InvoiceEscrow {
             // be paid out of other investors' principal or issuer collateral.
             storage::set_investor_position(&env, &invoice_id, &investor, new_pos);
             investor_cap::sync_holder(&env, &invoice_id, &investor);
+            let fraction_token = invoice.fraction_token.clone();
             invoice.total_raised = new_total;
             storage::set_invoice(&env, invoice_id.clone(), &invoice);
             if returned > 0 {
@@ -2202,6 +2208,27 @@ impl InvoiceEscrow {
                     returned,
                 );
             }
+
+            // Mint fraction tokens to the investor to represent their
+            // ownership share (#517), same pattern as the legacy
+            // create_escrow_with_tokens path's inv_token mint below. Scaled
+            // to `accepted`, not the originally requested `amount`: any
+            // `returned` remainder above the funding cap was refunded to
+            // the investor and must not also get a fraction-token claim.
+            if let Some(fraction_token) = fraction_token {
+                env.invoke_contract::<()>(
+                    &fraction_token,
+                    &Symbol::new(&env, "mint"),
+                    soroban_sdk::vec![
+                        &env,
+                        investor.to_val(),
+                        accepted.into_val(&env),
+                        env.current_contract_address().to_val()
+                    ],
+                );
+            }
+
+            events::investment_made(&env, &investor, invoice_id, accepted, new_pos);
             return Ok(());
         }
 

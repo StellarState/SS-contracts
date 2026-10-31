@@ -29,6 +29,10 @@ fn setup<'a>() -> Market<'a> {
             per_investor_cap: None,
             status: InvoiceStatus::Funded,
             token: Address::generate(&env),
+            min_funding_threshold: 1_000,
+            max_funding_threshold: 1_000,
+            threshold_reached: true,
+            fraction_token: None,
         };
         storage::set_invoice(&env, invoice_id.clone(), &invoice);
     });

@@ -1,11 +1,13 @@
 #![allow(deprecated, unused_variables, dead_code, unused_mut, clippy::all)]
 
 use super::*;
+use invoice_token::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::token::StellarAssetClient as AssetClient;
 use soroban_sdk::{
-    contract, contractimpl, Address, BytesN, Env, IntoVal, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    contract, contractimpl, Address, BytesN, Env, IntoVal, String as SorobanString, Symbol,
+    TryFromVal, TryIntoVal, Val, Vec,
 };
 
 /// Helper function to create a test commitment hash (SHA-256 format)
@@ -11028,4 +11030,128 @@ fn issue455_fill_to_target_under_cap_pressure() {
         client.get_invoice_record(&inv_id).status,
         EscrowStatus::Funded
     );
+}
+
+/// `invest` on the multi-investor `FundingInvoice` flow (created via
+/// `create_invoice`, distinct from the legacy `register_invoice`/
+/// `EscrowStatus` path) silently emitted no event at all — every other
+/// state-changing call in this contract emits one (#518's acceptance
+/// criteria: "Events emitted correctly for all state transitions"). Covers
+/// the fix: `investment_made` is published with the investor, invoice id,
+/// amount, and the investor's new total position.
+#[test]
+fn test_invest_on_funding_invoice_emits_investment_made_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let investor = Address::generate(&env);
+    let invoice_id = BytesN::from_array(&env, &[200u8; 32]);
+
+    let token_admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = TokenClient::new(&env, &token_id.address());
+    let token_asset = AssetClient::new(&env, &token_id.address());
+    token_asset.mint(&investor, &100_000i128);
+
+    client.initialize(&admin, &300);
+    client.create_invoice_legacy(
+        &invoice_id,
+        &seller,
+        &100_000i128,
+        &1_000u32,
+        &1_000i128,
+        &None,
+        &token_id.address(),
+        &None,
+    );
+
+    client.invest(&invoice_id, &investor, &40_000i128);
+
+    assert_eq!(token.balance(&investor), 60_000i128);
+
+    let events = env.events().all();
+    let event = events
+        .events()
+        .iter()
+        .rev()
+        .find(|e| {
+            let (_, topics, _) = parse_event(&env, e);
+            topics
+                .get(0)
+                .map(|t| {
+                    Symbol::try_from_val(&env, &t).unwrap() == Symbol::new(&env, "investment_made")
+                })
+                .unwrap_or(false)
+        })
+        .expect("expected investment_made event");
+
+    let (_contract_addr, topics, data) = parse_event(&env, event);
+    assert_eq!(
+        topics,
+        (
+            Symbol::new(&env, "investment_made"),
+            investor.clone(),
+            invoice_id.clone(),
+        )
+            .into_val(&env)
+    );
+    let event_data: (i128, i128) = data.try_into_val(&env).unwrap();
+    assert_eq!(event_data.0, 40_000i128); // amount invested
+    assert_eq!(event_data.1, 40_000i128); // new total position
+}
+
+/// `invest` on a `FundingInvoice` created with a `fraction_token` set
+/// mints the investor that many fraction tokens on the configured
+/// invoice-token contract (#517), so their ownership share has an
+/// on-chain representation, not just an internal storage entry.
+#[test]
+fn test_invest_mints_fraction_tokens_when_fraction_token_configured() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let escrow = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let investor = Address::generate(&env);
+    let invoice_id = BytesN::from_array(&env, &[201u8; 32]);
+
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let payment_token_asset = AssetClient::new(&env, &payment_token_id.address());
+    payment_token_asset.mint(&investor, &100_000i128);
+
+    let fraction_token_id = env.register_contract(None, InvoiceToken);
+    let fraction_token = InvoiceTokenClient::new(&env, &fraction_token_id);
+    fraction_token.initialize(
+        &admin,
+        &SorobanString::from_str(&env, "Invoice Fraction"),
+        &SorobanString::from_str(&env, "IFRAC"),
+        &7u32,
+        &Symbol::new(&env, "inv201"),
+        &escrow_id, // the escrow contract itself is the authorized minter
+    );
+
+    escrow.initialize(&admin, &300);
+    escrow.create_invoice_legacy(
+        &invoice_id,
+        &seller,
+        &100_000i128,
+        &1_000u32,
+        &1_000i128,
+        &None,
+        &payment_token_id.address(),
+        &Some(fraction_token_id.clone()),
+    );
+
+    escrow.invest(&invoice_id, &investor, &40_000i128);
+
+    assert_eq!(fraction_token.balance(&investor), 40_000i128);
+
+    escrow.invest(&invoice_id, &investor, &10_000i128);
+    assert_eq!(fraction_token.balance(&investor), 50_000i128);
 }

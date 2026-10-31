@@ -483,8 +483,9 @@ fn collateral_breach_blocks_creation_until_a_real_topup_restores_ratio() {
         Err(Ok(Error::CollateralTopUpRequired))
     );
     assert_eq!(
-        f.client
-            .try_create_invoice_legacy(&next, &f.issuer, &1000, &1000, &0, &None, &f.token),
+        f.client.try_create_invoice_legacy(
+            &next, &f.issuer, &1000, &1000, &0, &None, &f.token, &None,
+        ),
         Err(Ok(Error::CollateralTopUpRequired))
     );
     f.client.top_up_collateral(&f.id, &50);

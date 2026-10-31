@@ -285,8 +285,16 @@ fn test_legacy_create_invoice_defaults_min_and_max_to_target() {
     let investor = Address::generate(&env);
     mint(&env, &f.token, &investor, 500_000);
 
-    f.client
-        .create_invoice_legacy(&id, &f.seller, &80_000i128, &1000u32, &0i128, &None, &f.token);
+    f.client.create_invoice_legacy(
+        &id,
+        &f.seller,
+        &80_000i128,
+        &1000u32,
+        &0i128,
+        &None,
+        &f.token,
+        &None,
+    );
 
     let status = f.client.get_funding_status(&id);
     assert_eq!(status.min_threshold, 80_000);
