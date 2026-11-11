@@ -494,3 +494,22 @@ pub fn currency_invested(
         (investor.clone(), currency.clone(), amount, base_amount),
     );
 }
+
+/// Publish investment_made event when an investor invests in a FundingInvoice.
+pub fn investment_made(
+    env: &Env,
+    investor: &Address,
+    invoice_id: &BytesN<32>,
+    amount: i128,
+    new_total_position: i128,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "investment_made"),
+            investor.clone(),
+            invoice_id.clone(),
+        ),
+        (amount, new_total_position),
+    );
+}
+

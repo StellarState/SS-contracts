@@ -74,6 +74,7 @@ fn setup<'a>() -> Fx<'a> {
         &0,
         &None,
         &base,
+        &None,
     );
 
     // 1 EURC = 1.08 base, 1 NGNC = 0.001 base (8 decimals).

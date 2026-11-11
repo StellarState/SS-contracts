@@ -319,6 +319,8 @@ pub struct FundingInvoice {
     /// Whether `ThresholdReached` has already been emitted for this invoice.
     /// Guarantees the event fires exactly once per invoice.
     pub threshold_reached: bool,
+    /// Optional fraction token contract address representing investor ownership shares.
+    pub fraction_token: Option<soroban_sdk::Address>,
 }
 
 /// Funding progress view returned by `get_funding_status`.

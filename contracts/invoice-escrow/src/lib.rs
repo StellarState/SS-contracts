@@ -1738,6 +1738,7 @@ impl InvoiceEscrow {
         min_investment: i128,
         per_investor_cap: Option<i128>,
         token: Address,
+        fraction_token: Option<Address>,
     ) -> Result<(), Error> {
         seller.require_auth();
         Self::create_invoice_core(
@@ -1751,6 +1752,7 @@ impl InvoiceEscrow {
             min_investment,
             per_investor_cap,
             token,
+            fraction_token,
         )
     }
 
@@ -1780,6 +1782,7 @@ impl InvoiceEscrow {
             min_investment,
             per_investor_cap,
             token,
+            None,
         )
     }
 
@@ -1795,6 +1798,7 @@ impl InvoiceEscrow {
         min_investment: i128,
         per_investor_cap: Option<i128>,
         token: Address,
+        fraction_token: Option<Address>,
     ) -> Result<(), Error> {
         if funding_target <= 0 {
             return Err(Error::InvalidAmount);
@@ -1827,6 +1831,7 @@ impl InvoiceEscrow {
             min_funding_threshold,
             max_funding_threshold,
             threshold_reached: false,
+            fraction_token,
         };
         storage::set_invoice(env, invoice_id.clone(), &invoice);
         events::funding_thresholds_set(
@@ -2192,6 +2197,18 @@ impl InvoiceEscrow {
             investor_cap::sync_holder(&env, &invoice_id, &investor);
             invoice.total_raised = new_total;
             storage::set_invoice(&env, invoice_id.clone(), &invoice);
+
+            if let Some(ref frac_token) = invoice.fraction_token {
+                let contract = env.current_contract_address();
+                env.invoke_contract::<()>(
+                    frac_token,
+                    &Symbol::new(&env, "mint"),
+                    soroban_sdk::vec![&env, investor.to_val(), accepted.into_val(&env), contract.to_val()],
+                );
+            }
+
+            events::investment_made(&env, &investor, &invoice_id, accepted, new_pos);
+
             if returned > 0 {
                 events::partial_fill_executed(
                     &env,
@@ -2866,6 +2883,8 @@ mod test;
 mod test_buy_limit;
 #[cfg(test)]
 mod test_multi_currency;
+#[cfg(test)]
+mod test_invest_fraction_mint;
 
 // Modules added for batch resolution of #479, #480, #481
 pub mod earnest_deposit;
