@@ -277,3 +277,109 @@ fn test_funds_allocated_event_emitted() {
     assert_eq!(amount, 250);
     assert_eq!(purpose, String::from_str(&env, "operations"));
 }
+
+#[test]
+fn test_source_receipt_overflow_returns_typed_error_atomically() {
+    let env = Env::default();
+    let (_admin, client) = setup(&env);
+    let source = Address::generate(&env);
+
+    client.receive_fee(&source, &i128::MAX);
+    let before = client.get_treasury_balance();
+    let events_before = env.events().all().events().len();
+
+    assert_eq!(
+        client.try_receive_fee(&source, &1),
+        Err(Ok(Error::Overflow))
+    );
+
+    let after = client.get_treasury_balance();
+    assert_eq!(after.total, before.total);
+    assert_eq!(after.sources, before.sources);
+    assert_eq!(after.amounts, before.amounts);
+    assert_eq!(env.events().all().events().len(), events_before);
+}
+
+#[test]
+fn test_total_overflow_returns_typed_error_atomically() {
+    let env = Env::default();
+    let (_admin, client) = setup(&env);
+    let source_a = Address::generate(&env);
+    let source_b = Address::generate(&env);
+    let half = i128::MAX / 2;
+
+    client.receive_fee(&source_a, &half);
+    client.receive_fee(&source_b, &(i128::MAX - half));
+    let before = client.get_treasury_balance();
+    let events_before = env.events().all().events().len();
+
+    // The source counter still has room, but the available total is full.
+    assert_eq!(
+        client.try_receive_fee(&source_b, &1),
+        Err(Ok(Error::Overflow))
+    );
+
+    let after = client.get_treasury_balance();
+    assert_eq!(after.total, before.total);
+    assert_eq!(after.sources, before.sources);
+    assert_eq!(after.amounts, before.amounts);
+    assert_eq!(env.events().all().events().len(), events_before);
+}
+
+#[test]
+fn test_maximum_representable_receipts_succeed() {
+    let env = Env::default();
+    let (admin, client) = setup(&env);
+    let source_a = Address::generate(&env);
+    let source_b = Address::generate(&env);
+    let destination = Address::generate(&env);
+
+    client.receive_fee(&source_a, &i128::MAX);
+    client.allocate(&admin, &destination, &1, &String::from_str(&env, "reserve"));
+    client.receive_fee(&source_b, &1);
+
+    let balance = client.get_treasury_balance();
+    assert_eq!(balance.total, i128::MAX);
+    assert_eq!(balance.sources.len(), 2);
+    let mut found_a = None;
+    let mut found_b = None;
+    for i in 0..balance.sources.len() {
+        let src = balance.sources.get(i).unwrap();
+        let amt = balance.amounts.get(i).unwrap();
+        if src == source_a {
+            found_a = Some(amt);
+        } else if src == source_b {
+            found_b = Some(amt);
+        }
+    }
+    assert_eq!(found_a, Some(i128::MAX));
+    assert_eq!(found_b, Some(1));
+}
+
+#[test]
+fn test_allocation_does_not_hide_cumulative_source_overflow() {
+    let env = Env::default();
+    let (admin, client) = setup(&env);
+    let source_a = Address::generate(&env);
+    let source_b = Address::generate(&env);
+    let destination = Address::generate(&env);
+
+    client.receive_fee(&source_a, &i128::MAX);
+    client.allocate(&admin, &destination, &2, &String::from_str(&env, "reserve"));
+    // The available total is MAX - 1 after this, so adding one more unit to
+    // source A would fit the total but must still fail on the source counter.
+    client.receive_fee(&source_b, &1);
+
+    let before = client.get_treasury_balance();
+    let events_before = env.events().all().events().len();
+    assert_eq!(
+        client.try_receive_fee(&source_a, &1),
+        Err(Ok(Error::Overflow))
+    );
+
+    let after = client.get_treasury_balance();
+    assert_eq!(after.total, before.total);
+    assert_eq!(after.sources, before.sources);
+    assert_eq!(after.amounts, before.amounts);
+    assert_eq!(env.events().all().events().len(), events_before);
+}

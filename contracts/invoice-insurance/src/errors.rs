@@ -13,4 +13,11 @@ pub enum Error {
     InsufficientPool = 7,
     Overflow = 8,
     InvalidLoss = 9,
+    /// No trusted position registry has been configured.
+    RegistryNotSet = 10,
+    /// The investor has no eligible principal for this invoice, or supplied
+    /// principal exceeds the authoritative eligible amount.
+    InvalidPosition = 11,
+    /// The configured position registry could not be queried.
+    RegistryCallFailed = 12,
 }

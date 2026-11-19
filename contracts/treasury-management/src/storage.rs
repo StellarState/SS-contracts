@@ -2,6 +2,7 @@
 
 use soroban_sdk::{Address, Env, Vec};
 
+use crate::errors::Error;
 use crate::types::{AllocationRecord, StorageKey};
 
 /// Ledgers below which a persistent entry's TTL is extended (~7 days at 5s/ledger).
@@ -65,13 +66,21 @@ pub fn get_source_balance(env: &Env, source: &Address) -> i128 {
     data.unwrap_or(0)
 }
 
-/// Record that `source` contributed `amount`, updating its per-source
-/// balance, the running total, and the known-sources list.
-pub fn credit_source(env: &Env, source: &Address, amount: i128) {
+/// Compute the next cumulative receipt total for `source` without writing
+/// any state. Source receipts are cumulative even after allocations reduce
+/// the available total, so this check must not be skipped.
+pub fn checked_source_total(env: &Env, source: &Address, amount: i128) -> Result<i128, Error> {
+    get_source_balance(env, source)
+        .checked_add(amount)
+        .ok_or(Error::Overflow)
+}
+
+/// Record a previously validated cumulative receipt total for `source`,
+/// updating the per-source counter and the known-sources list.
+pub fn credit_source(env: &Env, source: &Address, next_balance: i128) {
     remember_source(env, source);
     let key = StorageKey::SourceBalance(source.clone());
-    let balance = get_source_balance(env, source);
-    env.storage().persistent().set(&key, &(balance + amount));
+    env.storage().persistent().set(&key, &next_balance);
     env.storage()
         .persistent()
         .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL_EXTEND);
