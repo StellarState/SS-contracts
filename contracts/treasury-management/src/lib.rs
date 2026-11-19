@@ -60,9 +60,17 @@ impl TreasuryManagement {
         }
         storage::get_admin(&env).ok_or(Error::NotInit)?;
 
-        storage::credit_source(&env, &source, amount);
-        let total = storage::get_total_balance(&env);
-        storage::set_total_balance(&env, total.checked_add(amount).ok_or(Error::Overflow)?);
+        // Validate both arithmetic paths before writing any receipt state so
+        // a rejected fee leaves source totals, availability, known sources,
+        // and events untouched. Allocations only reduce `TotalBalance`;
+        // per-source receipts stay cumulative and can overflow on their own.
+        let next_source_total = storage::checked_source_total(&env, &source, amount)?;
+        let next_total = storage::get_total_balance(&env)
+            .checked_add(amount)
+            .ok_or(Error::Overflow)?;
+
+        storage::credit_source(&env, &source, next_source_total);
+        storage::set_total_balance(&env, next_total);
 
         events::fee_received(&env, &source, amount);
         Ok(())
