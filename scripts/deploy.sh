@@ -26,11 +26,16 @@
 set -euo pipefail
 
 DRY_RUN=false
+CONFIRM=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --confirm)
+      CONFIRM=true
       shift
       ;;
     *)
@@ -91,6 +96,13 @@ WASM_PAYMENT_DISTRIBUTOR="${WASM_PAYMENT_DISTRIBUTOR:-target/wasm32v1-none/relea
 # Verify WASM artifacts exist
 # ---------------------------------------------------------------------------
 cd "${REPO_ROOT}"
+
+if [[ "${DRY_RUN}" == "true" ]]; then
+    python3 scripts/predeploy_check.py
+else
+    [[ "${CONFIRM}" == "true" ]] || die "Refusing deployment writes. Re-run with --confirm."
+    python3 scripts/predeploy_check.py --write --confirmed
+fi
 
 for wasm in "${WASM_INVOICE_ESCROW}" "${WASM_INVOICE_TOKEN}" "${WASM_PAYMENT_DISTRIBUTOR}"; do
     if [[ ! -f "${wasm}" ]]; then
