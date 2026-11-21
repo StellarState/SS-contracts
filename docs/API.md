@@ -163,3 +163,38 @@ Returns the first unsettled milestone, or `None` when no schedule exists or all 
 - `installment_settled`
 - `settlement_proposed`
 - `settlement_approved`
+
+## Invoice Registration Contract
+
+`invoice-registration` maps a stable, caller-supplied business identifier
+(`external_invoice_id`) to an internal on-chain invoice id, once per issuer.
+It performs no token mint, escrow creation or balance mutation; it is the
+idempotency gate callers consult before issuing an invoice.
+
+### `register_invoice(issuer, external_invoice_id, invoice_id) -> RegistrationResult`
+- **Auth:** Requires `issuer` authorization; a key cannot be claimed on behalf
+  of another issuer.
+- **Key:** `(issuer, external_invoice_id)` — keys are namespaced per issuer, so
+  two issuers may each use the same business identifier.
+- **Rules:** `external_invoice_id` must be non-empty and at most 128 bytes.
+  An internal `invoice_id` may be bound at most once.
+- **Result:** Returns `{ invoice_id, external_invoice_id, issuer, registered_at }`.
+- **Errors:** `InvalidExternalId` (1), `AlreadyRegistered` (2),
+  `InvoiceAlreadyRegistered` (3), `InvalidAddress` (5). All validation and
+  duplicate checks run before any storage write, so a rejected call leaves no
+  registration state behind.
+- **Event:** emits `invoice_registered` exactly once, on the first successful
+  registration. Topics: `(invoice_registered, issuer)`; data:
+  `(external_invoice_id, invoice_id)`.
+
+### `resolve_registration(issuer, external_invoice_id) -> RegistrationResult`
+Returns the registration owned by `issuer` for that identifier, or
+`NotRegistered` (4). Registrations owned by a different issuer are never
+disclosed.
+
+### `verify_registration(issuer, external_invoice_id, invoice_id) -> bool`
+Returns whether the key is registered by `issuer` and resolves to `invoice_id`.
+
+### `get_registration_by_invoice(invoice_id) -> RegistrationResult`
+Reverse lookup: returns the registration bound to an internal invoice id, or
+`NotRegistered` (4).
