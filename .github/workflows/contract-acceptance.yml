@@ -1,0 +1,22 @@
+name: Contract acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32v1-none
+      - name: Run contract tests
+        run: cargo test --workspace --all-targets
+      - name: Validate operational scripts
+        run: |
+          bash -n scripts/dependency-health.sh scripts/allowlist-digest.sh scripts/benchmark-batch-settlement.sh
+          test "$(printf '%s\n' G2 G1 | scripts/allowlist-digest.sh)" = "$(printf '%s\n' G1 G2 | scripts/allowlist-digest.sh)"
