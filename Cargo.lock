@@ -1016,17 +1016,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bfcf67fea2815c2fc3b90873fae90957be12ff417335dfadc7f52927feb03b2"
 
 [[package]]
-name = "escape-hatch"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk 27.0.6",
-]
-
-[[package]]
 name = "ethnum"
 version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40404c3f5f511ec4da6fe866ddf6a717c309fdbb69fbbad7b0f3edab8f2e835f"
+
+[[package]]
+name = "exit-fee-schedule"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
 
 [[package]]
 name = "fastrand"
@@ -1449,6 +1449,13 @@ dependencies = [
 
 [[package]]
 name = "invoice-tranche"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
+name = "issuer-tier-registry"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 27.0.6",
@@ -1959,6 +1966,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rate-auction"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
 name = "ref-cast"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1990,6 +2004,13 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "revolving-credit-line"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
 
 [[package]]
 name = "rfc6979"
@@ -2914,6 +2935,7 @@ dependencies = [
 name = "treasury-management"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "soroban-sdk 27.0.6",
 ]
 
@@ -2935,6 +2957,13 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
+
+[[package]]
+name = "underwriter-staking"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
 
 [[package]]
 name = "unicode-ident"

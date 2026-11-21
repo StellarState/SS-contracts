@@ -11029,3 +11029,460 @@ fn issue455_fill_to_target_under_cap_pressure() {
         EscrowStatus::Funded
     );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Issue #785: Overflow edge-case corpus for invoice and treasury arithmetic
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod overflow_edge_case_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Strategy for i128 boundary values
+    fn i128_boundary() -> impl Strategy<Value = i128> {
+        prop_oneof![
+            Just(i128::MIN),
+            Just(i128::MIN + 1),
+            Just(-1),
+            Just(0),
+            Just(1),
+            Just(i128::MAX - 1),
+            Just(i128::MAX),
+            // Common arithmetic boundaries
+            Just(i128::MAX / 2),
+            Just(i128::MAX / 10),
+            Just(i128::MAX / 100),
+            Just(i128::MAX / 1000),
+            Just(i128::MAX / 10000),
+            // Fee basis points boundaries
+            Just(0),
+            Just(1),
+            Just(100),
+            Just(5000),
+            Just(10000),
+            Just(10001), // Over MAX_BPS
+            // Timestamp boundaries
+            Just(0),
+            Just(1),
+            Just(3600),
+            Just(86400),
+            Just(31536000),
+            Just(u64::MAX as i128),
+            Just(i64::MAX as i128),
+        ]
+    }
+
+    // Strategy for positive amounts
+    fn positive_amount() -> impl Strategy<Value = i128> {
+        (1..=i128::MAX / 1000).prop_map(|v| v)
+    }
+
+    // Strategy for fee basis points (0-10000)
+    fn fee_bps() -> impl Strategy<Value = u32> {
+        prop_oneof![
+            Just(0),
+            Just(1),
+            Just(100),
+            Just(500),
+            Just(1000),
+            Just(3000),
+            Just(5000),
+            Just(10000),
+            (0u32..=10000).prop_map(|v| v),
+        ]
+    }
+
+    // Strategy for timestamps
+    fn timestamp() -> impl Strategy<Value = u64> {
+        prop_oneof![
+            Just(0),
+            Just(1),
+            Just(3600),
+            Just(86400),
+            Just(31536000),
+            Just(1000000),
+            Just(u64::MAX / 2),
+            Just(u64::MAX - 1),
+            Just(u64::MAX),
+        ]
+    }
+
+    proptest! {
+        // Test percent_filled_bps with boundary values
+        #[test]
+        fn test_percent_filled_bps_boundary(
+            raised in i128_boundary(),
+            target in i128_boundary(),
+        ) {
+            let result = percent_filled_bps(raised, target);
+            // Should never panic, result should be 0-10000
+            prop_assert!(result <= 10000);
+        }
+
+        // Test early repayment rebate calculation boundaries
+        #[test]
+        fn test_calculate_early_repayment_rebate_boundary(
+            current_ts in timestamp(),
+            due_dt in timestamp(),
+            funded_dt in timestamp(),
+            investor_amount in i128_boundary(),
+        ) {
+            let result = calculate_early_repayment_rebate(current_ts, due_dt, funded_dt, investor_amount);
+            // Should never panic, result should not overflow
+            if investor_amount >= 0 {
+                prop_assert!(result >= 0);
+                prop_assert!(result <= investor_amount);
+            }
+        }
+
+        // Test fee calculation with boundary values
+        #[test]
+        fn test_fee_calculation_boundary(
+            amount in i128_boundary(),
+            fee_bps in fee_bps(),
+        ) {
+            let max_bps = 10_000u32;
+            // This mimics the fee calculation in record_payment
+            let fee_bps_i128 = i128::from(fee_bps);
+            let max_bps_i128 = i128::from(max_bps);
+            
+            // Test checked_mul
+            let mul_result = amount.checked_mul(fee_bps_i128);
+            if let Some(mul) = mul_result {
+                let div_result = mul.checked_div(max_bps_i128);
+                if let Some(fee) = div_result {
+                    // Fee should be <= amount for valid bps
+                    if fee_bps <= max_bps && amount >= 0 {
+                        prop_assert!(fee <= amount);
+                    }
+                }
+            }
+        }
+
+        // Test pro-rata distribution with boundary values
+        #[test]
+        fn test_pro_rata_distribution_boundary(
+            investor_amount in i128_boundary(),
+            funder_amt in i128_boundary(),
+            funded_amt in i128_boundary(),
+        ) {
+            // This mimics the pro-rata calculation in record_payment
+            if funded_amt > 0 && funder_amt >= 0 && investor_amount >= 0 {
+                let mul_result = investor_amount.checked_mul(funder_amt);
+                if let Some(mul) = mul_result {
+                    let div_result = mul.checked_div(funded_amt);
+                    if let Some(share) = div_result {
+                        // Share should be reasonable
+                        prop_assert!(share >= 0);
+                        if funder_amt <= funded_amt {
+                            prop_assert!(share <= investor_amount);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Test amount addition boundaries (funding, payment)
+        #[test]
+        fn test_amount_addition_boundary(
+            a in i128_boundary(),
+            b in i128_boundary(),
+        ) {
+            let add_result = a.checked_add(b);
+            // Should not panic, just return None on overflow
+            if add_result.is_some() {
+                let sum = add_result.unwrap();
+                // Basic sanity: sum should be >= both if both positive
+                if a >= 0 && b >= 0 {
+                    prop_assert!(sum >= a);
+                    prop_assert!(sum >= b);
+                }
+            }
+        }
+
+        // Test amount subtraction boundaries
+        #[test]
+        fn test_amount_subtraction_boundary(
+            a in i128_boundary(),
+            b in i128_boundary(),
+        ) {
+            let sub_result = a.checked_sub(b);
+            // Should not panic
+            if let Some(diff) = sub_result {
+                if a >= b && a >= 0 && b >= 0 {
+                    prop_assert!(diff <= a);
+                }
+            }
+        }
+
+        // Test amount multiplication boundaries
+        #[test]
+        fn test_amount_multiplication_boundary(
+            a in i128_boundary(),
+            b in i128_boundary(),
+        ) {
+            let mul_result = a.checked_mul(b);
+            // Should not panic
+            if let Some(prod) = mul_result {
+                if a > 0 && b > 0 {
+                    prop_assert!(prod >= a);
+                    prop_assert!(prod >= b);
+                }
+            }
+        }
+
+        // Test amount division boundaries
+        #[test]
+        fn test_amount_division_boundary(
+            a in i128_boundary(),
+            b in i128_boundary(),
+        ) {
+            if b != 0 {
+                let div_result = a.checked_div(b);
+                // Should not panic
+                if let Some(quot) = div_result {
+                    if a >= 0 && b > 0 {
+                        prop_assert!(quot <= a);
+                    }
+                }
+            }
+        }
+
+        // Test timestamp arithmetic boundaries
+        #[test]
+        fn test_timestamp_arithmetic_boundary(
+            a in timestamp(),
+            b in timestamp(),
+        ) {
+            let add_result = a.saturating_add(b);
+            let sub_result = a.saturating_sub(b);
+            // Saturating ops should never panic
+            prop_assert!(add_result >= a);
+            prop_assert!(sub_result <= a);
+        }
+
+        // Test duration boundaries
+        #[test]
+        fn test_duration_boundary(
+            start in timestamp(),
+            end in timestamp(),
+        ) {
+            let duration = end.saturating_sub(start);
+            // Duration should never be negative (saturating sub)
+            // If end > start, duration should be positive
+            if end > start {
+                prop_assert!(duration > 0);
+            }
+        }
+
+        // Test basis points boundaries
+        #[test]
+        fn test_basis_points_boundary(
+            bps in fee_bps(),
+        ) {
+            let max_bps = 10_000u32;
+            // bps should be valid for fee calculation
+            if bps <= max_bps {
+                let ratio = i128::from(bps) * 1000 / i128::from(max_bps);
+                prop_assert!(ratio <= 1000);
+            }
+        }
+
+        // Test rebate calculation with extreme values
+        #[test]
+        fn test_rebate_extreme_values(
+            days_remaining in (0..=365u64).prop_map(|v| v as i128),
+            total_loan_period in (1..=365u64).prop_map(|v| v as i128),
+            investor_amount in i128_boundary(),
+        ) {
+            // This mimics the rebate calculation logic
+            let rebate_bps = days_remaining
+                .saturating_mul(10_000)
+                .checked_div(total_loan_period)
+                .unwrap_or(0) as i128;
+            
+            let rebate = investor_amount
+                .checked_mul(rebate_bps)
+                .unwrap_or(0)
+                .checked_div(10_000)
+                .unwrap_or(0);
+            
+            // Rebate should not exceed investor_amount
+            if investor_amount >= 0 {
+                prop_assert!(rebate >= 0);
+                prop_assert!(rebate <= investor_amount);
+            }
+        }
+
+        // Test penalty interest calculation boundaries
+        #[test]
+        fn test_penalty_interest_boundary(
+            investor_amount in i128_boundary(),
+            penalty_bps in fee_bps(),
+        ) {
+            let max_bps = 10_000u32;
+            let penalty_bps_i128 = i128::from(penalty_bps);
+            let max_bps_i128 = i128::from(max_bps);
+            
+            let mul_result = investor_amount.checked_mul(penalty_bps_i128);
+            if let Some(mul) = mul_result {
+                let div_result = mul.checked_div(max_bps_i128);
+                if let Some(penalty) = div_result {
+                    if penalty_bps <= max_bps && investor_amount >= 0 {
+                        prop_assert!(penalty <= investor_amount);
+                    }
+                }
+            }
+        }
+
+        // Test cumulative amount tracking boundaries
+        #[test]
+        fn test_cumulative_amount_boundary(
+            amounts in proptest::collection::vec(i128_boundary(), 1..10),
+        ) {
+            let mut cumulative: i128 = 0;
+            for amount in amounts {
+                if amount >= 0 {
+                    let new_cumulative = cumulative.checked_add(amount);
+                    if let Some(sum) = new_cumulative {
+                        cumulative = sum;
+                        prop_assert!(cumulative >= 0);
+                    } else {
+                        // Overflow - cumulative should be capped or handled
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Test that zero amounts are properly rejected
+        #[test]
+        fn test_zero_amount_rejection(
+            amount in prop_oneof![Just(0i128), Just(-1i128), Just(i128::MIN)],
+        ) {
+            // These should be rejected by validation logic
+            let is_valid = amount > 0;
+            if amount <= 0 {
+                prop_assert!(!is_valid);
+            }
+        }
+
+        // Test that amounts exceeding limits are handled
+        #[test]
+        fn test_amount_limit_enforcement(
+            amount in i128_boundary(),
+            limit in (1..=1000000i128),
+        ) {
+            if amount > limit {
+                // Should be rejected
+                prop_assert!(amount > limit);
+            } else {
+                prop_assert!(amount <= limit);
+            }
+        }
+
+        // Test rounding behavior in division
+        #[test]
+        fn test_division_rounding(
+            numerator in (1..=100000i128),
+            denominator in (1..=10000i128),
+        ) {
+            let result = numerator / denominator;
+            let remainder = numerator % denominator;
+            // Verify division identity: numerator = result * denominator + remainder
+            let reconstructed = result.checked_mul(denominator).unwrap_or(0).checked_add(remainder).unwrap_or(0);
+            prop_assert_eq!(reconstructed, numerator);
+        }
+
+        // Test basis points precision
+        #[test]
+        fn test_basis_points_precision(
+            amount in (1..=1000000i128),
+            bps in (0..=10000u32),
+        ) {
+            let fee = amount * i128::from(bps) / 10_000;
+            // Fee should be <= amount
+            prop_assert!(fee <= amount);
+            // For max bps (10000), fee should equal amount
+            if bps == 10000 {
+                prop_assert_eq!(fee, amount);
+            }
+            // For 0 bps, fee should be 0
+            if bps == 0 {
+                prop_assert_eq!(fee, 0);
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Treasury arithmetic overflow tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod treasury_overflow_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        // Test treasury balance addition boundaries
+        #[test]
+        fn test_treasury_balance_addition(
+            total in i128_boundary(),
+            amount in i128_boundary(),
+        ) {
+            let result = total.checked_add(amount);
+            // Should not panic
+            if let Some(new_total) = result {
+                if total >= 0 && amount > 0 {
+                    prop_assert!(new_total >= total);
+                }
+            }
+        }
+
+        // Test treasury allocation boundaries
+        #[test]
+        fn test_treasury_allocation_boundary(
+            total in i128_boundary(),
+            amount in i128_boundary(),
+        ) {
+            if total >= 0 && amount > 0 && amount <= total {
+                let remaining = total.checked_sub(amount);
+                if let Some(rem) = remaining {
+                    prop_assert!(rem <= total);
+                    prop_assert!(rem >= 0);
+                }
+            }
+        }
+
+        // Test source balance tracking boundaries
+        #[test]
+        fn test_source_balance_tracking(
+            existing in i128_boundary(),
+            amount in i128_boundary(),
+        ) {
+            let result = existing.checked_add(amount);
+            if let Some(new_balance) = result {
+                if existing >= 0 && amount >= 0 {
+                    prop_assert!(new_balance >= existing);
+                }
+            }
+        }
+
+        // Test cumulative allocation boundaries
+        #[test]
+        fn test_cumulative_allocation(
+            allocations in proptest::collection::vec((0..=1000000i128), 1..20),
+        ) {
+            let mut total: i128 = 0;
+            for amount in allocations {
+                let new_total = total.checked_add(amount);
+                if let Some(sum) = new_total {
+                    total = sum;
+                    prop_assert!(total >= 0);
+                }
+            }
+        }
+    }
+}

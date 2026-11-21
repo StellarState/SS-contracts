@@ -32,6 +32,9 @@ jobs:
         with:
           key: release-wasm
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Compute next semver tag
         id: version
         run: |
@@ -75,10 +78,10 @@ jobs:
             echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and package WASM
+      - name: Build and package WASM (deterministic)
         run: |
           set -euo pipefail
-          bash scripts/package-wasm.sh dist
+          bash scripts/package-wasm.sh dist --verify
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -89,4 +92,5 @@ jobs:
           files: |
             dist/*.wasm
             dist/checksums.txt
+            dist/metadata.json
           fail_on_unmatched_files: true

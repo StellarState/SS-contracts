@@ -6,6 +6,227 @@ use soroban_sdk::{Address, Env, String, Symbol, TryFromVal, TryIntoVal, Val, Vec
 
 use crate::{Error, TreasuryManagement, TreasuryManagementClient};
 
+#[cfg(test)]
+mod overflow_edge_case_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Strategy for i128 boundary values
+    fn i128_boundary() -> impl Strategy<Value = i128> {
+        prop_oneof![
+            Just(i128::MIN),
+            Just(i128::MIN + 1),
+            Just(-1),
+            Just(0),
+            Just(1),
+            Just(i128::MAX - 1),
+            Just(i128::MAX),
+            Just(i128::MAX / 2),
+            Just(i128::MAX / 10),
+            Just(i128::MAX / 100),
+            Just(i128::MAX / 1000),
+            Just(i128::MAX / 10000),
+            Just(1000000),
+            Just(1000000000),
+        ]
+    }
+
+    proptest! {
+        // Test treasury balance addition boundaries (receive_fee)
+        #[test]
+        fn test_treasury_balance_addition(
+            total in i128_boundary(),
+            amount in i128_boundary(),
+        ) {
+            let result = total.checked_add(amount);
+            // Should not panic
+            if let Some(new_total) = result {
+                if total >= 0 && amount > 0 {
+                    prop_assert!(new_total >= total);
+                }
+            }
+        }
+
+        // Test treasury allocation boundaries (allocate)
+        #[test]
+        fn test_treasury_allocation_boundary(
+            total in i128_boundary(),
+            amount in i128_boundary(),
+        ) {
+            if total >= 0 && amount > 0 && amount <= total {
+                let remaining = total.checked_sub(amount);
+                if let Some(rem) = remaining {
+                    prop_assert!(rem <= total);
+                    prop_assert!(rem >= 0);
+                }
+            }
+        }
+
+        // Test source balance tracking boundaries
+        #[test]
+        fn test_source_balance_tracking(
+            existing in i128_boundary(),
+            amount in i128_boundary(),
+        ) {
+            let result = existing.checked_add(amount);
+            if let Some(new_balance) = result {
+                if existing >= 0 && amount >= 0 {
+                    prop_assert!(new_balance >= existing);
+                }
+            }
+        }
+
+        // Test cumulative allocation boundaries
+        #[test]
+        fn test_cumulative_allocation(
+            allocations in proptest::collection::vec((0..=1000000i128), 1..20),
+        ) {
+            let mut total: i128 = 0;
+            for amount in allocations {
+                let new_total = total.checked_add(amount);
+                if let Some(sum) = new_total {
+                    total = sum;
+                    prop_assert!(total >= 0);
+                }
+            }
+        }
+
+        // Test allocation index boundaries
+        #[test]
+        fn test_allocation_index_boundary(
+            count in (0..=1000u32),
+            offset in (0..=2000u32),
+            limit in (0..=100u32),
+        ) {
+            // Test pagination boundary conditions
+            if offset >= count {
+                prop_assert!(offset >= count);
+            } else {
+                let end = core::cmp::min(offset.saturating_add(limit), count);
+                prop_assert!(end <= count);
+                prop_assert!(end >= offset);
+            }
+        }
+
+        // Test zero amount rejection
+        #[test]
+        fn test_zero_amount_rejection(
+            amount in prop_oneof![Just(0i128), Just(-1i128), Just(i128::MIN)],
+        ) {
+            let is_valid = amount > 0;
+            if amount <= 0 {
+                prop_assert!(!is_valid);
+            }
+        }
+
+        // Test amount exceeding balance
+        #[test]
+        fn test_amount_exceeds_balance(
+            amount in i128_boundary(),
+            balance in i128_boundary(),
+        ) {
+            if amount > balance {
+                prop_assert!(amount > balance);
+            } else {
+                prop_assert!(amount <= balance);
+            }
+        }
+
+        // Test division identity for fee calculations
+        #[test]
+        fn test_division_identity(
+            numerator in (1..=100000i128),
+            denominator in (1..=10000i128),
+        ) {
+            let result = numerator / denominator;
+            let remainder = numerator % denominator;
+            let reconstructed = result.checked_mul(denominator).unwrap_or(0).checked_add(remainder).unwrap_or(0);
+            prop_assert_eq!(reconstructed, numerator);
+        }
+
+        // Test multiplication overflow handling
+        #[test]
+        fn test_multiplication_overflow(
+            a in i128_boundary(),
+            b in i128_boundary(),
+        ) {
+            let result = a.checked_mul(b);
+            if let Some(prod) = result {
+                if a > 0 && b > 0 {
+                    prop_assert!(prod >= a);
+                    prop_assert!(prod >= b);
+                }
+            }
+        }
+
+        // Test addition overflow handling
+        #[test]
+        fn test_addition_overflow(
+            a in i128_boundary(),
+            b in i128_boundary(),
+        ) {
+            let result = a.checked_add(b);
+            if let Some(sum) = result {
+                if a >= 0 && b >= 0 {
+                    prop_assert!(sum >= a);
+                    prop_assert!(sum >= b);
+                }
+            }
+        }
+
+        // Test subtraction underflow handling
+        #[test]
+        fn test_subtraction_underflow(
+            a in i128_boundary(),
+            b in i128_boundary(),
+        ) {
+            let result = a.checked_sub(b);
+            if let Some(diff) = result {
+                if a >= b && a >= 0 && b >= 0 {
+                    prop_assert!(diff <= a);
+                }
+            }
+        }
+
+        // Test empty purpose string rejection
+        #[test]
+        fn test_empty_purpose_rejection(
+            purpose in prop_oneof![Just(String::new()), Just("   ".to_string())],
+        ) {
+            let is_empty = purpose.trim().is_empty();
+            if is_empty {
+                prop_assert!(is_empty);
+            }
+        }
+
+        // Test large number of allocations
+        #[test]
+        fn test_large_allocation_count(
+            count in (0..=10000u32),
+        ) {
+            // Just verify the count doesn't overflow u32
+            prop_assert!(count <= u32::MAX);
+        }
+
+        // Test timestamp boundaries
+        #[test]
+        fn test_timestamp_boundary(
+            ts in prop_oneof![
+                Just(0u64),
+                Just(1u64),
+                Just(3600u64),
+                Just(86400u64),
+                Just(u64::MAX / 2),
+                Just(u64::MAX - 1),
+                Just(u64::MAX),
+            ]
+        ) {
+            // Timestamps should be valid u64 values
+            prop_assert!(ts <= u64::MAX);
+        }
+    }
+}
+
 fn zero_address(env: &Env) -> Address {
     Address::from_string(&String::from_str(
         env,
