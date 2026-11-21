@@ -30,3 +30,9 @@ pub fn invoice_status_updated(
     env.events()
         .publish(topics, (old_status as u32, new_status as u32));
 }
+
+/// Emitted when invoice metadata changes.
+pub fn metadata_updated(env: &Env, invoice_id: &BytesN<32>, old_revision: u32, new_revision: u32) {
+    let topics = (Symbol::new(env, "metadata_updated"), invoice_id.clone());
+    env.events().publish(topics, (old_revision, new_revision));
+}

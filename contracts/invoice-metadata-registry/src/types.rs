@@ -10,6 +10,8 @@ pub enum StorageKey {
     Admin,
     /// Persistent: full metadata for an invoice.
     Invoice(BytesN<32>),
+    /// Persistent: append-only metadata revision history for an invoice.
+    Revisions(BytesN<32>),
 }
 
 /// Lifecycle status of a registered invoice.
@@ -87,4 +89,22 @@ pub struct InvoiceMetadata {
     pub issuer: Address,
     /// Current lifecycle status.
     pub status: InvoiceStatus,
+    /// Address authorized to edit metadata for this invoice.
+    pub metadata_editor: Address,
+    /// Current metadata revision, starting at 1 on registration.
+    pub revision: u32,
+}
+
+/// One immutable entry in an invoice's metadata revision history.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetadataRevision {
+    /// Revision number, starting at 1.
+    pub revision: u32,
+    /// Metadata values at this revision.
+    pub metadata: InvoiceMetadataInput,
+    /// Account that authorized this revision.
+    pub updated_by: Address,
+    /// Ledger timestamp when the revision was created.
+    pub timestamp: u64,
 }

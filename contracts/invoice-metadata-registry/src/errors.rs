@@ -24,4 +24,8 @@ pub enum Error {
     /// The requested status transition is not a valid move in the invoice
     /// state machine (see `InvoiceStatus::can_transition_to`).
     InvalidTransition = 8,
+    /// Metadata cannot be edited once an invoice is funded or terminal.
+    MetadataLocked = 9,
+    /// Metadata revision counter overflowed.
+    RevisionOverflow = 10,
 }

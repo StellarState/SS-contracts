@@ -49,6 +49,10 @@ pub enum StorageKey {
     BuyLimit(soroban_sdk::BytesN<32>),
     /// Persistent: a wallet's current buy-limit window by (invoice_id, wallet).
     BuyWindow(soroban_sdk::BytesN<32>, soroban_sdk::Address),
+    /// Persistent: one append-only payment receipt by invoice and sequence.
+    PaymentReceipt(soroban_sdk::Symbol, u32),
+    /// Persistent: count of payment receipts retained for an invoice.
+    PaymentReceiptCount(soroban_sdk::Symbol),
     /// Instance: FX oracle contract used to normalise foreign-currency investments.
     FxOracle,
     /// Instance: payment token for a supported investment currency.
@@ -336,6 +340,27 @@ pub struct FundingStatus {
     /// Percentage of the funding target filled, in basis points
     /// (10_000 = 100%). Capped at 10_000 when the target is exceeded.
     pub percent_filled_bps: u32,
+}
+
+/// One payment applied to an escrow invoice.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentReceipt {
+    pub invoice_id: soroban_sdk::Symbol,
+    pub payer: soroban_sdk::Address,
+    pub amount: i128,
+    pub ledger_timestamp: u64,
+    pub sequence: u32,
+}
+
+/// Bounded page of append-only payment receipts.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentReceiptPage {
+    pub receipts: soroban_sdk::Vec<PaymentReceipt>,
+    /// Cursor to pass to the next query; equals the last returned sequence.
+    pub next_cursor: u32,
+    pub total_count: u32,
 }
 /// Multi-signature configuration for emergency releases.
 #[contracttype]

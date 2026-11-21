@@ -12,4 +12,9 @@ pub enum Error {
     InvalidIndex = 6,
     AlreadyVerified = 7,
     MilestonesAlreadySet = 8,
+    InvalidExpiry = 9,
+    EvidenceExpired = 10,
+    EvidenceNotExpired = 11,
+    EvidenceAlreadyReported = 12,
+    InvalidEvidenceHash = 13,
 }

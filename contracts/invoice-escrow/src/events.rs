@@ -103,6 +103,24 @@ pub fn payment_settled(
     );
 }
 
+/// Publish the append-only receipt created by a successful payment.
+pub fn payment_receipt_created(
+    env: &Env,
+    invoice_id: &Symbol,
+    payer: &Address,
+    amount: i128,
+    ledger_timestamp: u64,
+    sequence: u32,
+) {
+    env.events().publish(
+        (
+            Symbol::new(env, "payment_receipt_created"),
+            invoice_id.clone(),
+        ),
+        (payer.clone(), amount, ledger_timestamp, sequence),
+    );
+}
+
 /// Publish refund event.
 pub fn escrow_refunded(env: &Env, inv_id: Symbol, amount: i128) {
     env.events()
@@ -262,7 +280,10 @@ pub fn funding_thresholds_set(
     max_threshold: i128,
 ) {
     env.events().publish(
-        (Symbol::new(env, "funding_thresholds_set"), invoice_id.clone()),
+        (
+            Symbol::new(env, "funding_thresholds_set"),
+            invoice_id.clone(),
+        ),
         (min_threshold, max_threshold),
     );
 }

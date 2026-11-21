@@ -295,6 +295,65 @@ fn test_update_status_unregistered_invoice_rejected() {
 }
 
 #[test]
+fn metadata_editor_updates_revisions_but_funding_admin_cannot() {
+    let env = Env::default();
+    let (admin, client) = setup(&env);
+    let issuer = Address::generate(&env);
+    let editor = Address::generate(&env);
+    let id = invoice_id(&env, 30);
+    let mut metadata = sample_input(&env, &issuer);
+    client.register_invoice(&admin, &id, &metadata);
+    client.set_metadata_editor(&issuer, &id, &editor);
+
+    metadata.face_value += 1;
+    assert_eq!(
+        client.try_update_metadata(&admin, &id, &metadata),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(client.update_metadata(&editor, &id, &metadata), 2);
+    assert_eq!(client.get_current_revision(&id), 2);
+    let history = client.get_revision_history(&id);
+    assert_eq!(history.len(), 2);
+    assert_eq!(
+        history.get(1).unwrap().metadata.face_value,
+        metadata.face_value
+    );
+
+    metadata.issuer = Address::generate(&env);
+    assert_eq!(
+        client.try_update_metadata(&editor, &id, &metadata),
+        Err(Ok(Error::Unauthorized))
+    );
+    metadata.issuer = issuer.clone();
+    client.update_status(&admin, &id, &InvoiceStatus::Live);
+    client.update_status(&admin, &id, &InvoiceStatus::Funded);
+    metadata.face_value += 1;
+    assert_eq!(
+        client.try_update_metadata(&editor, &id, &metadata),
+        Err(Ok(Error::MetadataLocked))
+    );
+    assert_eq!(client.get_current_revision(&id), 2);
+}
+
+#[test]
+fn issuer_can_reassign_editor_but_non_issuer_cannot() {
+    let env = Env::default();
+    let (_admin, client) = setup(&env);
+    let issuer = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let editor = Address::generate(&env);
+    let id = invoice_id(&env, 31);
+    client.register_invoice(&_admin, &id, &sample_input(&env, &issuer));
+
+    assert_eq!(
+        client.try_set_metadata_editor(&outsider, &id, &editor),
+        Err(Ok(Error::Unauthorized))
+    );
+    client.set_metadata_editor(&issuer, &id, &editor);
+    assert_eq!(client.get_invoice(&id).metadata_editor, editor);
+}
+
+#[test]
 fn test_invoice_registered_event_emitted() {
     let env = Env::default();
     let (admin, client) = setup(&env);

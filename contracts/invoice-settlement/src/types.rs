@@ -8,6 +8,7 @@ pub enum StorageKey {
     FeeBps,
     Invoice(BytesN<32>),
     PayoutDone(BytesN<32>),
+    EvidenceUsed(BytesN<32>),
 }
 
 #[contracttype]
@@ -25,8 +26,11 @@ pub struct SettlementInvoice {
     pub token: Address,
     pub holders: Vec<HolderShare>,
     pub total_fractions: i128,
+    pub outstanding_balance: i128,
     pub repaid_amount: i128,
     pub distributed: bool,
+    pub payer: Option<Address>,
+    pub settlement_evidence_hash: Option<BytesN<32>>,
 }
 
 #[contracterror]
@@ -46,4 +50,8 @@ pub enum Error {
     HolderNotFound = 11,
     Overflow = 12,
     InvalidHolders = 13,
+    InvalidEvidence = 14,
+    EvidenceAlreadyUsed = 15,
+    EvidenceAlreadySet = 16,
+    EvidenceMismatch = 17,
 }

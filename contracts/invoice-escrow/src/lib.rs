@@ -32,6 +32,7 @@ use types::{
     CategoryFeeSchedule, Config, DisputeData, EscrowData, FundingInvoice, InstallmentInput,
     InvestmentRecord, InvoiceData, InvoiceStatus,
 };
+pub use types::{PaymentReceipt, PaymentReceiptPage};
 
 pub use collateral::CollateralStatus;
 pub use custody::CustodyPosition;
@@ -88,6 +89,8 @@ const DEFAULT_DISPUTE_TIMEOUT_SECS: u64 = 604_800;
 /// Maximum number of milestones allowed in one installment repayment schedule.
 /// Bounds storage growth and per-payment iteration cost.
 const MAX_INSTALLMENTS: u32 = 64;
+const MAX_PAYMENT_RECEIPTS: u32 = 256;
+const MAX_PAYMENT_RECEIPTS_PAGE_SIZE: u32 = 50;
 
 #[contract]
 pub struct InvoiceEscrow;
@@ -1108,6 +1111,16 @@ impl InvoiceEscrow {
         if amount > remaining {
             return Err(Error::InvalidAmount);
         }
+        let receipt_count_key = types::StorageKey::PaymentReceiptCount(invoice_id.clone());
+        let receipt_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&receipt_count_key)
+            .unwrap_or(0);
+        let receipt_sequence = receipt_count.checked_add(1).ok_or(Error::Overflow)?;
+        if receipt_count >= MAX_PAYMENT_RECEIPTS {
+            return Err(Error::ReceiptLimitReached);
+        }
 
         // Category-specific fee rate overrides the platform default when the
         // admin has configured one via `set_category_fee` (see #377).
@@ -1255,12 +1268,90 @@ impl InvoiceEscrow {
         if data.status == EscrowStatus::Settled {
             events::escrow_status_changed(
                 &env,
-                invoice_id,
+                invoice_id.clone(),
                 EscrowStatus::Settled,
                 env.ledger().timestamp(),
             );
         }
+        let receipt = types::PaymentReceipt {
+            invoice_id: invoice_id.clone(),
+            payer: payer.clone(),
+            amount,
+            ledger_timestamp: current_ts,
+            sequence: receipt_sequence,
+        };
+        let receipt_key = types::StorageKey::PaymentReceipt(invoice_id.clone(), receipt_sequence);
+        env.storage().persistent().set(&receipt_key, &receipt);
+        env.storage()
+            .persistent()
+            .set(&receipt_count_key, &receipt_sequence);
+        storage::bump_persistent(&env, &receipt_key);
+        storage::bump_persistent(&env, &receipt_count_key);
+        events::payment_receipt_created(
+            &env,
+            &invoice_id,
+            &payer,
+            amount,
+            current_ts,
+            receipt_sequence,
+        );
         Ok(())
+    }
+
+    /// Return a bounded page of payment receipts after `cursor` (0 starts at
+    /// the first receipt). Receipt history is capped at 256 entries per invoice.
+    pub fn get_payment_receipts(
+        env: Env,
+        invoice_id: Symbol,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<types::PaymentReceiptPage, Error> {
+        if limit == 0 {
+            return Err(Error::InvalidLimit);
+        }
+        if limit > MAX_PAYMENT_RECEIPTS_PAGE_SIZE {
+            return Err(Error::LimitExceeded);
+        }
+        let count_key = types::StorageKey::PaymentReceiptCount(invoice_id.clone());
+        let total_count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if total_count == 0 && !storage::has_escrow(&env, invoice_id.clone()) {
+            return Err(Error::EscrowNotFound);
+        }
+        if cursor > total_count {
+            return Err(Error::InvalidCursor);
+        }
+
+        let end = cursor.saturating_add(limit).min(total_count);
+        let mut receipts = Vec::new(&env);
+        for sequence in (cursor + 1)..=end {
+            let receipt_key = types::StorageKey::PaymentReceipt(invoice_id.clone(), sequence);
+            let receipt = env
+                .storage()
+                .persistent()
+                .get(&receipt_key)
+                .ok_or(Error::EscrowNotFound)?;
+            storage::bump_persistent(&env, &receipt_key);
+            receipts.push_back(receipt);
+        }
+        storage::bump_persistent(&env, &count_key);
+        Ok(types::PaymentReceiptPage {
+            receipts,
+            next_cursor: end,
+            total_count,
+        })
+    }
+
+    /// Return the number of retained payment receipts for an invoice.
+    pub fn get_payment_receipt_count(env: Env, invoice_id: Symbol) -> Result<u32, Error> {
+        let count_key = types::StorageKey::PaymentReceiptCount(invoice_id.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if count == 0 && !storage::has_escrow(&env, invoice_id) {
+            return Err(Error::EscrowNotFound);
+        }
+        if count > 0 {
+            storage::bump_persistent(&env, &count_key);
+        }
+        Ok(count)
     }
 
     /// Refund the investors if the invoice was not paid by due date. Anyone may call.

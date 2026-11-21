@@ -166,4 +166,8 @@ pub enum Error {
     CollateralReserved = 76,
     /// Payout would consume repayment deposits reserved for another invoice.
     RepaymentReserved = 77,
+    /// The receipt cursor is beyond the number of receipts recorded.
+    InvalidCursor = 78,
+    /// The invoice has reached its retained receipt-history limit.
+    ReceiptLimitReached = 79,
 }
