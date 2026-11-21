@@ -948,3 +948,7 @@ mod integration_test;
 mod test;
 #[cfg(test)]
 mod test_fee_promotion;
+#[cfg(test)]
+mod event_schema_tests;
+#[cfg(test)]
+mod auth_tests;

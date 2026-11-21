@@ -163,3 +163,31 @@ Returns the first unsettled milestone, or `None` when no schedule exists or all 
 - `installment_settled`
 - `settlement_proposed`
 - `settlement_approved`
+
+## API Deprecation Policy
+
+StellarSettle follows a structured deprecation lifecycle for public entrypoints:
+
+1. **Current** - Recommended API, fully supported.
+2. **Deprecated** - Still functional but marked for removal. Minimum 90-day warning period before removal.
+3. **Removed** - No longer available; calls will fail.
+
+### Deprecated Invoice Escrow Entrypoints
+
+| Method | Deprecated Since | Removal Target | Replacement | Migration Guidance |
+|--------|------------------|----------------|-------------|-------------------|
+| `create_escrow_legacy` | v1.2.0 | v2.0.0 | `create_escrow` | Use `create_escrow` with `accepted_tokens` parameter for multi-token support |
+| `fund_escrow_legacy` | v1.2.0 | v2.0.0 | `fund_escrow` | Use `fund_escrow` with `funding_token` parameter to specify the payment token explicitly |
+| `create_escrow_with_tokens` | v1.2.0 | v2.0.0 | `create_escrow` | Alias for `create_escrow`; use `create_escrow` directly |
+| `fund_escrow_with_token` | v1.2.0 | v2.0.0 | `fund_escrow` | Alias for `fund_escrow`; use `fund_escrow` directly |
+
+### Deprecation Query Functions
+
+- `get_deprecation_records() -> Vec<DeprecationRecord>` - Returns deprecation metadata for all deprecated entrypoints.
+- `is_method_deprecated(method: Symbol) -> bool` - Checks if a specific method is deprecated.
+
+### Removal Requirements
+
+- Every removal requires a migration guide and a tracking issue.
+- Legacy calls remain functional through the removal target version.
+- Inventory distinguishes current and deprecated entrypoints via `get_deprecation_records`.

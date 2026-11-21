@@ -172,3 +172,97 @@ The payment-distributor contract orchestrates lifecycle-driven payouts to seller
 3. **Topic Structure**: High-cardinality identifiers (`escrow`, `invoice_id`, `token`) are placed in topics for efficient filtering. Low-cardinality data is in the payload.
 
 4. **Timestamp Inclusion**: `PaymentDistributed` includes ledger timestamp for compliance and audit trail requirements.
+
+---
+
+## Indexed vs Unindexed Fields Reference
+
+This section explicitly identifies which fields are indexed (appear in event topics) vs unindexed (appear only in data payload) for each contract. Indexed fields enable efficient event filtering by indexers.
+
+### Invoice Escrow Contract
+
+| Event | Indexed Fields (Topics) | Unindexed Fields (Data Payload) |
+|-------|------------------------|--------------------------------|
+| `escrow_created` | `invoice_id` | `seller`, `debtor`, `face_value`, `purchase_price`, `due_date`, `payment_token`, `invoice_token`, `commitment`, `funding_milestone` |
+| `escrow_funded` | `invoice_id` | `buyer`, `funded_amount`, `total_funded`, `purchase_price` |
+| `payment_settled` | `invoice_id` | `payment_amount`, `platform_fee`, `investor_payout` |
+| `escrow_refunded` | `invoice_id` | `refunded_amount` |
+| `escrow_status_changed` | — | `invoice_id`, `status`, `timestamp` |
+| `installment_schedule_set` | — | `invoice_id`, `milestone_count`, `final_due_ts`, `total_amount` |
+| `installment_settled` | — | `invoice_id`, `index`, `cumulative_amount`, `paid_amt` |
+| `settlement_proposed` | — | `invoice_id`, `proposer`, `repayment_amount` |
+| `settlement_approved` | — | `invoice_id`, `approver`, `repayment_amount` |
+| `early_settlement_applied` | — | `invoice_id`, `discount_bps`, `original_face`, `effective_face` |
+| `grace_period_expired` | — | `invoice_id`, `due_dt`, `grace_period_seconds` |
+| `category_fee_updated` | — | `category`, `fee_bps` |
+| `DisputeRaised` | — | `invoice_id`, `raiser`, `raised_at` |
+| `DisputeResolved` | — | `invoice_id`, `favour`, `timed_out` |
+| `platform_fee_updated` | — | `old_fee_bps`, `new_fee_bps` |
+| `distributor_updated` | `new_distributor` | `had_previous_distributor` |
+| `paused_updated` | — | `old_paused`, `new_paused` |
+| `fee_collected` | — | `invoice_id`, `fee_amount`, `treasury` |
+| `max_investors_updated` | — | `count` |
+| `PartialFillExecuted` | `invoice_id` | `investor`, `requested`, `accepted`, `returned` |
+| `param_change_proposed` | — | `param`, `new_value`, `proposed_at`, `timelock_secs` |
+| `param_change_executed` | — | `param`, `new_value` |
+| `currency_invested` | `invoice_id` | `investor`, `currency`, `amount`, `base_amount` |
+| `currency_max_age_set` | `currency` | `max_age_secs` |
+
+### Invoice Token Contract
+
+| Event | Indexed Fields (Topics) | Unindexed Fields (Data Payload) |
+|-------|------------------------|--------------------------------|
+| `transfer` | `from`, `to` | `amount` |
+| `approve` | `from`, `spender` | `amount`, `expiration_ledger` |
+| `mint` | `to` | `amount` |
+| `burn` | `from` | `amount` |
+| `transfer_locked_updated` | — | `old`, `new` |
+| `minter_updated` | — | `old_minter`, `new_minter` |
+| `paused_updated` | — | `old`, `new` |
+| `account_frozen` / `account_unfrozen` | — | `account` |
+| `allow_extend` | `from`, `spender` | `new_expiration_ledger` |
+| `decimals_updated` | — | `old`, `new` |
+| `approval_revoked` | `from`, `spender` | — |
+| `nonce_queried` | — | `account`, `nonce` |
+| `fee_deducted` | — | `from`, `fee_amount` |
+| `history_appended` | — | `from`, `from_clone`, `to`, `amount` |
+| `fee_updated` | — | `old_bps`, `new_bps` |
+| `role_admin_updated` | `role` | `old_admin`, `new_admin` |
+| `role_granted` | `role`, `account` | `granted` |
+| `clawback` | `from` | `amount` |
+
+### Payment Distributor Contract
+
+| Event | Indexed Fields (Topics) | Unindexed Fields (Data Payload) |
+|-------|------------------------|--------------------------------|
+| `initialized` | — | `admin` |
+| `PaymentDistributed` | `escrow`, `invoice_id` | `recipients`, `amounts`, `escrow_status`, `timestamp` |
+| `refund_distributed` | `escrow`, `invoice_id` | `recipients`, `amounts` |
+| `fee_recipient_updated` | — | `old_recipient`, `new_recipient` |
+| `escrow_contract_updated` | — | `old_escrow`, `new_escrow` |
+| `platform_fee_updated` | — | `admin`, `tiers` |
+| `investor_bonus_rate_updated` | — | `admin`, `bonus_bps` |
+| `referral_paid` | `token` | `referral_recipient`, `amount` |
+| `AssetDistributed` | `token` | `recipients`, `amounts`, `total` |
+| `EmergencyWithdrawal` | `token` | `admin`, `to`, `amount` |
+| `DustSwept` | `token` | `admin`, `to`, `amount` |
+| `ExcessRefunded` | `token`, `invoice_id` | `escrow`, `amount` |
+| `role_grant_updated` | `role`, `account` | `granted` |
+
+---
+
+## Snapshot Testing
+
+Event schema snapshots are captured in contract test suites:
+
+- `contracts/invoice-escrow/src/event_schema_tests.rs`
+- `contracts/payment-distributor/src/event_schema_tests.rs`
+- `contracts/invoice-token/src/event_schema_tests.rs`
+
+These tests validate topic names, topic count, data field count, and field types. They fail on:
+- Topic renames
+- Field removals or additions
+- Field type changes
+- Field order changes
+
+To update snapshots after intentional schema changes, run the tests and update the assertions to match the new schema.

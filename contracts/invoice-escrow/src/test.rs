@@ -11029,3 +11029,122 @@ fn issue455_fill_to_target_under_cap_pressure() {
         EscrowStatus::Funded
     );
 }
+#[test]
+fn deprecation_inventory_covers_all_legacy_entrypoints() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0);
+
+    // Test that deprecation records are returned
+    let records = client.get_deprecation_records();
+    assert!(records.len() >= 4, "Expected at least 4 deprecation records");
+
+    // Verify each deprecated method is documented
+    let method_names: soroban_sdk::Vec<Symbol> = records.iter().map(|r| r.method).collect();
+    assert!(method_names.iter().any(|m| m == Symbol::new(&env, "create_escrow_legacy")));
+    assert!(method_names.iter().any(|m| m == Symbol::new(&env, "fund_escrow_legacy")));
+    assert!(method_names.iter().any(|m| m == Symbol::new(&env, "create_escrow_with_tokens")));
+    assert!(method_names.iter().any(|m| m == Symbol::new(&env, "fund_escrow_with_token")));
+
+    // Verify each record has replacement guidance
+    for record in records.iter() {
+        assert!(!record.replacement.is_empty(&env), "Replacement must be specified");
+        assert!(!record.guidance.is_empty(&env), "Guidance must be specified");
+        assert!(record.min_warning_days >= 90, "Minimum 90-day warning period");
+    }
+}
+
+#[test]
+fn deprecation_legacy_entrypoints_still_functional() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let debtor = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    let invoice_id = Symbol::new(&env, "INV_DEPR");
+    let payment_token_admin = Address::generate(&env);
+    let payment_token_id = env.register_stellar_asset_contract_v2(payment_token_admin.clone());
+    let payment_token = payment_token_id.address();
+    let payment_asset = soroban_sdk::token::StellarAssetClient::new(&env, &payment_token_id);
+    let inv_token_id = env.register_contract(None, MockInvoiceToken);
+
+    // Mint tokens for testing
+    payment_asset.mint(&buyer, &1000);
+    payment_asset.mint(&payer, &1000);
+
+    // Test create_escrow_legacy still works
+    client.create_escrow_legacy(
+        &invoice_id,
+        &seller,
+        &debtor,
+        &1000,
+        &1000,
+        &1_000_000,
+        &payment_token,
+        &inv_token_id,
+        &BytesN::from_array(&env, &[0; 32]),
+        &None,
+        &None,
+    );
+    assert_eq!(client.get_escrow_status(&invoice_id), Ok(EscrowStatus::Created));
+
+    // Test fund_escrow_legacy still works
+    client.fund_escrow_legacy(&invoice_id, &buyer, &1000);
+    assert_eq!(client.get_escrow_status(&invoice_id), Ok(EscrowStatus::Funded));
+
+    // Test create_escrow_with_tokens still works
+    let invoice_id2 = Symbol::new(&env, "INV_DEPR2");
+    client.create_escrow_with_tokens(
+        &invoice_id2,
+        &seller,
+        &debtor,
+        &1000,
+        &1000,
+        &1_000_000,
+        &payment_token,
+        &inv_token_id,
+        &BytesN::from_array(&env, &[1; 32]),
+        &None,
+        &None,
+        &soroban_sdk::vec![&env, payment_token.clone()],
+    );
+    assert_eq!(client.get_escrow_status(&invoice_id2), Ok(EscrowStatus::Created));
+
+    // Test fund_escrow_with_token still works
+    client.fund_escrow_with_token(&invoice_id2, &buyer, &1000, &payment_token);
+    assert_eq!(client.get_escrow_status(&invoice_id2), Ok(EscrowStatus::Funded));
+}
+
+#[test]
+fn is_method_deprecated_returns_true_for_legacy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0);
+
+    assert!(client.is_method_deprecated(&Symbol::new(&env, "create_escrow_legacy")));
+    assert!(client.is_method_deprecated(&Symbol::new(&env, "fund_escrow_legacy")));
+    assert!(client.is_method_deprecated(&Symbol::new(&env, "create_escrow_with_tokens")));
+    assert!(client.is_method_deprecated(&Symbol::new(&env, "fund_escrow_with_token")));
+
+    // Current methods should not be deprecated
+    assert!(!client.is_method_deprecated(&Symbol::new(&env, "create_escrow")));
+    assert!(!client.is_method_deprecated(&Symbol::new(&env, "fund_escrow")));
+    assert!(!client.is_method_deprecated(&Symbol::new(&env, "record_payment")));
+    assert!(!client.is_method_deprecated(&Symbol::new(&env, "refund_escrow")));
+}

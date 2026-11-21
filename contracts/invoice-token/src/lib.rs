@@ -898,3 +898,7 @@ mod sep41_compliance;
 mod test;
 #[cfg(test)]
 mod test_storage_ttl;
+#[cfg(test)]
+mod event_schema_tests;
+#[cfg(test)]
+mod auth_tests;
