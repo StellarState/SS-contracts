@@ -26,6 +26,10 @@
 #>
 
 #Requires -Version 5.1
+param(
+    [switch]$DryRun,
+    [switch]$Confirm
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -106,6 +110,14 @@ $ExistingDistributorId      = Get-EnvOrDefault 'PAYMENT_DISTRIBUTOR_CONTRACT_ID'
 # ---------------------------------------------------------------------------
 Push-Location $RepoRoot
 
+if ($DryRun) {
+    python scripts/predeploy_check.py
+} else {
+    if (-not $Confirm) { Write-Err "Refusing deployment writes. Re-run with -Confirm." }
+    python scripts/predeploy_check.py --write --confirmed
+    if ($LASTEXITCODE -ne 0) { Write-Err "Predeployment validation failed" }
+}
+
 foreach ($wasm in @($WasmInvoiceEscrow, $WasmInvoiceToken, $WasmPaymentDistributor)) {
     if (-not (Test-Path $wasm)) {
         Write-Err "WASM not found: $wasm`n       Run 'soroban contract build' first."
@@ -125,6 +137,12 @@ function Deploy-Contract {
     if (-not [string]::IsNullOrWhiteSpace($ExistingId)) {
         Write-Warn "$Label`: Skipping deploy – reusing existing ID: $ExistingId"
         return $ExistingId
+    }
+
+    if ($DryRun) {
+        $simulated = "SIMULATED_$($Label.ToUpper().Replace('-', '_'))_ID"
+        Write-Ok "[DRY-RUN] $Label deployed -> $simulated"
+        return $simulated
     }
 
     Write-Info "Deploying $Label from $WasmPath ..."
@@ -188,7 +206,7 @@ Write-Info "  decimals     = $InvoiceTokenDecimals"
 Write-Info "  invoice_id   = $InvoiceTokenInvoiceId"
 Write-Info "  minter       = $InvoiceEscrowId  (escrow contract)"
 
-soroban contract invoke `
+    if ($DryRun) { Write-Ok "[DRY-RUN] invoice-token initialised" } else { soroban contract invoke `
     --source $StellarSecretKey `
     --network $StellarNetwork `
     --id $InvoiceTokenId `
@@ -198,7 +216,7 @@ soroban contract invoke `
     --symbol     $InvoiceTokenSymbol `
     --decimals   $InvoiceTokenDecimals `
     --invoice_id $InvoiceTokenInvoiceId `
-    --minter     $InvoiceEscrowId
+    --minter     $InvoiceEscrowId }
 
 if ($LASTEXITCODE -ne 0) { Write-Err "invoice-token initialization failed" }
 Write-Ok "invoice-token initialised"
@@ -208,13 +226,13 @@ Write-Info "Initialising invoice-escrow ..."
 Write-Info "  admin            = $AdminPublicKey"
 Write-Info "  platform_fee_bps = $PlatformFeeBps"
 
-soroban contract invoke `
+    if ($DryRun) { Write-Ok "[DRY-RUN] invoice-escrow initialised" } else { soroban contract invoke `
     --source $StellarSecretKey `
     --network $StellarNetwork `
     --id $InvoiceEscrowId `
     -- initialize `
     --admin            $AdminPublicKey `
-    --platform_fee_bps $PlatformFeeBps
+    --platform_fee_bps $PlatformFeeBps }
 
 if ($LASTEXITCODE -ne 0) { Write-Err "invoice-escrow initialization failed" }
 Write-Ok "invoice-escrow initialised"
@@ -223,12 +241,12 @@ Write-Ok "invoice-escrow initialised"
 Write-Info "Initialising payment-distributor ..."
 Write-Info "  admin = $AdminPublicKey"
 
-soroban contract invoke `
+    if ($DryRun) { Write-Ok "[DRY-RUN] payment-distributor initialised" } else { soroban contract invoke `
     --source $StellarSecretKey `
     --network $StellarNetwork `
     --id $PaymentDistributorId `
     -- initialize `
-    --admin $AdminPublicKey
+    --admin $AdminPublicKey }
 
 if ($LASTEXITCODE -ne 0) { Write-Err "payment-distributor initialization failed" }
 Write-Ok "payment-distributor initialised"
@@ -236,12 +254,12 @@ Write-Ok "payment-distributor initialised"
 # --- invoice-escrow.set_payment_distributor ---
 Write-Info "Wiring invoice-escrow to payment-distributor ..."
 
-soroban contract invoke `
+    if ($DryRun) { Write-Ok "[DRY-RUN] invoice-escrow wired to payment-distributor" } else { soroban contract invoke `
     --source $StellarSecretKey `
     --network $StellarNetwork `
     --id $InvoiceEscrowId `
     -- set_payment_distributor `
-    --payment_distributor $PaymentDistributorId
+    --payment_distributor $PaymentDistributorId }
 
 if ($LASTEXITCODE -ne 0) { Write-Err "invoice-escrow distributor wiring failed" }
 Write-Ok "invoice-escrow wired to payment-distributor"
