@@ -1,6 +1,6 @@
 //! Storage helpers for balances, metadata, allowances, fees, roles, nonces, and history.
 
-use soroban_sdk::{Address, Symbol, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 use crate::types::{AllowanceData, OwnershipHistoryRecord, StorageKey, TokenMetadata};
 
@@ -29,50 +29,108 @@ pub fn set_total_supply(env: &soroban_sdk::Env, amount: i128) {
         .set(&StorageKey::TotalSupply, &amount);
 }
 
+/// Active account entries are retained for this many ledgers after a bump.
+/// Keep the balance and restriction metadata on the same retention policy.
+const ACTIVE_ACCOUNT_TTL: u32 = 1_000;
+
+fn bump_active_account_ttl(env: &Env, account: &Address) {
+    let current_ledger = env.ledger().sequence();
+    let extend_to = current_ledger.saturating_add(ACTIVE_ACCOUNT_TTL);
+    let balance_key = StorageKey::Balance(account.clone());
+    let frozen_key = StorageKey::Frozen(account.clone());
+
+    if env.storage().persistent().has(&balance_key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&balance_key, extend_to, extend_to);
+    }
+    if env.storage().persistent().has(&frozen_key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&frozen_key, extend_to, extend_to);
+    }
+}
+
 /// Get balance for an address (persistent storage).
-/// Auto-extends the storage key TTL on access to prevent expiration during active use.
-pub fn get_balance(env: &soroban_sdk::Env, addr: &Address) -> i128 {
+/// Auto-extends the balance and its restriction metadata together.
+pub fn get_balance(env: &Env, addr: &Address) -> i128 {
     let key = StorageKey::Balance(addr.clone());
     let balance = env.storage().persistent().get(&key).unwrap_or(0);
-
-    // Extend TTL to prevent key expiration during active use
-    let current_ledger = env.ledger().sequence();
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, current_ledger + 1_000, current_ledger + 1_000);
+    bump_active_account_ttl(env, addr);
 
     balance
 }
 
 /// Set balance for an address (persistent storage).
-pub fn set_balance(env: &soroban_sdk::Env, addr: &Address, amount: i128) {
+pub fn set_balance(env: &Env, addr: &Address, amount: i128) {
     if amount == 0 {
         env.storage()
             .persistent()
             .remove(&StorageKey::Balance(addr.clone()));
+
+        // A frozen restriction remains authoritative even after its balance is
+        // clawed back. An unrestricted, empty account has no metadata to retain.
+        let frozen_key = StorageKey::Frozen(addr.clone());
+        if env.storage().persistent().get::<_, bool>(&frozen_key) == Some(false) {
+            env.storage().persistent().remove(&frozen_key);
+        }
     } else {
+        let frozen_key = StorageKey::Frozen(addr.clone());
         env.storage()
             .persistent()
             .set(&StorageKey::Balance(addr.clone()), &amount);
+
+        // Make an active account's unrestricted state explicit. This prevents
+        // a missing/archived restriction entry from being interpreted as a grant.
+        if !env.storage().persistent().has(&frozen_key) {
+            env.storage().persistent().set(&frozen_key, &false);
+        }
     }
+    bump_active_account_ttl(env, addr);
 }
 
 /// Check whether an account is frozen.
-pub fn is_account_frozen(env: &soroban_sdk::Env, account: &Address) -> bool {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::Frozen(account.clone()))
-        .unwrap_or(false)
+pub fn is_account_frozen(env: &Env, account: &Address) -> bool {
+    let frozen_key = StorageKey::Frozen(account.clone());
+    match env.storage().persistent().get::<_, bool>(&frozen_key) {
+        Some(frozen) => {
+            bump_active_account_ttl(env, account);
+            frozen
+        }
+        None => {
+            // A nonzero balance without restriction metadata is ambiguous: the
+            // entry may be archived and awaiting restoration. Fail closed.
+            let has_active_balance = env
+                .storage()
+                .persistent()
+                .get::<_, i128>(&StorageKey::Balance(account.clone()))
+                .is_some_and(|balance| balance > 0);
+            if has_active_balance {
+                bump_active_account_ttl(env, account);
+            }
+            has_active_balance
+        }
+    }
 }
 
-/// Update an account's frozen state, removing unrestricted entries from storage.
-pub fn set_account_frozen(env: &soroban_sdk::Env, account: &Address, frozen: bool) {
+/// Update an account's frozen state while retaining active restriction metadata.
+pub fn set_account_frozen(env: &Env, account: &Address, frozen: bool) {
     let key = StorageKey::Frozen(account.clone());
     if frozen {
         env.storage().persistent().set(&key, &true);
     } else {
-        env.storage().persistent().remove(&key);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, i128>(&StorageKey::Balance(account.clone()))
+            .is_some_and(|balance| balance > 0)
+        {
+            env.storage().persistent().set(&key, &false);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
     }
+    bump_active_account_ttl(env, account);
 }
 
 /// Get allowance (from, spender). Returns 0 if expired or not set.

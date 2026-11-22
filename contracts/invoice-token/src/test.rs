@@ -3,7 +3,7 @@
 
 use super::{InvoiceToken, InvoiceTokenClient};
 use crate::types::StorageKey;
-use soroban_sdk::testutils::{Address as _, Events, Ledger};
+use soroban_sdk::testutils::{storage::Persistent, Address as _, Events, Ledger};
 use soroban_sdk::{
     Address, Env, IntoVal, String as SorobanString, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
@@ -2022,6 +2022,78 @@ fn test_storage_key_serialization_roundtrip_frozen() {
     let env = Env::default();
     let account = Address::generate(&env);
     assert_key_roundtrip(&env, StorageKey::Frozen(account));
+}
+
+#[test]
+fn test_active_balance_and_restriction_ttls_are_bumped_together() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let account = Address::generate(&env);
+    client.initialize(
+        &admin,
+        &SorobanString::from_str(&env, "Invoice"),
+        &SorobanString::from_str(&env, "INV"),
+        &7,
+        &Symbol::new(&env, "inv"),
+        &minter,
+    );
+    client.mint(&account, &100, &minter);
+
+    let balance_key = StorageKey::Balance(account.clone());
+    let frozen_key = StorageKey::Frozen(account.clone());
+    env.ledger()
+        .with_mut(|ledger| ledger.sequence_number += 900);
+    assert_eq!(client.balance(&account), 100);
+
+    env.as_contract(&contract_id, || {
+        assert!(env.storage().persistent().get_ttl(&balance_key) >= 999);
+        assert!(env.storage().persistent().get_ttl(&frozen_key) >= 999);
+    });
+}
+
+#[test]
+fn test_restored_frozen_metadata_preserves_restriction() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    client.mint(&account, &100, &minter);
+    client.freeze_account(&account);
+
+    env.ledger()
+        .with_mut(|ledger| ledger.sequence_number += 2_000);
+
+    // The persistent entry is restored with its original value; it is not
+    // treated as an absent/unfrozen account after its TTL elapsed.
+    assert!(client.is_account_frozen(&account));
+    assert_eq!(client.try_unfreeze_account(&account).is_ok(), true);
+    assert!(!client.is_account_frozen(&account));
+}
+
+#[test]
+fn test_missing_restriction_metadata_for_active_balance_fails_closed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, minter) = setup_token(&env);
+    let account = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.set_transfer_locked(&_admin, &false);
+    client.mint(&account, &100, &minter);
+
+    let frozen_key = StorageKey::Frozen(account.clone());
+    env.as_contract(&client.address, || {
+        env.storage().persistent().remove(&frozen_key);
+    });
+
+    assert!(client.is_account_frozen(&account));
+    assert_eq!(
+        client.try_transfer(&account, &recipient, &10),
+        Err(Ok(crate::errors::Error::AccountFrozen))
+    );
 }
 
 /// All StorageKey variants produce distinct serialized values (no collisions).

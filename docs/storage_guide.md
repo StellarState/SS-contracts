@@ -34,6 +34,21 @@ pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 200_000;
 2. **Off-Chain Keeper Bumping:** Indexers and front-ends should monitor key TTLs using RPC and call `extend_ttl` if an active escrow approaches the threshold.
 3. **Storage Cleanup:** Expired or settled escrows can have their persistent entries archived or cleared to reclaim storage rent.
 
+### Invoice-token account restrictions
+
+Invoice-token balances and their `Frozen(Address)` restriction metadata use the
+same active-account TTL policy. A nonzero balance has an explicit restriction
+record (`true` or `false`); reads and writes bump both entries together. An
+account with a nonzero balance but unavailable restriction metadata is treated
+as frozen until the metadata is restored, so archival cannot become an
+authorization grant. Only the authorized `unfreeze_account` call can change a
+stored `true` restriction.
+
+When preparing a transaction that may touch an archived invoice-token account,
+clients must include both the balance key and the matching `Frozen(Address)` key
+in the restoration footprint before invoking the contract. Restoration returns
+the stored restriction value; it does not reset the account to unrestricted.
+
 ---
 
 ## References
