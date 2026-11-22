@@ -15,6 +15,7 @@ members = [
     "contracts/invoice-maturity-reminder",
     "contracts/interest-rate-oracle",
     "contracts/fraction-transfer-restriction",
+    "contracts/auto-invest",
 ]
 
 [workspace.dependencies]
