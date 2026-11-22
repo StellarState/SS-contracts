@@ -2,7 +2,15 @@
 
 use soroban_sdk::{Address, Symbol, Vec};
 
-use crate::types::{AllowanceData, OwnershipHistoryRecord, StorageKey, TokenMetadata};
+use crate::types::{
+    AllowanceData, OwnershipHistoryPage, OwnershipHistoryRecord, OwnershipHistoryState, StorageKey,
+    TokenMetadata,
+};
+
+/// Maximum number of records retained per account.
+pub const MAX_HISTORY_RECORDS: u64 = 64;
+/// Maximum number of records returned by a history query.
+pub const MAX_HISTORY_PAGE_SIZE: u32 = 50;
 
 /// Load token metadata from instance storage.
 pub fn get_metadata(env: &soroban_sdk::Env) -> Option<TokenMetadata> {
@@ -196,28 +204,68 @@ pub fn increment_nonce(env: &soroban_sdk::Env, addr: &Address) -> u64 {
 
 // ==================== Ownership History (Issue #111) ====================
 
-/// Get the full ownership history for an address. Returns empty Vec if none.
-pub fn get_token_history(env: &soroban_sdk::Env, addr: &Address) -> Vec<OwnershipHistoryRecord> {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::History(addr.clone()))
-        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+/// Read one bounded page of retained ownership history.
+pub fn get_token_history(
+    env: &soroban_sdk::Env,
+    addr: &Address,
+    cursor: u64,
+    limit: u32,
+) -> OwnershipHistoryPage {
+    let state = get_history_state(env, addr);
+    let start = cursor.max(state.oldest_id);
+    let end = start.saturating_add(u64::from(limit)).min(state.next_id);
+    let mut records = Vec::new(env);
+
+    for id in start..end {
+        if let Some(record) = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::HistoryRecord(addr.clone(), id))
+        {
+            records.push_back(record);
+        }
+    }
+
+    OwnershipHistoryPage {
+        records,
+        next_cursor: (end < state.next_id).then_some(end),
+        oldest_available: state.oldest_id,
+    }
 }
 
-/// Append an ownership history record for an address.
+fn get_history_state(env: &soroban_sdk::Env, addr: &Address) -> OwnershipHistoryState {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::HistoryState(addr.clone()))
+        .unwrap_or(OwnershipHistoryState {
+            next_id: 0,
+            oldest_id: 0,
+        })
+}
+
+/// Append an ownership history record without reading or rewriting prior records.
 pub fn append_token_history(
     env: &soroban_sdk::Env,
     addr: &Address,
     record: &OwnershipHistoryRecord,
 ) {
-    let key = StorageKey::History(addr.clone());
-    let mut history: Vec<OwnershipHistoryRecord> = env
-        .storage()
+    let state_key = StorageKey::HistoryState(addr.clone());
+    let mut state = get_history_state(env, addr);
+    let id = state.next_id;
+    let mut stored = record.clone();
+    stored.id = id;
+
+    env.storage()
         .persistent()
-        .get(&key)
-        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-    history.push_back(record.clone());
-    env.storage().persistent().set(&key, &history);
+        .set(&StorageKey::HistoryRecord(addr.clone(), id), &stored);
+    state.next_id = state.next_id.checked_add(1).expect("history ID overflow");
+    if state.next_id - state.oldest_id > MAX_HISTORY_RECORDS {
+        env.storage()
+            .persistent()
+            .remove(&StorageKey::HistoryRecord(addr.clone(), state.oldest_id));
+        state.oldest_id += 1;
+    }
+    env.storage().persistent().set(&state_key, &state);
 }
 
 // ==================== Allowance Expiration Extension ====================

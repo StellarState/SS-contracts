@@ -15,7 +15,9 @@ mod types;
 use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, String as SorobanString, Symbol, Vec};
 
 use crate::errors::Error;
-use crate::types::{is_zero_address, OwnershipHistoryRecord, TokenMetadata, MAX_DECIMALS};
+use crate::types::{
+    is_zero_address, OwnershipHistoryPage, OwnershipHistoryRecord, TokenMetadata, MAX_DECIMALS,
+};
 const ADMIN_ROLE: &str = "admin";
 const MINTER_ROLE: &str = "minter";
 const PAUSER_ROLE: &str = "pauser";
@@ -237,6 +239,7 @@ impl InvoiceToken {
         // Record ownership history for both sender and receiver.
         let ledger = env.ledger().sequence();
         let record = OwnershipHistoryRecord {
+            id: 0,
             from: from.clone(),
             to: to.clone(),
             amount,
@@ -422,6 +425,7 @@ impl InvoiceToken {
 
         // Record ownership history for both sender and receiver.
         let record = OwnershipHistoryRecord {
+            id: 0,
             from: from.clone(),
             to: to.clone(),
             amount,
@@ -878,14 +882,27 @@ impl InvoiceToken {
 
     // ---------- Issue #111: Ownership history ----------
 
-    /// Get the full ownership history for a given address.
+    /// Get a bounded ownership-history page.
+    ///
+    /// `cursor` is the stable record ID to start at; pass 0 for the oldest retained
+    /// record. Records are retained in a 64-entry ring buffer per account, and
+    /// `limit` must be between 1 and 50. `oldest_available` explicitly reports
+    /// the retention boundary when an earlier cursor has been pruned.
     pub fn get_token_history(
         env: Env,
         account: Address,
-    ) -> Result<soroban_sdk::Vec<OwnershipHistoryRecord>, Error> {
+        cursor: u64,
+        limit: u32,
+    ) -> Result<OwnershipHistoryPage, Error> {
         ensure_non_zero_address(&env, &account)?;
         storage::get_metadata(&env).ok_or(Error::NotInit)?;
-        Ok(storage::get_token_history(&env, &account))
+        if limit == 0 {
+            return Err(Error::InvalidHistoryLimit);
+        }
+        if limit > storage::MAX_HISTORY_PAGE_SIZE {
+            return Err(Error::HistoryLimitExceeded);
+        }
+        Ok(storage::get_token_history(&env, &account, cursor, limit))
     }
 }
 

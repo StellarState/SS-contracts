@@ -132,7 +132,7 @@ fn test_address_queries_reject_zero_addresses() {
     assert_invalid_address!(client.try_is_account_frozen(&zero));
     assert_invalid_address!(client.try_is_frozen(&zero));
     assert_invalid_address!(client.try_has_role(&role, &zero));
-    assert_invalid_address!(client.try_get_token_history(&zero));
+    assert_invalid_address!(client.try_get_token_history(&zero, &0, &1));
 }
 
 #[test]
@@ -2420,17 +2420,68 @@ fn test_storage_key_history_storage_lifecycle() {
     client.transfer(&alice, &bob, &400);
 
     // Check history for alice
-    let alice_history = client.get_token_history(&alice);
+    let alice_history = client.get_token_history(&alice, &0, &50);
     assert!(
-        alice_history.len() > 0,
+        alice_history.records.len() > 0,
         "Alice should have history after transferring out"
     );
 
     // Check history for bob
-    let bob_history = client.get_token_history(&bob);
+    let bob_history = client.get_token_history(&bob, &0, &50);
     assert!(
-        bob_history.len() > 0,
+        bob_history.records.len() > 0,
         "Bob should have history after receiving tokens"
+    );
+}
+
+#[test]
+fn test_token_history_is_bounded_and_cursor_paginated() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin, minter) = setup_token(&env);
+    client.set_transfer_locked(&admin, &false);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &100, &minter);
+
+    // Create more records than the 64-entry per-account retention ring.
+    for _ in 0..40 {
+        client.transfer(&alice, &bob, &1);
+        client.transfer(&bob, &alice, &1);
+    }
+
+    let first = client.get_token_history(&alice, &0, &50);
+    assert_eq!(first.records.len(), 50);
+    assert_eq!(first.oldest_available, 16);
+    assert_eq!(first.records.get(0).unwrap().id, 16);
+    assert_eq!(first.records.get(49).unwrap().id, 65);
+    assert_eq!(first.next_cursor, Some(66));
+
+    let second = client.get_token_history(&alice, &first.next_cursor.unwrap(), &50);
+    assert_eq!(second.records.len(), 14);
+    assert_eq!(second.records.get(0).unwrap().id, 66);
+    assert_eq!(second.records.get(13).unwrap().id, 79);
+    assert_eq!(second.next_cursor, None);
+
+    // A cursor older than retention is clamped to the explicit boundary.
+    let retained = client.get_token_history(&alice, &0, &1);
+    assert_eq!(retained.records.get(0).unwrap().id, 16);
+}
+
+#[test]
+fn test_token_history_enforces_page_limit() {
+    let env = Env::default();
+    let (client, _admin, _minter) = setup_token(&env);
+    let account = Address::generate(&env);
+
+    assert_eq!(
+        client.try_get_token_history(&account, &0, &0),
+        Err(Ok(crate::errors::Error::InvalidHistoryLimit))
+    );
+    assert_eq!(
+        client.try_get_token_history(&account, &0, &51),
+        Err(Ok(crate::errors::Error::HistoryLimitExceeded))
     );
 }
 

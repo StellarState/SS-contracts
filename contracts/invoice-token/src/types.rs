@@ -41,7 +41,12 @@ pub enum StorageKey {
     /// Persistent: nonce per address for permit-style transfers.
     Nonce(soroban_sdk::Address),
     /// Persistent: ownership history records for a token holder.
+    /// Retained for storage-key compatibility with the original implementation.
     History(soroban_sdk::Address),
+    /// Persistent: bounded ownership history metadata for a token holder.
+    HistoryState(soroban_sdk::Address),
+    /// Persistent: one ownership history record by holder and stable record ID.
+    HistoryRecord(soroban_sdk::Address, u64),
     /// Persistent: whether an account is restricted from token operations.
     Frozen(soroban_sdk::Address),
 }
@@ -82,6 +87,8 @@ pub struct AllowanceData {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwnershipHistoryRecord {
+    /// Stable monotonically increasing identifier for this holder's history.
+    pub id: u64,
     /// The previous owner before this transfer.
     pub from: soroban_sdk::Address,
     /// The new owner (recipient) of the tokens.
@@ -90,4 +97,26 @@ pub struct OwnershipHistoryRecord {
     pub amount: i128,
     /// Ledger sequence at the time of the transfer.
     pub ledger: u32,
+}
+
+/// A bounded ownership-history page.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnershipHistoryPage {
+    /// Records in ascending stable-ID order.
+    pub records: soroban_sdk::Vec<OwnershipHistoryRecord>,
+    /// Cursor for the next page, or None when there are no more records.
+    pub next_cursor: Option<u64>,
+    /// Stable ID of the oldest retained record, or the next ID when empty.
+    pub oldest_available: u64,
+}
+
+/// Per-account ring-buffer state. IDs are never reused while the counter does not overflow.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnershipHistoryState {
+    /// ID assigned to the next appended record.
+    pub next_id: u64,
+    /// ID of the oldest retained record.
+    pub oldest_id: u64,
 }

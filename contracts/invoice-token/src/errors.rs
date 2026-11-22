@@ -47,4 +47,8 @@ pub enum Error {
     AccountNotFrozen = 20,
     /// An address parameter contains an all-zero account or contract address.
     InvalidAddress = 21,
+    /// A history page size is zero.
+    InvalidHistoryLimit = 22,
+    /// A history page size exceeds the documented maximum.
+    HistoryLimitExceeded = 23,
 }
