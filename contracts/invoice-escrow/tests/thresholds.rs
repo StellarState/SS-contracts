@@ -3,7 +3,7 @@
 //! gating, `get_funding_status`, and the one-shot `ThresholdReached` event.
 #![allow(deprecated, unused_variables, dead_code, unused_mut, clippy::all)]
 
-use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{Address, BytesN, Env, Symbol, TryFromVal, TryIntoVal, Val, Vec};
 
@@ -149,6 +149,43 @@ fn test_invest_rejects_above_max_and_accepts_partial_up_to_capacity() {
 
     // Above-cap attempts never move funds.
     assert_eq!(balance(&env, &f.token, &third), 500_000);
+}
+
+#[test]
+fn test_funding_invoice_contributions_respect_inclusive_deadline() {
+    let env = Env::default();
+    let f = setup(&env);
+    let id = invoice_id(&env, 21);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    mint(&env, &f.token, &first, 100_000);
+    mint(&env, &f.token, &second, 100_000);
+
+    f.client
+        .create_invoice(&id, &f.seller, &80_000, &40_000, &100_000, &10, &0, &None, &f.token);
+
+    // The final funding ledger is inclusive.
+    env.ledger().with_mut(|ledger| ledger.sequence_number = 10);
+    f.client.invest(&id, &first, &20_000);
+    f.client.top_up(&first, &id, &10_000);
+    assert_eq!(f.client.get_funding_status(&id).raised, 30_000);
+
+    // After the deadline, both contribution paths reject before mutation.
+    env.ledger().with_mut(|ledger| ledger.sequence_number = 11);
+    assert_eq!(
+        f.client.try_invest(&id, &second, &10_000),
+        Err(Ok(Error::FundingDeadlineNotPassed))
+    );
+    assert_eq!(
+        f.client.try_top_up(&first, &id, &10_000),
+        Err(Ok(Error::FundingDeadlineNotPassed))
+    );
+    assert_eq!(f.client.get_funding_status(&id).raised, 30_000);
+    assert_eq!(f.client.get_investor_position(&id, &first), 30_000);
+    assert_eq!(f.client.get_investor_position(&id, &second), 0);
+    assert_eq!(balance(&env, &f.token, &f.contract), 30_000);
+    assert_eq!(balance(&env, &f.token, &first), 70_000);
+    assert_eq!(balance(&env, &f.token, &second), 100_000);
 }
 
 #[test]

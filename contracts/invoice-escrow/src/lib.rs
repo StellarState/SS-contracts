@@ -85,6 +85,16 @@ fn ensure_not_paused(config: &Config) -> Result<(), Error> {
     Ok(())
 }
 
+/// Funding is accepted through the configured deadline ledger, inclusive.
+/// The boundary is shared by every contribution entry point so investments
+/// and top-ups have identical lifecycle semantics.
+fn ensure_before_funding_deadline(env: &Env, deadline_ledger: u32) -> Result<(), Error> {
+    if env.ledger().sequence() > deadline_ledger {
+        return Err(Error::FundingDeadlineNotPassed);
+    }
+    Ok(())
+}
+
 /// Calculate early repayment yield rebate for investors when invoice is paid before due date.
 /// Rebate is proportional to the time remaining until maturity: fewer days means higher rebate.
 /// Returns the rebate amount to deduct from investor distribution.
@@ -1717,6 +1727,9 @@ impl InvoiceEscrow {
     ///   `min_funding_threshold`;
     /// * `ThresholdReached` is emitted the first time the minimum is crossed.
     ///
+    /// Contributions are accepted through `deadline_ledger` (inclusive); the
+    /// next ledger is the first one in which funding is rejected.
+    ///
     /// Thresholds must satisfy `0 < min_funding_threshold <= funding_target <=
     /// max_funding_threshold`, so the target is always achievable within the cap.
     pub fn create_invoice(
@@ -1826,7 +1839,7 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// Top up an existing investor position.
+    /// Top up an existing investor position before the inclusive funding deadline.
     /// Validates invoice is Open, caller has non-zero position, and cap not exceeded.
     pub fn top_up(
         env: Env,
@@ -1843,6 +1856,7 @@ impl InvoiceEscrow {
         if invoice.status != InvoiceStatus::Open {
             return Err(Error::InvalidInvoiceStatus);
         }
+        ensure_before_funding_deadline(&env, invoice.deadline_ledger)?;
         let current = storage::get_investor_position(&env, &invoice_id, &investor);
         if current == 0 {
             return Err(Error::NoPositionFound);
@@ -1998,6 +2012,7 @@ impl InvoiceEscrow {
             if invoice.status != InvoiceStatus::Open {
                 return Err(Error::InvalidInvoiceStatus);
             }
+            ensure_before_funding_deadline(&env, invoice.deadline_ledger)?;
             let remaining = invoice
                 .max_funding_threshold
                 .checked_sub(invoice.total_raised)
@@ -2060,10 +2075,7 @@ impl InvoiceEscrow {
         if record.status != EscrowStatus::Created {
             return Err(Error::InvalidInvoiceStatus);
         }
-        let current_ledger = env.ledger().sequence();
-        if current_ledger > record.deadline_ledger {
-            return Err(Error::FundingDeadlineNotPassed);
-        }
+        ensure_before_funding_deadline(&env, record.deadline_ledger)?;
 
         let remaining = record
             .funding_target
