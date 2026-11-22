@@ -17,8 +17,13 @@ const escrow = await client.getEscrow("INV001");
 ```
 
 To submit, encode arguments with `nativeToScVal` from `@stellar/stellar-sdk`
-and pass the transaction signer to `client.submit(method, args, keypair)`. For
-custom transaction composition, `contractCall` returns a Soroban operation.
+and pass the transaction signer to `client.submit(method, args, keypair)`. The
+result is a typed `confirmed`, `failed`, or `unresolved` outcome with the
+original transaction hash; set `pollAttempts: 0` when the caller only needs an
+explicit `accepted` submission outcome. Temporary RPC rejection is retried a
+bounded number of times, and each retry checks the prior hash first so an
+accepted transaction is not submitted again with a new sequence number.
+For custom transaction composition, `contractCall` returns a Soroban operation.
 
 `estimateTransactionResources` simulates a transaction and returns its minimum
 resource fee and ledger footprint. `simulateContractCall` builds the unsigned
