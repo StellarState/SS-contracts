@@ -411,6 +411,48 @@ fn test_release_to_issuer_on_registered_invoice_requires_target() {
 }
 
 #[test]
+fn test_finalise_registered_invoice_matches_release_guards() {
+    let env = Env::default();
+    let f = setup(&env);
+    let id = invoice_id(&env, 14);
+    let investor = Address::generate(&env);
+    mint(&env, &f.token, &investor, 500_000);
+
+    f.client.register_invoice(
+        &id,
+        &100_000i128,
+        &80_000i128,
+        &500u32,
+        &1000u32,
+        &BytesN::from_array(&env, &[14u8; 32]),
+    );
+    f.client.invest(&id, &investor, &40_000i128);
+
+    // A shortfall is rejected without changing status or refund eligibility.
+    assert_eq!(
+        f.client.try_finalise_funding(&id),
+        Err(Ok(Error::FundingThresholdNotReached))
+    );
+    assert_eq!(f.client.get_invoice_record(&id).status, EscrowStatus::Created);
+    assert_eq!(f.client.get_investor_position(&id, &investor), 40_000);
+
+    env.set_auths(&[]);
+    assert!(f.client.try_finalise_funding(&id).is_err());
+    assert_eq!(f.client.get_invoice_record(&id).status, EscrowStatus::Created);
+    assert_eq!(f.client.get_investor_position(&id, &investor), 40_000);
+
+    // The documented authority can finalize exactly at target, only once.
+    env.mock_all_auths();
+    f.client.invest(&id, &investor, &40_000i128);
+    f.client.finalise_funding(&id);
+    assert_eq!(f.client.get_invoice_record(&id).status, EscrowStatus::Funded);
+    assert_eq!(
+        f.client.try_finalise_funding(&id),
+        Err(Ok(Error::InvalidInvoiceStatus))
+    );
+}
+
+#[test]
 fn test_get_funding_status_unknown_invoice_rejected() {
     let env = Env::default();
     let f = setup(&env);

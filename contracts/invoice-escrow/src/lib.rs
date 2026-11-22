@@ -2268,21 +2268,10 @@ impl InvoiceEscrow {
         Ok(())
     }
 
-    /// Finalise funding: legacy alias for `release_to_issuer` on position
-    /// invoices, and Created/Funded -> Funded for registered invoices.
+    /// Finalise funding through the same authorization and funding-readiness
+    /// checks as `release_to_issuer` for both invoice representations.
     pub fn finalise_funding(env: Env, invoice_id: BytesN<32>) -> Result<(), Error> {
-        if storage::get_invoice(&env, invoice_id.clone()).is_some() {
-            return Self::release_to_issuer(env, invoice_id);
-        }
-
-        let mut record =
-            storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)?;
-        if record.status != EscrowStatus::Created && record.status != EscrowStatus::Funded {
-            return Err(Error::InvalidInvoiceStatus);
-        }
-        record.status = EscrowStatus::Funded;
-        storage::set_invoice_record(&env, &invoice_id, &record);
-        Ok(())
+        Self::release_to_issuer(env, invoice_id)
     }
 
     /// View: funding progress for an invoice (registered or position invoice).
