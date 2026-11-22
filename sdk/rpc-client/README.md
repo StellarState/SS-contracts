@@ -25,6 +25,13 @@ resource fee and ledger footprint. `simulateContractCall` builds the unsigned
 invocation before estimating. A simulation failure is surfaced as an error;
 the transaction is never signed or submitted by these helpers.
 
+When simulation reports expired ledger entries, the result has
+`kind: "restoration_required"` and includes the restore preamble plus an
+unsigned `restorationTransaction`. After the caller signs and submits that
+transaction, call `resimulate()` to estimate the original invocation again.
+Pass `networkPassphrase` in the options when using `estimateTransactionResources`
+directly; `simulateContractCall` forwards its selected network automatically.
+
 ## Development
 
 ```sh
