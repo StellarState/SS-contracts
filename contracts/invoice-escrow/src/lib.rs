@@ -1178,7 +1178,8 @@ impl InvoiceEscrow {
                         data.paid_amt,
                         amount,
                         final_investor_amount,
-                        config.fee_bps as i128,
+                        effective_fee_bps as i128,
+                        total_fee,
                     ]
                     .into_val(&env),
                     (data.status as u32).into_val(&env)

@@ -102,6 +102,7 @@ fn compute_split(
     already_distributed: i128,
     investor_amount: i128,
     fee_bps_u32: u32,
+    quoted_platform_fee: Option<i128>,
 ) -> Result<types::DistributionPreview, Error> {
     if fee_bps_u32 > MAX_FEE_BPS {
         return Err(Error::InvalidBps);
@@ -115,11 +116,19 @@ fn compute_split(
         return Err(Error::NothingToDistribute);
     }
 
-    let platform_fee = payment_amount
-        .checked_mul(fee_bps_u32 as i128)
-        .ok_or(Error::Overflow)?
-        .checked_div(10_000)
-        .ok_or(Error::Overflow)?;
+    let platform_fee = match quoted_platform_fee {
+        Some(fee) => {
+            if fee < 0 {
+                return Err(Error::InvalidAmount);
+            }
+            fee
+        }
+        None => payment_amount
+            .checked_mul(fee_bps_u32 as i128)
+            .ok_or(Error::Overflow)?
+            .checked_div(10_000)
+            .ok_or(Error::Overflow)?,
+    };
 
     let seller_amount = payment_amount;
 
@@ -309,7 +318,10 @@ impl PaymentDistributor {
         if escrow_status != ESCROW_STATUS_FUNDED && escrow_status != ESCROW_STATUS_SETTLED {
             return Err(Error::InvalidEscrowStatus);
         }
-        if addresses.len() != amounts.len() {
+        // Escrow-backed settlements may append an explicit total-fee quote.
+        // Keep the legacy shape (one amount per address) for all other callers.
+        let has_fee_quote = addresses.len() == 4 && amounts.len() == 5;
+        if !has_fee_quote && addresses.len() != amounts.len() {
             return Err(Error::InvalidAmount);
         }
         if addresses.len() < 4 {
@@ -327,6 +339,16 @@ impl PaymentDistributor {
 
         let paid_amount = amounts.get(0).ok_or(Error::InvalidAmount)?;
         let investor_amount = amounts.get(2).ok_or(Error::InvalidAmount)?;
+        let quoted_platform_fee = if has_fee_quote {
+            let fee = amounts.get(4).ok_or(Error::InvalidAmount)?;
+            if fee < 0 {
+                return Err(Error::InvalidAmount);
+            }
+            Some(fee)
+        } else {
+            None
+        };
+
         let mut state = get_distribution_state(&env, &escrow_contract, &invoice_id);
 
         // Issue #448: Select fee tier based on payment volume for tiered fee schedule
@@ -342,6 +364,7 @@ impl PaymentDistributor {
             state.paid_distributed,
             investor_amount,
             fee_bps_u32,
+            quoted_platform_fee,
         )?;
         let platform_fee = preview.platform_fee;
         let seller_amount = preview.seller_amount;
@@ -767,6 +790,7 @@ impl PaymentDistributor {
             state.paid_distributed,
             investor_amount,
             fee_bps_u32,
+            None,
         )
     }
 

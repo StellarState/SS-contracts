@@ -82,6 +82,15 @@ fn setup(env: &Env, fee_bps: u32, configure_distributor: bool) -> FlowContext<'_
 }
 
 fn create_and_fund(ctx: &FlowContext<'_>, amount: i128, due_date: u64) {
+    create_and_fund_with_category(ctx, amount, due_date, None);
+}
+
+fn create_and_fund_with_category(
+    ctx: &FlowContext<'_>,
+    amount: i128,
+    due_date: u64,
+    category: Option<InvoiceCategory>,
+) {
     ctx.payment_asset.mint(&ctx.buyer, &amount);
     ctx.payment_asset.mint(&ctx.payer, &amount);
     ctx.escrow.create_escrow_legacy(
@@ -94,10 +103,51 @@ fn create_and_fund(ctx: &FlowContext<'_>, amount: i128, due_date: u64) {
         &ctx.payment_token.address,
         &ctx.inv_token.address,
         &test_commitment(&ctx.escrow.env),
-        &None,
+        &category,
         &None,
     );
     ctx.escrow.fund_escrow_legacy(&ctx.invoice_id, &ctx.buyer, &amount);
+}
+
+#[test]
+fn test_integration_distributor_uses_category_fee_quote() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ctx = setup(&env, 300, true);
+    ctx.escrow
+        .set_category_fee(&ctx.admin, &InvoiceCategory::Factoring, &1_000);
+    create_and_fund_with_category(
+        &ctx,
+        1_000,
+        50_000,
+        Some(InvoiceCategory::Factoring),
+    );
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 900);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 100);
+    assert_eq!(ctx.payment_token.balance(&ctx.distributor_id), 0);
+}
+
+#[test]
+fn test_integration_distributor_uses_penalty_in_total_fee_quote() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ctx = setup(&env, 300, true);
+    ctx.escrow
+        .set_penalty_interest_bps(&ctx.admin, &1_000);
+    create_and_fund(&ctx, 1_000, 100);
+    env.ledger().set_timestamp(200);
+
+    ctx.escrow.record_payment(&ctx.invoice_id, &ctx.payer, &1_000);
+
+    // 30 platform fee + 97 late penalty (10% of the 970 investor amount).
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 873);
+    assert_eq!(ctx.payment_token.balance(&ctx.admin), 127);
+    assert_eq!(ctx.payment_token.balance(&ctx.distributor_id), 0);
 }
 
 #[test]
