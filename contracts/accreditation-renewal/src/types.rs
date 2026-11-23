@@ -5,6 +5,7 @@ use soroban_sdk::{contracttype, Address};
 pub struct ReminderRecord {
     pub interval_days: u32,
     pub timestamp: u64,
+    pub expiry_timestamp: u64,
 }
 
 #[contracttype]
@@ -14,5 +15,7 @@ pub enum DataKey {
     Operator,
     WalletList,
     Expiry(Address),
+    // Retained so upgraded instances can identify and remove pre-cycle logs.
     ReminderLog(Address),
+    ReminderLogForExpiry(Address, u64),
 }

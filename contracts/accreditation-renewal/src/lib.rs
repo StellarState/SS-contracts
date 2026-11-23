@@ -100,7 +100,17 @@ impl AccreditationRenewalContract {
             {
                 if expiry_timestamp > now {
                     let days_remaining = (expiry_timestamp - now) / SECONDS_PER_DAY;
-                    let log_key = DataKey::ReminderLog(wallet.clone());
+                    // Legacy logs did not identify an expiry, so they cannot be
+                    // safely associated with this cycle. Discard them once and
+                    // let the expiry-scoped log establish the new baseline.
+                    let legacy_log_key = DataKey::ReminderLog(wallet.clone());
+                    if env.storage().persistent().has(&legacy_log_key) {
+                        env.storage().persistent().remove(&legacy_log_key);
+                    }
+                    let log_key = DataKey::ReminderLogForExpiry(
+                        wallet.clone(),
+                        expiry_timestamp,
+                    );
                     let mut log: Vec<ReminderRecord> = env
                         .storage()
                         .persistent()
@@ -126,6 +136,7 @@ impl AccreditationRenewalContract {
                                 log.push_back(ReminderRecord {
                                     interval_days: interval,
                                     timestamp: now,
+                                    expiry_timestamp,
                                 });
                                 emitted_count += 1;
                             }
@@ -140,10 +151,17 @@ impl AccreditationRenewalContract {
     }
 
     pub fn get_reminder_log(env: Env, wallet: Address) -> Vec<ReminderRecord> {
-        let log_key = DataKey::ReminderLog(wallet);
+        let expiry = match env
+            .storage()
+            .persistent()
+            .get::<DataKey, u64>(&DataKey::Expiry(wallet.clone()))
+        {
+            Some(expiry) => expiry,
+            None => return Vec::new(&env),
+        };
         env.storage()
             .persistent()
-            .get(&log_key)
+            .get(&DataKey::ReminderLogForExpiry(wallet, expiry))
             .unwrap_or(Vec::new(&env))
     }
 
@@ -153,5 +171,67 @@ impl AccreditationRenewalContract {
             .persistent()
             .get(&key)
             .ok_or(Error::WalletNotFound)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    const DAY: u64 = SECONDS_PER_DAY;
+
+    fn setup() -> (
+        Env,
+        Address,
+        Address,
+        Address,
+        Address,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, AccreditationRenewalContract);
+        let admin = Address::generate(&env);
+        let operator = Address::generate(&env);
+        let wallet = Address::generate(&env);
+        let client = AccreditationRenewalContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &operator);
+        (env, contract_id, admin, operator, wallet)
+    }
+
+    #[test]
+    fn reminders_are_scoped_to_each_expiry_cycle() {
+        let (env, contract_id, _admin, operator, wallet) = setup();
+        let client = AccreditationRenewalContractClient::new(&env, &contract_id);
+        let first_expiry = env.ledger().timestamp() + 60 * DAY;
+        client.set_accreditation_expiry(&operator, &wallet, &first_expiry);
+
+        assert_eq!(client.check_accreditation_reminders(), 1);
+        assert_eq!(client.check_accreditation_reminders(), 0);
+
+        let renewed_expiry = env.ledger().timestamp() + 30 * DAY;
+        client.set_accreditation_expiry(&operator, &wallet, &renewed_expiry);
+        assert_eq!(client.check_accreditation_reminders(), 2);
+        assert_eq!(client.get_reminder_log(&wallet).len(), 2);
+        assert_eq!(
+            client
+                .get_reminder_log(&wallet)
+                .get(0)
+                .unwrap()
+                .expiry_timestamp,
+            renewed_expiry
+        );
+    }
+
+    #[test]
+    fn identical_expiry_retries_keep_suppression() {
+        let (env, contract_id, _admin, operator, wallet) = setup();
+        let client = AccreditationRenewalContractClient::new(&env, &contract_id);
+        let expiry = env.ledger().timestamp() + 60 * DAY;
+        client.set_accreditation_expiry(&operator, &wallet, &expiry);
+
+        assert_eq!(client.check_accreditation_reminders(), 1);
+        client.set_accreditation_expiry(&operator, &wallet, &expiry);
+        assert_eq!(client.check_accreditation_reminders(), 0);
     }
 }
