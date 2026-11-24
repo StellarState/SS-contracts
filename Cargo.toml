@@ -65,6 +65,7 @@ members = [
     "contracts/debtor-exposure-cap",
     "contracts/settlement-priority-queue",
     "contracts/rate-auction",
+    "contracts/kyc-attestation",
 ]
 
 [workspace.dependencies]
