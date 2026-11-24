@@ -7,8 +7,8 @@
 //! expired allowances) behave as specified.
 
 use super::{InvoiceToken, InvoiceTokenClient};
-use soroban_sdk::testutils::{Address as _, Events, Ledger};
-use soroban_sdk::{Address, Env, IntoVal, String as SorobanString, Symbol, Vec};
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{Address, Env, String as SorobanString, Symbol};
 
 // ── Setup helpers ─────────────────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ fn sep41_allowance_of_unapproved_pair_is_zero() {
 #[test]
 fn transfer_requires_from_auth() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     // Mint tokens to admin
     env.mock_all_auths();
@@ -104,7 +104,7 @@ fn transfer_requires_from_auth() {
 #[test]
 fn transfer_from_requires_from_auth() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -123,7 +123,7 @@ fn transfer_from_requires_from_auth() {
 #[test]
 fn approve_requires_from_auth() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -139,7 +139,7 @@ fn approve_requires_from_auth() {
 #[test]
 fn burn_requires_from_auth() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -153,7 +153,7 @@ fn burn_requires_from_auth() {
 #[test]
 fn burn_from_requires_from_auth() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -172,7 +172,7 @@ fn burn_from_requires_from_auth() {
 #[test]
 fn transfer_to_self_is_rejected() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -186,7 +186,7 @@ fn transfer_to_self_is_rejected() {
 #[test]
 fn transfer_zero_amount_is_rejected() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -199,7 +199,7 @@ fn transfer_zero_amount_is_rejected() {
 #[test]
 fn transfer_negative_amount_is_rejected() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -217,7 +217,7 @@ fn transfer_negative_amount_is_rejected() {
 #[test]
 fn transfer_exceeding_balance_is_rejected() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &100, &admin);
@@ -235,7 +235,7 @@ fn transfer_exceeding_balance_is_rejected() {
 #[test]
 fn transfer_from_with_expired_allowance_is_rejected() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -245,13 +245,13 @@ fn transfer_from_with_expired_allowance_is_rejected() {
 
     // Approve with expiration at current ledger
     env.ledger().with_mut(|li| {
-        li.sequence = 100;
+        li.sequence_number = 100;
     });
     client.approve(&admin, &spender, &500, &100);
 
     // Advance ledger past expiration
     env.ledger().with_mut(|li| {
-        li.sequence = 101;
+        li.sequence_number = 101;
     });
 
     let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
@@ -266,7 +266,7 @@ fn transfer_from_with_expired_allowance_is_rejected() {
 #[test]
 fn transfer_from_exceeding_allowance_is_rejected() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
@@ -288,20 +288,15 @@ fn transfer_from_exceeding_allowance_is_rejected() {
 #[test]
 fn transfer_to_zero_address_is_rejected() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
 
-    let zero = soroban_sdk::Address::try_from_val(
+    let zero = Address::from_string(&SorobanString::from_str(
         &env,
-        &soroban_sdk::xdr::ScVal::Address(soroban_sdk::xdr::ScAddress::Account(
-            soroban_sdk::xdr::AccountId(soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(
-                soroban_sdk::xdr::Uint256([0; 32]),
-            )),
-        )),
-    )
-    .unwrap();
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     let result = client.try_transfer(&admin, &zero, &100);
     assert!(
@@ -353,11 +348,11 @@ fn mint_is_admin_only() {
 #[test]
 fn transfer_rejected_when_paused() {
     let env = Env::default();
-    let (client, admin, minter) = setup_sep41_token(&env);
+    let (client, admin, _minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
     client.mint(&admin, &1000, &admin);
-    client.pause(&admin);
+    client.set_paused(&true);
 
     let recipient = Address::generate(&env);
     let result = client.try_transfer(&admin, &recipient, &100);

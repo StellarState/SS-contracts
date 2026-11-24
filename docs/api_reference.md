@@ -40,7 +40,8 @@ Funds an active escrow with payment tokens and mints invoice tokens to investor.
 ```rust
 pub fn fund_escrow(env: Env, invoice_id: Symbol, investor: Address, amount: i128);
 ```
-- **Auth:** Requires `investor` authorization.
+- **Auth:** Requires `investor` and platform-admin authorization for the nested
+  invoice-token mint.
 - **Errors:** `EscrowNotFound` (code 4), `EscrowAlreadyFunded` (code 5).
 
 ### `set_installment_schedule`

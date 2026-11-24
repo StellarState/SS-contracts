@@ -71,7 +71,7 @@ fn setup<'a>(
     let invoice_id = Symbol::new(env, inv_id_str);
 
     inv_token.initialize(
-        &escrow_id,
+        &admin,
         &SorobanString::from_str(env, "Test Invoice Token"),
         &SorobanString::from_str(env, "TIT"),
         &7,

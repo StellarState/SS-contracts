@@ -69,7 +69,7 @@ This document describes the multi-contract architecture powering the StellarSett
 ## Data Flow: Happy-Path Settlement
 
 1. **Seller** calls `create_escrow` → Escrow enters `Created` state.
-2. **Investor** calls `fund_escrow` → Payment tokens transferred to escrow; invoice tokens minted to investor. Escrow enters `Funded` state.
+2. **Investor** calls `fund_escrow` with platform-admin authorization → Payment tokens transferred to escrow; capped invoice tokens minted to investor. Escrow enters `Funded` state.
 3. **Debtor** calls `record_payment` → Payment pulled into escrow; `distribute` invoked on Payment Distributor for pro-rata payouts. Escrow enters `Settled` when fully paid.
 4. Invoice tokens unlocked for free transfer after settlement.
 
@@ -102,6 +102,7 @@ sequenceDiagram
     Seller->>Escrow: create_escrow(invoice, terms, token addresses)
     Escrow-->>Seller: Created
     Investor->>Escrow: fund_escrow(invoice, amount)
+    Note over Investor,Escrow: Platform admin also authorizes the nested mint
     Escrow->>Payment: transfer_from(investor, escrow, amount)
     Escrow->>Token: mint(investor, amount)
     Escrow->>Token: set_transfer_locked(true)

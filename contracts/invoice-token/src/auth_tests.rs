@@ -7,10 +7,9 @@
 #![allow(deprecated, unused_variables, dead_code, unused_mut, clippy::all)]
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, Events, Ledger};
-use soroban_sdk::{
-    contract, contractimpl, Address, BytesN, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
-};
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{Address, Env, IntoVal, Symbol};
+use std::{println, vec};
 
 use crate::errors::Error;
 
@@ -377,7 +376,7 @@ fn auth_matrix_transfer_from() {
 
     // Expired allowance should fail
     client.approve(&test_env.holder, &test_env.spender, &500, &100); // expires soon
-    env.ledger().with_mut(|li| li.sequence = 200);
+    env.ledger().with_mut(|li| li.sequence_number = 200);
     let result = client.try_transfer_from(&test_env.spender, &test_env.holder, &to, &100);
     assert_eq!(
         result,
@@ -538,7 +537,7 @@ fn auth_matrix_burn_from() {
 
     // Expired allowance should fail
     client.approve(&test_env.holder, &test_env.spender, &500, &100);
-    env.ledger().with_mut(|li| li.sequence = 200);
+    env.ledger().with_mut(|li| li.sequence_number = 200);
     let result = client.try_burn_from(&test_env.spender, &test_env.holder, &100);
     assert_eq!(
         result,
@@ -813,7 +812,7 @@ fn auth_token_rejected_calls_leave_state_unchanged() {
     let env = &test_env.env;
 
     // Capture balance before failed transfer
-    let balance_before = client.balance(test_env.holder.clone()).unwrap();
+    let balance_before = client.balance(&test_env.holder);
 
     // Try transfer with zero address (should fail)
     let zero = zero_address(env);
@@ -822,25 +821,21 @@ fn auth_token_rejected_calls_leave_state_unchanged() {
     assert!(result.is_err());
 
     // Balance should be unchanged
-    let balance_after = client.balance(test_env.holder.clone()).unwrap();
+    let balance_after = client.balance(&test_env.holder);
     assert_eq!(
         balance_before, balance_after,
         "Balance changed after failed transfer"
     );
 
     // Capture allowance before failed approve
-    let allowance_before = client
-        .allowance(test_env.holder.clone(), test_env.spender.clone())
-        .unwrap();
+    let allowance_before = client.allowance(&test_env.holder, &test_env.spender);
 
     // Try approve with zero address spender
     let result = client.try_approve(&test_env.holder, &zero, &500, &1000);
     assert!(result.is_err());
 
     // Allowance should be unchanged
-    let allowance_after = client
-        .allowance(test_env.holder.clone(), test_env.spender.clone())
-        .unwrap();
+    let allowance_after = client.allowance(&test_env.holder, &test_env.spender);
     assert_eq!(
         allowance_before, allowance_after,
         "Allowance changed after failed approve"
@@ -1219,16 +1214,16 @@ fn auth_token_comprehensive_matrix() {
         ),
     ];
 
-    for (method, roles) in matrix {
+    let matrix_len = matrix.len();
+    for (method, roles) in &matrix {
         println!("Method: {}", method);
         for (role, expected) in roles {
-            println!("  {}: {}", role, if expected { "✓" } else { "✗" });
+            println!("  {}: {}", role, if *expected { "✓" } else { "✗" });
         }
     }
 
     assert_eq!(
-        matrix.len(),
-        30,
+        matrix_len, 30,
         "Authorization matrix should cover all 30 entrypoints"
     );
 }

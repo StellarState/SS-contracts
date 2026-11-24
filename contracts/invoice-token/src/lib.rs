@@ -6,6 +6,9 @@
 
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 mod constants;
 mod errors;
 mod events;
@@ -59,6 +62,7 @@ pub struct InvoiceToken;
 impl InvoiceToken {
     /// Initialize the token with admin, metadata, and minter (escrow) address.
     /// The immutable supply cap is `face_value_usd / min_fraction_size`.
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         env: Env,
         admin: Address,

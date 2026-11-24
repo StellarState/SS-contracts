@@ -42,7 +42,8 @@ The `payment-distributor` contract now implements the settlement/refund fan-out 
 `invoice-token` is the invoice ownership token contract with transfer-lock and pause controls.
 
 ### Core Functions
-- `initialize(admin, name, symbol, decimals, invoice_id, minter)`
+- `initialize(admin, name, symbol, decimals, invoice_id, minter, face_value_usd, min_fraction_size)`
+- `get_supply() -> (current_supply, max_supply)`
 - `transfer(from, to, amount)`
 - `approve(from, spender, amount, expiration_ledger)`
 - `transfer_from(spender, from, to, amount)`
@@ -54,6 +55,11 @@ The `payment-distributor` contract now implements the settlement/refund fan-out 
 - `set_paused(paused)`
 - `paused() -> bool`
 - `transfer_locked() -> bool`
+
+`max_supply` is fixed at initialization to `face_value_usd / min_fraction_size`.
+Only `admin` may mint, and funding through `invoice-escrow` requires both the
+investor and platform admin to authorize the transaction. Configure the
+invoice-token admin to match the invoice-escrow platform admin.
 
 ### Pause Policy
 - When paused, the contract rejects `transfer`, `approve`, `transfer_from`, `burn`, `burn_from`, and `mint`.

@@ -7,11 +7,8 @@
 #![allow(deprecated, unused_variables, dead_code, unused_mut, clippy::all)]
 
 use super::*;
-use crate::events::*;
-use soroban_sdk::testutils::{Address as _, Events, Ledger};
-use soroban_sdk::{
-    contract, contractimpl, Address, BytesN, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
-};
+use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::{Address, Env, Symbol, TryFromVal, Val, Vec};
 
 /// Parse event into structured format for comparison
 fn parse_event(env: &Env, event: &soroban_sdk::xdr::ContractEvent) -> (Vec<Val>, Val) {
@@ -23,6 +20,13 @@ fn parse_event(env: &Env, event: &soroban_sdk::xdr::ContractEvent) -> (Vec<Val>,
     .unwrap();
     let data = Val::try_from_val(env, &v0.data).unwrap();
     (topics, data)
+}
+
+fn assert_val_type<T>(env: &Env, value: &Val)
+where
+    T: TryFromVal<Env, Val>,
+{
+    assert!(T::try_from_val(env, value).is_ok());
 }
 
 #[test]
@@ -50,7 +54,7 @@ fn event_schema_snapshot_transfer() {
     );
 
     // Mint some tokens to from
-    token.mint(&from, &1000, &minter);
+    token.mint(&from, &1000, &admin);
     token.set_transfer_locked(&admin, &false);
 
     let _ = env.events().all();
@@ -59,7 +63,7 @@ fn event_schema_snapshot_transfer() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -71,7 +75,7 @@ fn event_schema_snapshot_transfer() {
 
                     // Verify data: amount (i128)
                     let (_, data) = parse_event(&env, &event);
-                    assert_eq!(data.type_of(), soroban_sdk::xdr::ScValType::I128);
+                    assert_val_type::<i128>(&env, &data);
 
                     break;
                 }
@@ -111,7 +115,7 @@ fn event_schema_snapshot_approve() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -125,14 +129,8 @@ fn event_schema_snapshot_approve() {
                     let (_, data) = parse_event(&env, &event);
                     let data_vec = Vec::<Val>::try_from_val(&env, &data).unwrap();
                     assert_eq!(data_vec.len(), 2, "approve data should have 2 fields");
-                    assert_eq!(
-                        data_vec.get(0).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::I128
-                    );
-                    assert_eq!(
-                        data_vec.get(1).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::U32
-                    );
+                    assert_val_type::<i128>(&env, &data_vec.get(0).unwrap());
+                    assert_val_type::<u32>(&env, &data_vec.get(1).unwrap());
 
                     break;
                 }
@@ -167,11 +165,11 @@ fn event_schema_snapshot_mint() {
 
     let _ = env.events().all();
 
-    token.mint(&to, &100, &minter);
+    token.mint(&to, &100, &admin);
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -183,7 +181,7 @@ fn event_schema_snapshot_mint() {
 
                     // Verify data: amount (i128)
                     let (_, data) = parse_event(&env, &event);
-                    assert_eq!(data.type_of(), soroban_sdk::xdr::ScValType::I128);
+                    assert_val_type::<i128>(&env, &data);
 
                     break;
                 }
@@ -216,7 +214,7 @@ fn event_schema_snapshot_burn() {
         &1,
     );
 
-    token.mint(&from, &1000, &minter);
+    token.mint(&from, &1000, &admin);
 
     let _ = env.events().all();
 
@@ -224,7 +222,7 @@ fn event_schema_snapshot_burn() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -236,7 +234,7 @@ fn event_schema_snapshot_burn() {
 
                     // Verify data: amount (i128)
                     let (_, data) = parse_event(&env, &event);
-                    assert_eq!(data.type_of(), soroban_sdk::xdr::ScValType::I128);
+                    assert_val_type::<i128>(&env, &data);
 
                     break;
                 }
@@ -274,7 +272,7 @@ fn event_schema_snapshot_transfer_locked_updated() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -295,14 +293,8 @@ fn event_schema_snapshot_transfer_locked_updated() {
                         2,
                         "transfer_locked_updated data should have 2 fields"
                     );
-                    assert_eq!(
-                        data_vec.get(0).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Bool
-                    );
-                    assert_eq!(
-                        data_vec.get(1).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Bool
-                    );
+                    assert_val_type::<bool>(&env, &data_vec.get(0).unwrap());
+                    assert_val_type::<bool>(&env, &data_vec.get(1).unwrap());
 
                     break;
                 }
@@ -341,7 +333,7 @@ fn event_schema_snapshot_minter_updated() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -362,14 +354,8 @@ fn event_schema_snapshot_minter_updated() {
                         2,
                         "minter_updated data should have 2 fields"
                     );
-                    assert_eq!(
-                        data_vec.get(0).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Address
-                    );
-                    assert_eq!(
-                        data_vec.get(1).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Address
-                    );
+                    assert_val_type::<Address>(&env, &data_vec.get(0).unwrap());
+                    assert_val_type::<Address>(&env, &data_vec.get(1).unwrap());
 
                     break;
                 }
@@ -407,7 +393,7 @@ fn event_schema_snapshot_paused_updated() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -428,14 +414,8 @@ fn event_schema_snapshot_paused_updated() {
                         2,
                         "paused_updated data should have 2 fields"
                     );
-                    assert_eq!(
-                        data_vec.get(0).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Bool
-                    );
-                    assert_eq!(
-                        data_vec.get(1).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Bool
-                    );
+                    assert_val_type::<bool>(&env, &data_vec.get(0).unwrap());
+                    assert_val_type::<bool>(&env, &data_vec.get(1).unwrap());
 
                     break;
                 }
@@ -474,7 +454,7 @@ fn event_schema_snapshot_account_frozen() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -489,7 +469,7 @@ fn event_schema_snapshot_account_frozen() {
 
                     // Verify data: account
                     let (_, data) = parse_event(&env, &event);
-                    assert_eq!(data.type_of(), soroban_sdk::xdr::ScValType::Address);
+                    assert_val_type::<Address>(&env, &data);
 
                     break;
                 }
@@ -522,7 +502,7 @@ fn event_schema_snapshot_clawback() {
         &1,
     );
 
-    token.mint(&from, &1000, &minter);
+    token.mint(&from, &1000, &admin);
     token.freeze_account(&from);
 
     let _ = env.events().all();
@@ -531,7 +511,7 @@ fn event_schema_snapshot_clawback() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -543,7 +523,7 @@ fn event_schema_snapshot_clawback() {
 
                     // Verify data: amount
                     let (_, data) = parse_event(&env, &event);
-                    assert_eq!(data.type_of(), soroban_sdk::xdr::ScValType::I128);
+                    assert_val_type::<i128>(&env, &data);
 
                     break;
                 }
@@ -581,7 +561,7 @@ fn event_schema_snapshot_fee_updated() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -598,14 +578,8 @@ fn event_schema_snapshot_fee_updated() {
                     let (_, data) = parse_event(&env, &event);
                     let data_vec = Vec::<Val>::try_from_val(&env, &data).unwrap();
                     assert_eq!(data_vec.len(), 2, "fee_updated data should have 2 fields");
-                    assert_eq!(
-                        data_vec.get(0).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::I128
-                    );
-                    assert_eq!(
-                        data_vec.get(1).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::I128
-                    );
+                    assert_val_type::<i128>(&env, &data_vec.get(0).unwrap());
+                    assert_val_type::<i128>(&env, &data_vec.get(1).unwrap());
 
                     break;
                 }
@@ -646,7 +620,7 @@ fn event_schema_snapshot_role_admin_updated() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -667,14 +641,8 @@ fn event_schema_snapshot_role_admin_updated() {
                         2,
                         "role_admin_updated data should have 2 fields"
                     );
-                    assert_eq!(
-                        data_vec.get(0).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Address
-                    );
-                    assert_eq!(
-                        data_vec.get(1).unwrap().type_of(),
-                        soroban_sdk::xdr::ScValType::Address
-                    );
+                    assert_val_type::<Address>(&env, &data_vec.get(0).unwrap());
+                    assert_val_type::<Address>(&env, &data_vec.get(1).unwrap());
 
                     break;
                 }
@@ -715,7 +683,7 @@ fn event_schema_snapshot_role_granted() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.events().iter() {
         let (topics, _) = parse_event(&env, &event);
         if topics.len() >= 2 {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(1).unwrap()) {
@@ -730,7 +698,7 @@ fn event_schema_snapshot_role_granted() {
 
                     // Verify data: granted (bool)
                     let (_, data) = parse_event(&env, &event);
-                    assert_eq!(data.type_of(), soroban_sdk::xdr::ScValType::Bool);
+                    assert_val_type::<bool>(&env, &data);
 
                     break;
                 }

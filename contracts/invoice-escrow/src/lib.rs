@@ -989,7 +989,12 @@ impl InvoiceEscrow {
         env.invoke_contract::<()>(
             &data.inv_token,
             &Symbol::new(env, "mint"),
-            soroban_sdk::vec![env, buyer.to_val(), amount.into_val(env), contract.to_val()],
+            soroban_sdk::vec![
+                env,
+                buyer.to_val(),
+                amount.into_val(env),
+                config.admin.to_val()
+            ],
         );
 
         // Track this funder's contribution

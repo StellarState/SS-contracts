@@ -13,8 +13,7 @@
 use super::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{
-    contract, contractimpl, Address, Env, IntoVal, String as SorobanString, Symbol, TryFromVal,
-    Val, Vec,
+    contract, contractimpl, Address, Env, String as SorobanString, Symbol, TryFromVal, Val, Vec,
 };
 
 use crate::errors::Error;
