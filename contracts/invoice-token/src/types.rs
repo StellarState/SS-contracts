@@ -28,12 +28,26 @@ pub enum StorageKey {
     Metadata,
     /// Instance: total supply.
     TotalSupply,
+    /// Instance: immutable supply cap derived from invoice terms.
+    MaxSupply,
     /// Persistent: balance by holder address.
     Balance(soroban_sdk::Address),
     /// Persistent: allowance (from, spender) -> AllowanceData.
     Allowance(soroban_sdk::Address, soroban_sdk::Address),
     /// Instance: fee basis points.
     FeeBps,
+    /// Instance: authorized secondary-market settlement contract.
+    SecSettle,
+    /// Instance: secondary-sale platform-fee treasury.
+    SecTreasry,
+    /// Instance: invoice issuer receiving secondary-sale royalties.
+    SecIssuer,
+    /// Instance: secondary-sale platform fee in basis points.
+    SecPlatBps,
+    /// Instance: secondary-sale issuer royalty in basis points.
+    SecRoyBps,
+    /// Persistent: unwithdrawn secondary-sale earnings by account.
+    Earnings(soroban_sdk::Address),
     /// Instance: role admin mapping (role -> admin address).
     RoleAdmin(soroban_sdk::Symbol),
     /// Instance: role grant mapping (role, account) -> bool.
@@ -52,6 +66,17 @@ pub enum StorageKey {
     PendXfer(u64),
     /// Persistent: consumed transfer consent nonce by (from, nonce).
     UsedXNonce(soroban_sdk::Address, u64),
+}
+
+/// Secondary-sale payout configuration.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecondaryConfig {
+    pub settlement: soroban_sdk::Address,
+    pub treasury: soroban_sdk::Address,
+    pub issuer: soroban_sdk::Address,
+    pub platform_fee_bps: u32,
+    pub royalty_bps: u32,
 }
 
 /// Pending consent-gated position transfer.
@@ -81,6 +106,8 @@ pub struct TokenMetadata {
     pub decimals: u32,
     /// Invoice identifier this token represents (Symbol for storage efficiency).
     pub invoice_id: soroban_sdk::Symbol,
+    /// Maximum token supply, derived from face value / minimum fraction size.
+    pub max_supply: i128,
     /// If true, transfers restricted until settlement (admin can still transfer).
     pub transfer_locked: bool,
     /// Emergency pause flag for sensitive token operations.

@@ -37,9 +37,11 @@ pub fn get_balance(env: &soroban_sdk::Env, addr: &Address) -> i128 {
 
     // Extend TTL to prevent key expiration during active use
     let current_ledger = env.ledger().sequence();
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, current_ledger + 1_000, current_ledger + 1_000);
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, current_ledger + 1_000, current_ledger + 1_000);
+    }
 
     balance
 }
@@ -137,6 +139,54 @@ pub fn get_fee_bps(env: &soroban_sdk::Env) -> i128 {
 /// Save fee basis points to instance storage.
 pub fn set_fee_bps(env: &soroban_sdk::Env, bps: i128) {
     env.storage().instance().set(&StorageKey::FeeBps, &bps);
+}
+
+/// Save the secondary-sale payout configuration.
+pub fn set_secondary_config(env: &soroban_sdk::Env, config: &crate::types::SecondaryConfig) {
+    env.storage()
+        .instance()
+        .set(&StorageKey::SecSettle, &config.settlement);
+    env.storage()
+        .instance()
+        .set(&StorageKey::SecTreasry, &config.treasury);
+    env.storage()
+        .instance()
+        .set(&StorageKey::SecIssuer, &config.issuer);
+    env.storage()
+        .instance()
+        .set(&StorageKey::SecPlatBps, &config.platform_fee_bps);
+    env.storage()
+        .instance()
+        .set(&StorageKey::SecRoyBps, &config.royalty_bps);
+}
+
+/// Load the secondary-sale payout configuration.
+pub fn get_secondary_config(env: &soroban_sdk::Env) -> Option<crate::types::SecondaryConfig> {
+    Some(crate::types::SecondaryConfig {
+        settlement: env.storage().instance().get(&StorageKey::SecSettle)?,
+        treasury: env.storage().instance().get(&StorageKey::SecTreasry)?,
+        issuer: env.storage().instance().get(&StorageKey::SecIssuer)?,
+        platform_fee_bps: env.storage().instance().get(&StorageKey::SecPlatBps)?,
+        royalty_bps: env.storage().instance().get(&StorageKey::SecRoyBps)?,
+    })
+}
+
+/// Get recorded secondary-sale earnings for an account.
+pub fn get_earnings(env: &soroban_sdk::Env, account: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::Earnings(account.clone()))
+        .unwrap_or(0)
+}
+
+/// Save recorded secondary-sale earnings for an account.
+pub fn set_earnings(env: &soroban_sdk::Env, account: &Address, amount: i128) {
+    let key = StorageKey::Earnings(account.clone());
+    if amount == 0 {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &amount);
+    }
 }
 
 // ==================== Role Admin (Issue #108) ====================

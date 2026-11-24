@@ -28,10 +28,26 @@ pub fn mint_event(env: &Env, to: &Address, amount: i128) {
     env.events().publish((Symbol::new(env, "mint"), to), amount);
 }
 
+/// Emit invoice-scoped mint event.
+pub fn tokens_minted_event(env: &Env, invoice_id: &Symbol, wallet: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "TokensMinted"), invoice_id, wallet),
+        amount,
+    );
+}
+
 /// Emit burn event (SEP-41: topics ["burn", from], data amount).
 pub fn burn_event(env: &Env, from: &Address, amount: i128) {
     env.events()
         .publish((Symbol::new(env, "burn"), from), amount);
+}
+
+/// Emit invoice-scoped burn event.
+pub fn tokens_burned_event(env: &Env, invoice_id: &Symbol, wallet: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "TokensBurned"), invoice_id, wallet),
+        amount,
+    );
 }
 
 /// Emit transfer_locked update event with previous and new values.
@@ -114,6 +130,36 @@ pub fn nonce_queried_event(env: &Env, account: &Address, nonce: u64) {
 pub fn fee_deducted_event(env: &Env, from: &Address, fee_amount: i128) {
     env.events()
         .publish((Symbol::new(env, "fee_deducted"),), (from, fee_amount));
+}
+
+/// Emit the complete secondary-sale token and earnings breakdown.
+pub fn secondary_transfer_event(
+    env: &Env,
+    invoice_id: &Symbol,
+    from: &Address,
+    to: &Address,
+    treasury: &Address,
+    issuer: &Address,
+    amount: i128,
+    gross_price: i128,
+    platform_fee: i128,
+    royalty: i128,
+    net_proceeds: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "SecondaryTransfer"), invoice_id),
+        (
+            from,
+            to,
+            treasury,
+            issuer,
+            amount,
+            gross_price,
+            platform_fee,
+            royalty,
+            net_proceeds,
+        ),
+    );
 }
 
 pub fn transfer_requested_event(

@@ -19,8 +19,8 @@ use soroban_sdk::{
 
 use crate::errors::Error;
 use crate::types::{
-    is_zero_address, OwnershipHistoryRecord, PendingTransfer, StorageKey, TokenMetadata,
-    MAX_DECIMALS,
+    is_zero_address, OwnershipHistoryRecord, PendingTransfer, SecondaryConfig, StorageKey,
+    TokenMetadata, MAX_DECIMALS,
 };
 const ADMIN_ROLE: &str = "admin";
 const MINTER_ROLE: &str = "minter";
@@ -58,6 +58,7 @@ pub struct InvoiceToken;
 #[contractimpl]
 impl InvoiceToken {
     /// Initialize the token with admin, metadata, and minter (escrow) address.
+    /// The immutable supply cap is `face_value_usd / min_fraction_size`.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -66,10 +67,19 @@ impl InvoiceToken {
         decimals: u32,
         invoice_id: Symbol,
         minter: Address,
+        face_value_usd: i128,
+        min_fraction_size: i128,
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&admin, &minter])?;
         if storage::get_metadata(&env).is_some() {
             return Err(Error::AlreadyInit);
+        }
+        if face_value_usd <= 0 || min_fraction_size <= 0 {
+            return Err(Error::InvalidSupplyTerms);
+        }
+        let max_supply = face_value_usd / min_fraction_size;
+        if max_supply <= 0 {
+            return Err(Error::InvalidSupplyTerms);
         }
         if decimals > MAX_DECIMALS {
             return Err(Error::InvalidDecimals);
@@ -85,12 +95,16 @@ impl InvoiceToken {
             symbol,
             decimals,
             invoice_id,
+            max_supply,
             transfer_locked: true, // default locked until settlement
             paused: false,
             transfer_restriction: None,
         };
         storage::set_metadata(&env, &meta);
         storage::set_total_supply(&env, 0);
+        env.storage()
+            .instance()
+            .set(&StorageKey::MaxSupply, &max_supply);
 
         // Seed default roles: admin gets all roles, minter gets minter role.
         let admin_role_sym = Symbol::new(&env, ADMIN_ROLE);
@@ -135,6 +149,18 @@ impl InvoiceToken {
     pub fn total_supply(env: Env) -> Result<i128, Error> {
         storage::get_metadata(&env).ok_or(Error::NotInit)?;
         Ok(storage::get_total_supply(&env))
+    }
+
+    /// Return the current and immutable maximum supply for this invoice token.
+    pub fn get_supply(env: Env) -> Result<(i128, i128), Error> {
+        storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        Ok((
+            storage::get_total_supply(&env),
+            env.storage()
+                .instance()
+                .get(&StorageKey::MaxSupply)
+                .ok_or(Error::NotInit)?,
+        ))
     }
 
     pub fn balance(env: Env, id: Address) -> Result<i128, Error> {
@@ -257,6 +283,171 @@ impl InvoiceToken {
 
         events::transfer_event(&env, &from, &to, amount);
         Ok(())
+    }
+
+    /// Configure secondary-sale accounting. The settlement contract must
+    /// credit the gross payment in the same atomic transaction.
+    pub fn set_secondary_config(
+        env: Env,
+        caller: Address,
+        settlement: Address,
+        treasury: Address,
+        issuer: Address,
+        platform_fee_bps: u32,
+        royalty_bps: u32,
+    ) -> Result<(), Error> {
+        ensure_non_zero_addresses(&env, [&caller, &settlement, &treasury, &issuer])?;
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if caller != meta.admin {
+            return Err(Error::Unauthorized);
+        }
+        caller.require_auth();
+        let total_bps = platform_fee_bps
+            .checked_add(royalty_bps)
+            .ok_or(Error::InvalidFeeBps)?;
+        if total_bps > 10_000 {
+            return Err(Error::InvalidFeeBps);
+        }
+        storage::set_secondary_config(
+            &env,
+            &SecondaryConfig {
+                settlement,
+                treasury,
+                issuer,
+                platform_fee_bps,
+                royalty_bps,
+            },
+        );
+        Ok(())
+    }
+
+    /// Move invoice fractions and record the gross-price split atomically.
+    /// `settlement` is explicit so the configured platform contract can prove
+    /// its authorization without trusting a caller-supplied identity alone.
+    pub fn secondary_transfer(
+        env: Env,
+        invoice_id: Symbol,
+        from: Address,
+        to: Address,
+        amount: i128,
+        gross_price: i128,
+    ) -> Result<(), Error> {
+        ensure_non_zero_addresses(&env, [&from, &to])?;
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if invoice_id != meta.invoice_id {
+            return Err(Error::InvoiceIdMismatch);
+        }
+        let config = storage::get_secondary_config(&env).ok_or(Error::Unauthorized)?;
+        config.settlement.require_auth();
+        if from == to {
+            return Err(Error::InvalidAddress);
+        }
+        if amount <= 0 || gross_price <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        if meta.paused {
+            return Err(Error::Paused);
+        }
+        if meta.transfer_locked {
+            return Err(Error::TransferLocked);
+        }
+        ensure_account_not_frozen(&env, &from)?;
+        ensure_account_not_frozen(&env, &to)?;
+        ensure_account_not_frozen(&env, &config.treasury)?;
+        ensure_account_not_frozen(&env, &config.issuer)?;
+        if let Some(restriction) = meta.transfer_restriction.clone() {
+            env.invoke_contract::<()>(
+                &restriction,
+                &Symbol::new(&env, "validate_transfer"),
+                soroban_sdk::vec![&env, meta.invoice_id.clone().into_val(&env), from.to_val()],
+            );
+        }
+
+        let platform_fee = gross_price
+            .checked_mul(config.platform_fee_bps as i128)
+            .and_then(|value| value.checked_div(10_000))
+            .ok_or(Error::Overflow)?;
+        let royalty = gross_price
+            .checked_mul(config.royalty_bps as i128)
+            .and_then(|value| value.checked_div(10_000))
+            .ok_or(Error::Overflow)?;
+        let net_proceeds = gross_price
+            .checked_sub(platform_fee)
+            .and_then(|value| value.checked_sub(royalty))
+            .ok_or(Error::Overflow)?;
+
+        let from_balance = storage::get_balance(&env, &from);
+        if from_balance < amount {
+            return Err(Error::InsufficientBalance);
+        }
+        let new_from_balance = from_balance.checked_sub(amount).ok_or(Error::Overflow)?;
+        let new_to_balance = storage::get_balance(&env, &to)
+            .checked_add(amount)
+            .ok_or(Error::Overflow)?;
+
+        let earnings_accounts = [from.clone(), config.treasury.clone(), config.issuer.clone()];
+        let earnings_credits = [net_proceeds, platform_fee, royalty];
+        let mut new_earnings = [0i128; 3];
+        for i in 0..3 {
+            let mut total_credit = 0i128;
+            for j in 0..3 {
+                if earnings_accounts[j] == earnings_accounts[i] {
+                    total_credit = total_credit
+                        .checked_add(earnings_credits[j])
+                        .ok_or(Error::Overflow)?;
+                }
+            }
+            new_earnings[i] = storage::get_earnings(&env, &earnings_accounts[i])
+                .checked_add(total_credit)
+                .ok_or(Error::Overflow)?;
+        }
+
+        storage::set_balance(&env, &from, new_from_balance);
+        storage::set_balance(&env, &to, new_to_balance);
+        for i in 0..3 {
+            let mut already_written = false;
+            for j in 0..i {
+                if earnings_accounts[j] == earnings_accounts[i] {
+                    already_written = true;
+                    break;
+                }
+            }
+            if !already_written {
+                storage::set_earnings(&env, &earnings_accounts[i], new_earnings[i]);
+            }
+        }
+
+        let ledger = env.ledger().sequence();
+        let record = OwnershipHistoryRecord {
+            from: from.clone(),
+            to: to.clone(),
+            amount,
+            ledger,
+        };
+        storage::append_token_history(&env, &from, &record);
+        storage::append_token_history(&env, &to, &record);
+        events::transfer_event(&env, &from, &to, amount);
+        events::secondary_transfer_event(
+            &env,
+            &invoice_id,
+            &from,
+            &to,
+            &config.treasury,
+            &config.issuer,
+            amount,
+            gross_price,
+            platform_fee,
+            royalty,
+            net_proceeds,
+        );
+        Ok(())
+    }
+
+    /// Return recorded secondary-sale earnings for an account.
+    pub fn get_earnings(env: Env, account: Address) -> Result<i128, Error> {
+        ensure_non_zero_address(&env, &account)?;
+        storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        Ok(storage::get_earnings(&env, &account))
     }
 
     // ---------- SEP-41 allowance ----------
@@ -465,12 +656,15 @@ impl InvoiceToken {
         if balance < amount {
             return Err(Error::InsufficientBalance);
         }
+        let current_supply = storage::get_total_supply(&env);
+        if amount > current_supply {
+            return Err(Error::InsufficientBalance);
+        }
         storage::set_balance(&env, &from, balance - amount);
-        let new_supply = storage::get_total_supply(&env)
-            .checked_sub(amount)
-            .ok_or(Error::Overflow)?;
+        let new_supply = current_supply.checked_sub(amount).ok_or(Error::Overflow)?;
         storage::set_total_supply(&env, new_supply);
         events::burn_event(&env, &from, amount);
+        events::tokens_burned_event(&env, &meta.invoice_id, &from, amount);
         Ok(())
     }
 
@@ -500,6 +694,10 @@ impl InvoiceToken {
         if balance < amount {
             return Err(Error::InsufficientBalance);
         }
+        let current_supply = storage::get_total_supply(&env);
+        if amount > current_supply {
+            return Err(Error::InsufficientBalance);
+        }
         storage::set_allowance(
             &env,
             &from,
@@ -508,18 +706,16 @@ impl InvoiceToken {
             allow.expiration_ledger,
         );
         storage::set_balance(&env, &from, balance - amount);
-        let new_supply = storage::get_total_supply(&env)
-            .checked_sub(amount)
-            .ok_or(Error::Overflow)?;
+        let new_supply = current_supply.checked_sub(amount).ok_or(Error::Overflow)?;
         storage::set_total_supply(&env, new_supply);
         events::burn_event(&env, &from, amount);
+        events::tokens_burned_event(&env, &meta.invoice_id, &from, amount);
         Ok(())
     }
 
     // ---------- Admin / minter ----------
 
-    /// Mint tokens to `to`. Callable only by admin or minter (escrow).
-    /// `by` must be admin or minter and must authorize the call.
+    /// Mint tokens to `to`. Callable only by the platform admin.
     pub fn mint(env: Env, to: Address, amount: i128, by: Address) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&to, &by])?;
         by.require_auth();
@@ -527,7 +723,7 @@ impl InvoiceToken {
         if meta.paused {
             return Err(Error::Paused);
         }
-        if by != meta.admin && by != meta.minter {
+        if by != meta.admin {
             return Err(Error::Unauthorized);
         }
         ensure_account_not_frozen(&env, &by)?;
@@ -540,14 +736,18 @@ impl InvoiceToken {
             .ok_or(Error::Overflow)?;
         let new_supply = storage::get_total_supply(&env)
             .checked_add(amount)
-            .ok_or(Error::Overflow)?;
+            .ok_or(Error::SupplyCapExceeded)?;
+        if new_supply > meta.max_supply {
+            return Err(Error::SupplyCapExceeded);
+        }
         storage::set_balance(&env, &to, new_balance);
         storage::set_total_supply(&env, new_supply);
         events::mint_event(&env, &to, amount);
+        events::tokens_minted_event(&env, &meta.invoice_id, &to, amount);
         Ok(())
     }
 
-    /// Mint tokens to multiple addresses in a batch. Callable only by admin or minter.
+    /// Mint tokens to multiple addresses in a batch. Callable only by the platform admin.
     /// `to` and `amounts` vectors must be of equal length. Each amount must be > 0.
     pub fn mint_batch(
         env: Env,
@@ -565,11 +765,11 @@ impl InvoiceToken {
         if meta.paused {
             return Err(Error::Paused);
         }
-        if by != meta.admin && by != meta.minter {
+        if by != meta.admin {
             return Err(Error::Unauthorized);
         }
         ensure_account_not_frozen(&env, &by)?;
-        // Validate amounts and compute total
+        // Validate amounts and compute total before modifying balances.
         let mut total_amount: i128 = 0;
         for i in 0..amounts.len() {
             let amount = amounts.get(i).unwrap();
@@ -581,17 +781,30 @@ impl InvoiceToken {
             }
             let recipient = to.get(i).unwrap();
             ensure_account_not_frozen(&env, &recipient)?;
-            total_amount = total_amount.checked_add(amount).ok_or(Error::Overflow)?;
+            total_amount = total_amount
+                .checked_add(amount)
+                .ok_or(Error::SupplyCapExceeded)?;
+        }
+        let new_total_supply = storage::get_total_supply(&env)
+            .checked_add(total_amount)
+            .ok_or(Error::SupplyCapExceeded)?;
+        if new_total_supply > meta.max_supply {
+            return Err(Error::SupplyCapExceeded);
+        }
+
+        for i in 0..amounts.len() {
+            let amount = amounts.get(i).unwrap();
+            if amount == 0 {
+                continue;
+            }
+            let recipient = to.get(i).unwrap();
             let new_bal = storage::get_balance(&env, &recipient)
                 .checked_add(amount)
                 .ok_or(Error::Overflow)?;
             storage::set_balance(&env, &recipient, new_bal);
             events::mint_event(&env, &recipient, amount);
+            events::tokens_minted_event(&env, &meta.invoice_id, &recipient, amount);
         }
-        // Update total supply once
-        let new_total_supply = storage::get_total_supply(&env)
-            .checked_add(total_amount)
-            .ok_or(Error::Overflow)?;
         storage::set_total_supply(&env, new_total_supply);
         Ok(())
     }
@@ -768,6 +981,7 @@ impl InvoiceToken {
 
         // Emit event for regulatory audit trail
         events::clawback_event(&env, &from, amount);
+        events::tokens_burned_event(&env, &meta.invoice_id, &from, amount);
         Ok(())
     }
 
@@ -1089,10 +1303,12 @@ mod consent_test {
             &7u32,
             &Symbol::new(&env, "INV1"),
             &minter,
+            &i128::MAX,
+            &1,
         );
         client.set_transfer_locked(&admin, &false);
         client.set_direct_transfer_policy(&admin, &false);
-        client.mint(&minter, &alice, &1000i128);
+        client.mint(&alice, &1000i128, &admin);
 
         // Direct transfer_from is blocked when consent policy is enforced
         client.approve(&alice, &bob, &100i128, &100u32);
@@ -1136,6 +1352,8 @@ mod auth_tests;
 mod event_schema_tests;
 #[cfg(test)]
 mod integration_test;
+#[cfg(test)]
+mod secondary_transfer_tests;
 #[cfg(test)]
 mod sep41_compliance;
 #[cfg(test)]

@@ -87,6 +87,8 @@ impl DistributorAuthTestEnv {
             &7,
             &invoice_id,
             &escrow_id,
+            &i128::MAX,
+            &1,
         );
 
         escrow_client.initialize(&admin, &0);

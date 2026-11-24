@@ -73,10 +73,12 @@ impl TokenAuthTestEnv {
             &7,
             &soroban_sdk::Symbol::new(&env, "INV_AUTH"),
             &minter,
+            &i128::MAX,
+            &1,
         );
 
         // Mint tokens to holder
-        token_client.mint(&holder, &1000, &minter);
+        token_client.mint(&holder, &1000, &admin);
         token_client.set_transfer_locked(&admin, &false);
 
         Self {
@@ -110,7 +112,9 @@ fn auth_matrix_token_initialize() {
             &"TTK".into_val(&env),
             &7,
             &Symbol::new(&env, "INV"),
-            &minter
+            &minter,
+            &1000,
+            &1,
         )
         .is_ok());
 
@@ -124,7 +128,9 @@ fn auth_matrix_token_initialize() {
             &"TTK".into_val(&env),
             &7,
             &Symbol::new(&env, "INV"),
-            &minter2
+            &minter2,
+            &1000,
+            &1,
         ),
         Err(Ok(Error::AlreadyInit))
     );

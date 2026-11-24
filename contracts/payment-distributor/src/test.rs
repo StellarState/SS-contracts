@@ -61,6 +61,8 @@ fn setup(env: &Env, fee_bps: u32, configure_distributor: bool) -> TestContext<'_
         &7,
         &invoice_id,
         &escrow_id,
+        &i128::MAX,
+        &1,
     );
 
     escrow.initialize(&admin, &fee_bps);
