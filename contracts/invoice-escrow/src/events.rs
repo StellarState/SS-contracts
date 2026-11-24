@@ -349,6 +349,22 @@ pub fn settlement_approved(env: &Env, invoice_id: &BytesN<32>, approver: &Addres
     );
 }
 
+/// Audit event: a pending settlement proposal was cancelled by its proposer or the administrator.
+pub fn settlement_cancelled(env: &Env, invoice_id: &BytesN<32>, actor: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_cancelled"),),
+        (invoice_id, actor, amount),
+    );
+}
+
+/// Audit event: a pending settlement proposal passed its approval window and was cleared.
+pub fn settlement_expired(env: &Env, invoice_id: &BytesN<32>, proposer: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_expired"),),
+        (invoice_id, proposer, amount),
+    );
+}
+
 /// Publish grace_period_updated event when the admin changes the grace window.
 pub fn grace_period_updated(env: &Env, old_seconds: u64, new_seconds: u64) {
     env.events().publish(

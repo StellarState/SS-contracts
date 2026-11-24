@@ -196,11 +196,48 @@ pub fn get_emergency_approvals(env: &Env, inv_id: &Symbol) -> EmergencyApprovals
     approvals
 }
 
-/// Save emergency approvals for a given invoice.
+/// Save emergency approvals for a given invoice, tagged with the active configuration generation.
 pub fn set_emergency_approvals(env: &Env, inv_id: &Symbol, approvals: &EmergencyApprovals) {
     let key = StorageKey::EmergencyApprovals(inv_id.clone());
     env.storage().persistent().set(&key, approvals);
     bump_persistent(env, &key);
+    let tag_key = StorageKey::EmergencyApprovalGen(inv_id.clone());
+    env.storage()
+        .persistent()
+        .set(&tag_key, &get_emergency_generation(env));
+    bump_persistent(env, &tag_key);
+}
+
+/// Current generation of the emergency multi-sig configuration (0 before any configuration).
+pub fn get_emergency_generation(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&StorageKey::EmergencyGeneration)
+        .unwrap_or(0)
+}
+
+/// Start a new configuration generation. Every approval stored under an older generation
+/// becomes invalid, because approvals are only counted when their tag matches this value.
+pub fn bump_emergency_generation(env: &Env) {
+    let next = get_emergency_generation(env).saturating_add(1);
+    env.storage()
+        .instance()
+        .set(&StorageKey::EmergencyGeneration, &next);
+}
+
+/// Approvals for an invoice that were made under the active configuration generation.
+/// Approvals from any earlier generation read as empty.
+pub fn get_current_emergency_approvals(env: &Env, inv_id: &Symbol) -> EmergencyApprovals {
+    let tag: Option<u32> = env
+        .storage()
+        .persistent()
+        .get(&StorageKey::EmergencyApprovalGen(inv_id.clone()));
+    if tag != Some(get_emergency_generation(env)) {
+        return EmergencyApprovals {
+            approvals: Vec::new(env),
+        };
+    }
+    get_emergency_approvals(env, inv_id)
 }
 
 /// Load invoice record by BytesN<32>.
@@ -562,6 +599,9 @@ pub fn compact_invoice_storage(
     let emergency_key = StorageKey::EmergencyApprovals(inv_id.clone());
     if env.storage().persistent().has(&emergency_key) {
         env.storage().persistent().remove(&emergency_key);
+        env.storage()
+            .persistent()
+            .remove(&StorageKey::EmergencyApprovalGen(inv_id.clone()));
         removed += 1;
     }
 

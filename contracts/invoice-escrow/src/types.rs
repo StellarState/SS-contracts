@@ -69,6 +69,11 @@ pub enum StorageKey {
     AllocStrat(soroban_sdk::BytesN<32>),
     /// Persistent: funded allocation per (invoice_id, investor).
     FundAlloc(soroban_sdk::BytesN<32>, soroban_sdk::Address),
+    /// Instance: generation of the active emergency multi-sig configuration. Bumped on every
+    /// `set_emergency_config`, so approvals made under an older configuration stop counting.
+    EmergencyGeneration,
+    /// Persistent: emergency-configuration generation that an invoice's approvals belong to.
+    EmergencyApprovalGen(soroban_sdk::Symbol),
 }
 
 /// Bounded allocation strategy for invoice funding fills.
@@ -301,6 +306,16 @@ pub struct EscrowData {
 pub struct SettlementProposal {
     pub proposer: soroban_sdk::Address,
     pub repayment_amount: i128,
+}
+
+/// A pending settlement proposal plus the last ledger on which it can still be approved.
+/// Approval is allowed while `ledger.sequence() <= expires_at_ledger`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingSettlement {
+    pub proposer: soroban_sdk::Address,
+    pub repayment_amount: i128,
+    pub expires_at_ledger: u32,
 }
 
 /// Status for BytesN<32> funding invoices (position management).

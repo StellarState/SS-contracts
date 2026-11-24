@@ -168,4 +168,8 @@ pub enum Error {
     RepaymentReserved = 77,
     /// Pending settlement proposal has expired.
     SettlementProposalExpired = 78,
+    /// The same address appears more than once in the emergency multi-sig admin set.
+    DuplicateEmergencyAdmin = 79,
+    /// The pending settlement proposal has not expired, so it cannot be expired yet.
+    SettlementNotExpired = 80,
 }
