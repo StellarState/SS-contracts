@@ -132,6 +132,36 @@ pub fn fee_deducted_event(env: &Env, from: &Address, fee_amount: i128) {
         .publish((Symbol::new(env, "fee_deducted"),), (from, fee_amount));
 }
 
+/// Emit the complete secondary-sale token and earnings breakdown.
+pub fn secondary_transfer_event(
+    env: &Env,
+    invoice_id: &Symbol,
+    from: &Address,
+    to: &Address,
+    treasury: &Address,
+    issuer: &Address,
+    amount: i128,
+    gross_price: i128,
+    platform_fee: i128,
+    royalty: i128,
+    net_proceeds: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "SecondaryTransfer"), invoice_id),
+        (
+            from,
+            to,
+            treasury,
+            issuer,
+            amount,
+            gross_price,
+            platform_fee,
+            royalty,
+            net_proceeds,
+        ),
+    );
+}
+
 pub fn transfer_requested_event(
     env: &Env,
     transfer_id: u64,

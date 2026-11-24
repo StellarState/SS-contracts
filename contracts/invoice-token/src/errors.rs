@@ -61,4 +61,6 @@ pub enum Error {
     InvalidSupplyTerms = 27,
     /// Minting would exceed the invoice's immutable supply cap.
     SupplyCapExceeded = 28,
+    /// The supplied invoice ID does not match this invoice token.
+    InvoiceIdMismatch = 29,
 }

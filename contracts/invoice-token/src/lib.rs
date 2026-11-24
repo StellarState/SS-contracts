@@ -19,8 +19,8 @@ use soroban_sdk::{
 
 use crate::errors::Error;
 use crate::types::{
-    is_zero_address, OwnershipHistoryRecord, PendingTransfer, StorageKey, TokenMetadata,
-    MAX_DECIMALS,
+    is_zero_address, OwnershipHistoryRecord, PendingTransfer, SecondaryConfig, StorageKey,
+    TokenMetadata, MAX_DECIMALS,
 };
 const ADMIN_ROLE: &str = "admin";
 const MINTER_ROLE: &str = "minter";
@@ -283,6 +283,171 @@ impl InvoiceToken {
 
         events::transfer_event(&env, &from, &to, amount);
         Ok(())
+    }
+
+    /// Configure secondary-sale accounting. The settlement contract must
+    /// credit the gross payment in the same atomic transaction.
+    pub fn set_secondary_config(
+        env: Env,
+        caller: Address,
+        settlement: Address,
+        treasury: Address,
+        issuer: Address,
+        platform_fee_bps: u32,
+        royalty_bps: u32,
+    ) -> Result<(), Error> {
+        ensure_non_zero_addresses(&env, [&caller, &settlement, &treasury, &issuer])?;
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if caller != meta.admin {
+            return Err(Error::Unauthorized);
+        }
+        caller.require_auth();
+        let total_bps = platform_fee_bps
+            .checked_add(royalty_bps)
+            .ok_or(Error::InvalidFeeBps)?;
+        if total_bps > 10_000 {
+            return Err(Error::InvalidFeeBps);
+        }
+        storage::set_secondary_config(
+            &env,
+            &SecondaryConfig {
+                settlement,
+                treasury,
+                issuer,
+                platform_fee_bps,
+                royalty_bps,
+            },
+        );
+        Ok(())
+    }
+
+    /// Move invoice fractions and record the gross-price split atomically.
+    /// `settlement` is explicit so the configured platform contract can prove
+    /// its authorization without trusting a caller-supplied identity alone.
+    pub fn secondary_transfer(
+        env: Env,
+        invoice_id: Symbol,
+        from: Address,
+        to: Address,
+        amount: i128,
+        gross_price: i128,
+    ) -> Result<(), Error> {
+        ensure_non_zero_addresses(&env, [&from, &to])?;
+        let meta = storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        if invoice_id != meta.invoice_id {
+            return Err(Error::InvoiceIdMismatch);
+        }
+        let config = storage::get_secondary_config(&env).ok_or(Error::Unauthorized)?;
+        config.settlement.require_auth();
+        if from == to {
+            return Err(Error::InvalidAddress);
+        }
+        if amount <= 0 || gross_price <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        if meta.paused {
+            return Err(Error::Paused);
+        }
+        if meta.transfer_locked {
+            return Err(Error::TransferLocked);
+        }
+        ensure_account_not_frozen(&env, &from)?;
+        ensure_account_not_frozen(&env, &to)?;
+        ensure_account_not_frozen(&env, &config.treasury)?;
+        ensure_account_not_frozen(&env, &config.issuer)?;
+        if let Some(restriction) = meta.transfer_restriction.clone() {
+            env.invoke_contract::<()>(
+                &restriction,
+                &Symbol::new(&env, "validate_transfer"),
+                soroban_sdk::vec![&env, meta.invoice_id.clone().into_val(&env), from.to_val()],
+            );
+        }
+
+        let platform_fee = gross_price
+            .checked_mul(config.platform_fee_bps as i128)
+            .and_then(|value| value.checked_div(10_000))
+            .ok_or(Error::Overflow)?;
+        let royalty = gross_price
+            .checked_mul(config.royalty_bps as i128)
+            .and_then(|value| value.checked_div(10_000))
+            .ok_or(Error::Overflow)?;
+        let net_proceeds = gross_price
+            .checked_sub(platform_fee)
+            .and_then(|value| value.checked_sub(royalty))
+            .ok_or(Error::Overflow)?;
+
+        let from_balance = storage::get_balance(&env, &from);
+        if from_balance < amount {
+            return Err(Error::InsufficientBalance);
+        }
+        let new_from_balance = from_balance.checked_sub(amount).ok_or(Error::Overflow)?;
+        let new_to_balance = storage::get_balance(&env, &to)
+            .checked_add(amount)
+            .ok_or(Error::Overflow)?;
+
+        let earnings_accounts = [from.clone(), config.treasury.clone(), config.issuer.clone()];
+        let earnings_credits = [net_proceeds, platform_fee, royalty];
+        let mut new_earnings = [0i128; 3];
+        for i in 0..3 {
+            let mut total_credit = 0i128;
+            for j in 0..3 {
+                if earnings_accounts[j] == earnings_accounts[i] {
+                    total_credit = total_credit
+                        .checked_add(earnings_credits[j])
+                        .ok_or(Error::Overflow)?;
+                }
+            }
+            new_earnings[i] = storage::get_earnings(&env, &earnings_accounts[i])
+                .checked_add(total_credit)
+                .ok_or(Error::Overflow)?;
+        }
+
+        storage::set_balance(&env, &from, new_from_balance);
+        storage::set_balance(&env, &to, new_to_balance);
+        for i in 0..3 {
+            let mut already_written = false;
+            for j in 0..i {
+                if earnings_accounts[j] == earnings_accounts[i] {
+                    already_written = true;
+                    break;
+                }
+            }
+            if !already_written {
+                storage::set_earnings(&env, &earnings_accounts[i], new_earnings[i]);
+            }
+        }
+
+        let ledger = env.ledger().sequence();
+        let record = OwnershipHistoryRecord {
+            from: from.clone(),
+            to: to.clone(),
+            amount,
+            ledger,
+        };
+        storage::append_token_history(&env, &from, &record);
+        storage::append_token_history(&env, &to, &record);
+        events::transfer_event(&env, &from, &to, amount);
+        events::secondary_transfer_event(
+            &env,
+            &invoice_id,
+            &from,
+            &to,
+            &config.treasury,
+            &config.issuer,
+            amount,
+            gross_price,
+            platform_fee,
+            royalty,
+            net_proceeds,
+        );
+        Ok(())
+    }
+
+    /// Return recorded secondary-sale earnings for an account.
+    pub fn get_earnings(env: Env, account: Address) -> Result<i128, Error> {
+        ensure_non_zero_address(&env, &account)?;
+        storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        Ok(storage::get_earnings(&env, &account))
     }
 
     // ---------- SEP-41 allowance ----------
@@ -1187,6 +1352,8 @@ mod auth_tests;
 mod event_schema_tests;
 #[cfg(test)]
 mod integration_test;
+#[cfg(test)]
+mod secondary_transfer_tests;
 #[cfg(test)]
 mod sep41_compliance;
 #[cfg(test)]
