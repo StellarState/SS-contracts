@@ -1846,3 +1846,185 @@ fn test_integration_set_referral_contract_admin_only() {
     ctx.escrow.set_referral_contract(&referral_id);
     assert_eq!(ctx.escrow.get_config().referral_contract, Some(referral_id));
 }
+
+/// Issue #769: exercise the four public lifecycle actions from every base state.
+///
+/// Each assertion uses a fresh escrow so one transition cannot hide a later
+/// rejection. The successful calls cover the legal edges; the rejected calls
+/// protect terminal states and state-preserving failures.
+#[test]
+fn test_integration_lifecycle_transition_matrix() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Created: repayment/refund are rejected; funding and cancellation are legal.
+    let created_payment = setup(&env, 300, "MCPAY", 0, 1_000);
+    created_payment.escrow.create_escrow_legacy(
+        &created_payment.invoice_id,
+        &created_payment.seller,
+        &created_payment.payer,
+        &1_000,
+        &1_000,
+        &99_999,
+        &created_payment.payment_token.address,
+        &created_payment.inv_token_id,
+        &test_commitment(&env, "created-payment"),
+        &None,
+        &None,
+    );
+    assert!(created_payment
+        .escrow
+        .try_record_payment(&created_payment.invoice_id, &created_payment.payer, &1)
+        .is_err());
+    assert!(created_payment
+        .escrow
+        .try_refund_escrow(&created_payment.invoice_id)
+        .is_err());
+
+    let created_fund = setup(&env, 300, "MCFUND", 1_000, 0);
+    created_fund.escrow.create_escrow_legacy(
+        &created_fund.invoice_id,
+        &created_fund.seller,
+        &created_fund.payer,
+        &1_000,
+        &1_000,
+        &99_999,
+        &created_fund.payment_token.address,
+        &created_fund.inv_token_id,
+        &test_commitment(&env, "created-fund"),
+        &None,
+        &None,
+    );
+    created_fund
+        .escrow
+        .fund_escrow_legacy(&created_fund.invoice_id, &created_fund.buyer, &1_000);
+    assert_eq!(
+        created_fund.escrow.get_escrow_status(&created_fund.invoice_id),
+        EscrowStatus::Funded
+    );
+
+    let created_cancel = setup(&env, 300, "MCCAN", 0, 0);
+    created_cancel.escrow.create_escrow_legacy(
+        &created_cancel.invoice_id,
+        &created_cancel.seller,
+        &created_cancel.payer,
+        &1_000,
+        &1_000,
+        &99_999,
+        &created_cancel.payment_token.address,
+        &created_cancel.inv_token_id,
+        &test_commitment(&env, "created-cancel"),
+        &None,
+        &None,
+    );
+    created_cancel
+        .escrow
+        .cancel_escrow(&created_cancel.invoice_id, &created_cancel.seller);
+    assert_eq!(
+        created_cancel.escrow.get_escrow_status(&created_cancel.invoice_id),
+        EscrowStatus::Cancelled
+    );
+
+    // Funded: only repayment is legal; partial repayment preserves Funded.
+    let funded = setup(&env, 300, "MCFDED", 1_000, 1_000);
+    create_and_fund(&funded, 1_000, 99_999);
+    assert!(funded
+        .escrow
+        .try_fund_escrow_legacy(&funded.invoice_id, &funded.buyer, &1)
+        .is_err());
+    assert!(funded
+        .escrow
+        .try_cancel_escrow(&funded.invoice_id, &funded.seller)
+        .is_err());
+    funded
+        .escrow
+        .record_payment(&funded.invoice_id, &funded.payer, &1);
+    assert_eq!(
+        funded.escrow.get_escrow_status(&funded.invoice_id),
+        EscrowStatus::Funded
+    );
+    assert!(funded
+        .escrow
+        .try_refund_escrow(&funded.invoice_id)
+        .is_err());
+
+    // Settled: terminal state rejects every lifecycle mutation.
+    let settled = setup(&env, 300, "MCSETL", 1_000, 1_000);
+    create_and_fund(&settled, 1_000, 99_999);
+    settled
+        .escrow
+        .record_payment(&settled.invoice_id, &settled.payer, &1_000);
+    assert!(settled
+        .escrow
+        .try_fund_escrow_legacy(&settled.invoice_id, &settled.buyer, &1)
+        .is_err());
+    assert!(settled
+        .escrow
+        .try_cancel_escrow(&settled.invoice_id, &settled.seller)
+        .is_err());
+    assert!(settled
+        .escrow
+        .try_record_payment(&settled.invoice_id, &settled.payer, &1)
+        .is_err());
+    assert!(settled
+        .escrow
+        .try_refund_escrow(&settled.invoice_id)
+        .is_err());
+
+    // Refunded: terminal state rejects every lifecycle mutation.
+    let refunded = setup(&env, 300, "MCREFD", 1_000, 0);
+    create_and_fund(&refunded, 1_000, 10_000);
+    env.ledger().set_timestamp(10_001);
+    refunded.escrow.refund_escrow(&refunded.invoice_id);
+    assert!(refunded
+        .escrow
+        .try_fund_escrow_legacy(&refunded.invoice_id, &refunded.buyer, &1)
+        .is_err());
+    assert!(refunded
+        .escrow
+        .try_cancel_escrow(&refunded.invoice_id, &refunded.seller)
+        .is_err());
+    assert!(refunded
+        .escrow
+        .try_record_payment(&refunded.invoice_id, &refunded.payer, &1)
+        .is_err());
+    assert!(refunded
+        .escrow
+        .try_refund_escrow(&refunded.invoice_id)
+        .is_err());
+
+    // Cancelled: terminal state rejects every lifecycle mutation.
+    let cancelled = setup(&env, 300, "MCCNLD", 1_000, 1_000);
+    cancelled.escrow.create_escrow_legacy(
+        &cancelled.invoice_id,
+        &cancelled.seller,
+        &cancelled.payer,
+        &1_000,
+        &1_000,
+        &99_999,
+        &cancelled.payment_token.address,
+        &cancelled.inv_token_id,
+        &test_commitment(&env, "cancelled"),
+        &None,
+        &None,
+    );
+    cancelled
+        .escrow
+        .cancel_escrow(&cancelled.invoice_id, &cancelled.seller);
+    assert!(cancelled
+        .escrow
+        .try_fund_escrow_legacy(&cancelled.invoice_id, &cancelled.buyer, &1)
+        .is_err());
+    assert!(cancelled
+        .escrow
+        .try_cancel_escrow(&cancelled.invoice_id, &cancelled.seller)
+        .is_err());
+    assert!(cancelled
+        .escrow
+        .try_record_payment(&cancelled.invoice_id, &cancelled.payer, &1)
+        .is_err());
+    assert!(cancelled
+        .escrow
+        .try_refund_escrow(&cancelled.invoice_id)
+        .is_err());
+}
