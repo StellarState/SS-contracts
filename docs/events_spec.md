@@ -46,7 +46,7 @@ This specification documents the exact event topics and payload schemas emitted 
 
 ## Invoice Token Event Schema Coverage
 
-Token event payloads are emitted by `contracts/invoice-token/src/events.rs`. Contract tests validate the emitted topic tuple and typed data payload for transfer, approval, mint, burn, lock changes, minter changes, pause changes, fee updates, freeze/unfreeze, nonce queries, and multi-event transfer flows. Keep one assertion for every event helper when changing a topic or payload; event topic names are part of the external integration contract.
+Token event payloads are emitted by `contracts/invoice-token/src/events.rs`. Contract tests validate the emitted topic tuple and typed data payload for transfer, approval, mint, burn, invoice-scoped mint/burn, lock changes, minter changes, pause changes, fee updates, freeze/unfreeze, nonce queries, and multi-event transfer flows. Keep one assertion for every event helper when changing a topic or payload; event topic names are part of the external integration contract.
 
 | Event topic | Topics after contract id | Data |
 | --- | --- | --- |
@@ -54,6 +54,8 @@ Token event payloads are emitted by `contracts/invoice-token/src/events.rs`. Con
 | `approve` | `approve, from, spender` | `(amount: i128, expiration_ledger: u32)` |
 | `mint` | `mint, to` | `amount: i128` |
 | `burn` | `burn, from` | `amount: i128` |
+| `TokensMinted` | `TokensMinted, invoice_id, wallet` | `amount: i128` |
+| `TokensBurned` | `TokensBurned, invoice_id, wallet` | `amount: i128` |
 | `transfer_locked_updated` | `transfer_locked_updated` | `(old: bool, new: bool)` |
 | `minter_updated` | `minter_updated` | `(old: Address, new: Address)` |
 | `paused_updated` | `paused_updated` | `(old: bool, new: bool)` |

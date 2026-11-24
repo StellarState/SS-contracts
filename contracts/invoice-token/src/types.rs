@@ -28,6 +28,8 @@ pub enum StorageKey {
     Metadata,
     /// Instance: total supply.
     TotalSupply,
+    /// Instance: immutable supply cap derived from invoice terms.
+    MaxSupply,
     /// Persistent: balance by holder address.
     Balance(soroban_sdk::Address),
     /// Persistent: allowance (from, spender) -> AllowanceData.
@@ -81,6 +83,8 @@ pub struct TokenMetadata {
     pub decimals: u32,
     /// Invoice identifier this token represents (Symbol for storage efficiency).
     pub invoice_id: soroban_sdk::Symbol,
+    /// Maximum token supply, derived from face value / minimum fraction size.
+    pub max_supply: i128,
     /// If true, transfers restricted until settlement (admin can still transfer).
     pub transfer_locked: bool,
     /// Emergency pause flag for sensitive token operations.

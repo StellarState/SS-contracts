@@ -29,7 +29,15 @@ In addition to standard SEP-41, `invoice-token` exports custom extension entrypo
 // Lock/unlock transfers during active invoice financing window
 pub fn set_transfer_locked(env: Env, locked: bool);
 pub fn is_transfer_locked(env: Env) -> bool;
+
+// Return the current and immutable maximum supply, capped at
+// face_value_usd / min_fraction_size configured during initialize.
+pub fn get_supply(env: Env) -> Result<(i128, i128), Error>;
 ```
+
+`initialize` requires positive `face_value_usd` and `min_fraction_size` terms.
+Only the configured admin may mint, and minting cannot raise supply above the
+computed cap. Burns and settlement clawbacks reduce current supply.
 
 ---
 

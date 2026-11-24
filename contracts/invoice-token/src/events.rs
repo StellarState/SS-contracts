@@ -28,10 +28,26 @@ pub fn mint_event(env: &Env, to: &Address, amount: i128) {
     env.events().publish((Symbol::new(env, "mint"), to), amount);
 }
 
+/// Emit invoice-scoped mint event.
+pub fn tokens_minted_event(env: &Env, invoice_id: &Symbol, wallet: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "TokensMinted"), invoice_id, wallet),
+        amount,
+    );
+}
+
 /// Emit burn event (SEP-41: topics ["burn", from], data amount).
 pub fn burn_event(env: &Env, from: &Address, amount: i128) {
     env.events()
         .publish((Symbol::new(env, "burn"), from), amount);
+}
+
+/// Emit invoice-scoped burn event.
+pub fn tokens_burned_event(env: &Env, invoice_id: &Symbol, wallet: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "TokensBurned"), invoice_id, wallet),
+        amount,
+    );
 }
 
 /// Emit transfer_locked update event with previous and new values.

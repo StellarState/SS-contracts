@@ -56,6 +56,8 @@ fn setup(env: &Env, fee_bps: u32, configure_distributor: bool) -> FlowContext<'_
         &7,
         &invoice_id,
         &escrow_id,
+        &i128::MAX,
+        &1,
     );
 
     escrow.initialize(&admin, &fee_bps);
@@ -941,6 +943,8 @@ fn test_integration_state_persistence_after_reentrancy_attempt() {
         &7,
         &invoice_id,
         &escrow_id,
+        &i128::MAX,
+        &1,
     );
 
     escrow.initialize(&admin, &300);

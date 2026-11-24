@@ -13,8 +13,7 @@
 use super::{InvoiceToken, InvoiceTokenClient};
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{
-    contract, contractimpl, Address, Env, IntoVal, String as SorobanString, Symbol, TryFromVal,
-    Val, Vec,
+    contract, contractimpl, Address, Env, String as SorobanString, Symbol, TryFromVal, Val, Vec,
 };
 
 use crate::errors::Error;
@@ -131,11 +130,19 @@ impl Harness {
         let symbol = SorobanString::from_str(&env, "INVSETL");
         let invoice_id = Symbol::new(&env, "inv_setl");
 
-        // The escrow is the minter, matching how invoice-escrow's
-        // create_escrow deploys/owns the invoice token in production.
-        token.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &escrow_id);
+        // The escrow is the minter, while mint authorization remains admin-only.
+        token.initialize(
+            &admin,
+            &name,
+            &symbol,
+            &7u32,
+            &invoice_id,
+            &escrow_id,
+            &i128::MAX,
+            &1,
+        );
         if initial_balance > 0 {
-            token.mint(&investor, &initial_balance, &escrow_id);
+            token.mint(&investor, &initial_balance, &admin);
         }
 
         let token = unsafe { core::mem::transmute::<_, InvoiceTokenClient<'static>>(token) };

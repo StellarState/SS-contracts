@@ -57,4 +57,8 @@ pub enum Error {
     NotTransferRecipient = 25,
     /// Transfer nonce has already been used.
     InvalidNonce = 26,
+    /// Invoice value or minimum fraction size cannot produce a positive supply cap.
+    InvalidSupplyTerms = 27,
+    /// Minting would exceed the invoice's immutable supply cap.
+    SupplyCapExceeded = 28,
 }

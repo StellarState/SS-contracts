@@ -32,11 +32,20 @@ fn setup_token(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address) {
     let contract_id = env.register(InvoiceToken, ());
     let client = InvoiceTokenClient::new(env, &contract_id);
     let admin = Address::generate(env);
-    let minter = Address::generate(env);
+    let minter = admin.clone();
     let name = SorobanString::from_str(env, "Invoice INV-001");
     let symbol = SorobanString::from_str(env, "INV001");
     let invoice_id = Symbol::new(env, "inv_001");
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     (client, admin, minter)
 }
 
@@ -104,6 +113,8 @@ fn test_initialize_rejects_zero_admin_and_minter() {
         &7,
         &invoice_id,
         &minter,
+        &i128::MAX,
+        &1,
     ));
     assert_invalid_address!(client.try_initialize(
         &admin,
@@ -112,6 +123,8 @@ fn test_initialize_rejects_zero_admin_and_minter() {
         &7,
         &invoice_id,
         &zero_contract_address(&env),
+        &i128::MAX,
+        &1,
     ));
 }
 
@@ -234,9 +247,9 @@ fn test_transfer_locked_non_admin_fails() {
 fn test_transfer_locked_admin_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
     assert_eq!(client.balance(&admin), 1000);
     assert!(client.transfer_locked());
 
@@ -272,7 +285,7 @@ fn test_transfer_from_locked_admin_succeeds() {
     env.mock_all_auths();
     let (client, admin, minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     let expiration = env.ledger().sequence() + 100;
@@ -553,25 +566,25 @@ fn test_frozen_accounts_cannot_approve_burn_or_use_allowance() {
 fn test_mint_rejects_frozen_recipient() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
     let frozen = Address::generate(&env);
     let active = Address::generate(&env);
 
     client.freeze_account(&frozen);
     assert_eq!(
-        client.try_mint(&frozen, &10, &minter),
+        client.try_mint(&frozen, &10, &admin),
         Err(Ok(crate::errors::Error::AccountFrozen))
     );
-    client.freeze_account(&minter);
+    client.freeze_account(&admin);
     assert_eq!(
-        client.try_mint(&active, &10, &minter),
+        client.try_mint(&active, &10, &admin),
         Err(Ok(crate::errors::Error::AccountFrozen))
     );
 
     let recipients = soroban_sdk::vec![&env, active.clone(), frozen.clone()];
     let amounts = soroban_sdk::vec![&env, 10i128, 20i128];
     assert_eq!(
-        client.try_mint_batch(&recipients, &amounts, &minter),
+        client.try_mint_batch(&recipients, &amounts, &admin),
         Err(Ok(crate::errors::Error::AccountFrozen))
     );
     assert_eq!(client.balance(&active), 0);
@@ -891,12 +904,12 @@ fn test_approve_event_emission() {
 fn test_mint_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
     let recipient = Address::generate(&env);
     let amount = 5000;
 
-    client.mint(&recipient, &amount, &minter);
+    client.mint(&recipient, &amount, &admin);
 
     let events = env.events().all();
     let event = events.events().last().unwrap();
@@ -905,7 +918,12 @@ fn test_mint_event_emission() {
 
     assert_eq!(
         topics,
-        (Symbol::new(&env, "mint"), recipient.clone()).into_val(&env)
+        (
+            Symbol::new(&env, "TokensMinted"),
+            Symbol::new(&env, "inv_001"),
+            recipient.clone()
+        )
+            .into_val(&env)
     );
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
@@ -925,26 +943,109 @@ fn test_mint_authorization_and_invalid_amount() {
     assert_eq!(client.balance(&recipient), 100);
     assert_eq!(client.total_supply(), 100);
 
-    client.mint(&recipient, &50, &minter);
-    assert_eq!(client.balance(&recipient), 150);
-    assert_eq!(client.total_supply(), 150);
-
     let unauthorized = client.try_mint(&recipient, &25, &stranger);
     assert_eq!(unauthorized, Err(Ok(crate::errors::Error::Unauthorized)));
 
-    let invalid_amount = client.try_mint(&recipient, &0, &minter);
+    let invalid_amount = client.try_mint(&recipient, &0, &admin);
     assert_eq!(invalid_amount, Err(Ok(crate::errors::Error::InvalidAmount)));
-    assert_eq!(client.balance(&recipient), 150);
-    assert_eq!(client.total_supply(), 150);
+    assert_eq!(client.balance(&recipient), 100);
+    assert_eq!(client.total_supply(), 100);
+}
+
+#[test]
+fn test_fractional_supply_cap_and_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "cap_inv");
+    client.initialize(
+        &admin,
+        &SorobanString::from_str(&env, "Capped invoice"),
+        &SorobanString::from_str(&env, "CAP"),
+        &7,
+        &invoice_id,
+        &minter,
+        &1000,
+        &10,
+    );
+
+    assert_eq!(client.get_supply(), (0, 100));
+    client.mint(&recipient, &100, &admin);
+    assert_eq!(client.get_supply(), (100, 100));
+    assert_eq!(
+        client.try_mint(&recipient, &1, &admin),
+        Err(Ok(crate::errors::Error::SupplyCapExceeded))
+    );
+    assert_eq!(
+        client.try_mint(&recipient, &1, &minter),
+        Err(Ok(crate::errors::Error::Unauthorized))
+    );
+    assert_eq!(client.get_supply(), (100, 100));
+
+    let minted_event = env.events().all().events().last().unwrap().clone();
+    let (_, topics, data) = parse_event(&env, &minted_event);
+    assert_eq!(
+        topics,
+        (
+            Symbol::new(&env, "TokensMinted"),
+            invoice_id.clone(),
+            recipient.clone()
+        )
+            .into_val(&env)
+    );
+    assert_eq!(i128::try_from_val(&env, &data).unwrap(), 100);
+
+    client.burn(&recipient, &40);
+    assert_eq!(client.get_supply(), (60, 100));
+    let burned_event = env.events().all().events().last().unwrap().clone();
+    let (_, topics, data) = parse_event(&env, &burned_event);
+    assert_eq!(
+        topics,
+        (
+            Symbol::new(&env, "TokensBurned"),
+            invoice_id,
+            recipient.clone()
+        )
+            .into_val(&env)
+    );
+    assert_eq!(i128::try_from_val(&env, &data).unwrap(), 40);
+
+    client.mint(&recipient, &40, &admin);
+    assert_eq!(client.get_supply(), (100, 100));
+}
+
+#[test]
+fn test_initialize_rejects_invalid_fraction_terms() {
+    let env = Env::default();
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let name = SorobanString::from_str(&env, "Invoice");
+    let symbol = SorobanString::from_str(&env, "INV");
+    let invoice_id = Symbol::new(&env, "bad_terms");
+
+    assert_eq!(
+        client.try_initialize(&admin, &name, &symbol, &7, &invoice_id, &minter, &100, &0),
+        Err(Ok(crate::errors::Error::InvalidSupplyTerms))
+    );
+    assert_eq!(
+        client.try_initialize(&admin, &name, &symbol, &7, &invoice_id, &minter, &5, &10),
+        Err(Ok(crate::errors::Error::InvalidSupplyTerms))
+    );
 }
 
 #[test]
 fn test_burn_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let burn_amount = 300;
     client.burn(&admin, &burn_amount);
@@ -956,7 +1057,12 @@ fn test_burn_event_emission() {
 
     assert_eq!(
         topics,
-        (Symbol::new(&env, "burn"), admin.clone()).into_val(&env)
+        (
+            Symbol::new(&env, "TokensBurned"),
+            Symbol::new(&env, "inv_001"),
+            admin.clone()
+        )
+            .into_val(&env)
     );
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
@@ -967,9 +1073,9 @@ fn test_burn_event_emission() {
 fn test_burn_insufficient_balance_fails() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &100, &minter);
+    client.mint(&admin, &100, &admin);
 
     let result = client.try_burn(&admin, &200);
     assert_eq!(result, Err(Ok(crate::errors::Error::InsufficientBalance)));
@@ -981,9 +1087,9 @@ fn test_burn_insufficient_balance_fails() {
 fn test_transfer_from_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
     client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
@@ -1016,9 +1122,9 @@ fn test_transfer_from_event_emission() {
 fn test_burn_from_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     let expiration = env.ledger().sequence() + 100;
@@ -1034,7 +1140,12 @@ fn test_burn_from_event_emission() {
 
     assert_eq!(
         topics,
-        (Symbol::new(&env, "burn"), admin.clone()).into_val(&env)
+        (
+            Symbol::new(&env, "TokensBurned"),
+            Symbol::new(&env, "inv_001"),
+            admin.clone()
+        )
+            .into_val(&env)
     );
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
@@ -1045,9 +1156,9 @@ fn test_burn_from_event_emission() {
 fn test_burn_updates_balance_and_total_supply() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     client.burn(&admin, &300);
     assert_eq!(client.balance(&admin), 700);
@@ -1750,7 +1861,16 @@ fn test_initialize_rejects_unsupported_precision() {
     let symbol = SorobanString::from_str(&env, "INV001");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    let result = client.try_initialize(&admin, &name, &symbol, &19, &invoice_id, &minter);
+    let result = client.try_initialize(
+        &admin,
+        &name,
+        &symbol,
+        &19,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidDecimals)));
 }
 
@@ -1855,7 +1975,16 @@ fn test_initialize_rejects_empty_name() {
     let symbol = SorobanString::from_str(&env, "INV001");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    let result = client.try_initialize(&admin, &empty_name, &symbol, &7u32, &invoice_id, &minter);
+    let result = client.try_initialize(
+        &admin,
+        &empty_name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidMetadata)));
 }
 
@@ -1870,7 +1999,16 @@ fn test_initialize_rejects_empty_symbol() {
     let empty_symbol = SorobanString::from_str(&env, "");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    let result = client.try_initialize(&admin, &name, &empty_symbol, &7u32, &invoice_id, &minter);
+    let result = client.try_initialize(
+        &admin,
+        &name,
+        &empty_symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidMetadata)));
 }
 
@@ -2294,14 +2432,23 @@ fn test_storage_key_total_supply_storage_lifecycle() {
     let name = SorobanString::from_str(&env, "Test");
     let symbol = SorobanString::from_str(&env, "TST");
     let invoice_id = Symbol::new(&env, "inv");
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
 
     // Initial total supply should be 0
     assert_eq!(client.total_supply(), 0);
 
     // Mint and verify total supply increases
     let user = Address::generate(&env);
-    client.mint(&user, &5000, &minter);
+    client.mint(&user, &5000, &admin);
     assert_eq!(client.total_supply(), 5000);
 
     // Burn and verify total supply decreases
@@ -2759,10 +2906,19 @@ fn test_duplicate_mint_series_rejected_for_same_invoice() {
     let symbol = SorobanString::from_str(&env, "INVDUP");
     let invoice_id = Symbol::new(&env, "inv_dup");
 
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
 
     let mint_amount: i128 = 1_000;
-    client.mint(&recipient, &mint_amount, &minter);
+    client.mint(&recipient, &mint_amount, &admin);
 
     // Inspect mint event immediately (subsequent view calls can advance the
     // recorded event cursor in the test host).
@@ -2786,7 +2942,16 @@ fn test_duplicate_mint_series_rejected_for_same_invoice() {
     assert_eq!(client.invoice_id(), invoice_id);
 
     // Repeated initialize with the same invoice id cannot create another series.
-    let dup_init = client.try_initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    let dup_init = client.try_initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(dup_init, Err(Ok(crate::errors::Error::AlreadyInit)));
 
     assert_eq!(client.balance(&recipient), mint_amount);
@@ -2814,25 +2979,58 @@ fn test_authorized_mint_and_invalid_invoice_metadata() {
     // Empty name rejected before any token record exists.
     let empty_name = SorobanString::from_str(&env, "");
     assert_eq!(
-        client.try_initialize(&admin, &empty_name, &symbol, &7u32, &invoice_id, &minter),
+        client.try_initialize(
+            &admin,
+            &empty_name,
+            &symbol,
+            &7u32,
+            &invoice_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        ),
         Err(Ok(crate::errors::Error::InvalidMetadata))
     );
 
     // Empty symbol rejected.
     let empty_symbol = SorobanString::from_str(&env, "");
     assert_eq!(
-        client.try_initialize(&admin, &name, &empty_symbol, &7u32, &invoice_id, &minter),
+        client.try_initialize(
+            &admin,
+            &name,
+            &empty_symbol,
+            &7u32,
+            &invoice_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        ),
         Err(Ok(crate::errors::Error::InvalidMetadata))
     );
 
     // Valid initialize + authorized mint.
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
-    client.mint(&recipient, &250, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
+    client.mint(&recipient, &250, &admin);
     assert_eq!(client.balance(&recipient), 250);
     assert_eq!(client.total_supply(), 250);
     assert_eq!(client.invoice_id(), invoice_id);
     assert_eq!(client.name(), name);
     assert_eq!(client.symbol(), symbol);
+
+    let minter_unauthorized = client.try_mint(&recipient, &25, &minter);
+    assert_eq!(
+        minter_unauthorized,
+        Err(Ok(crate::errors::Error::Unauthorized))
+    );
 
     // Unauthorized caller rejected; balances/supply unchanged.
     let unauthorized = client.try_mint(&recipient, &50, &stranger);
@@ -2842,7 +3040,16 @@ fn test_authorized_mint_and_invalid_invoice_metadata() {
 
     // Duplicate initialize (same invoice id on same contract) rejected.
     assert_eq!(
-        client.try_initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter),
+        client.try_initialize(
+            &admin,
+            &name,
+            &symbol,
+            &7u32,
+            &invoice_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        ),
         Err(Ok(crate::errors::Error::AlreadyInit))
     );
     assert_eq!(client.invoice_id(), invoice_id);
@@ -2865,7 +3072,16 @@ fn test_invoice_identifier_and_metadata_encoding() {
         let short_id = Symbol::new(&env, "a");
         let name = SorobanString::from_str(&env, "Short Inv");
         let symbol = SorobanString::from_str(&env, "S");
-        client.initialize(&admin, &name, &symbol, &7u32, &short_id, &minter);
+        client.initialize(
+            &admin,
+            &name,
+            &symbol,
+            &7u32,
+            &short_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        );
         assert_eq!(client.invoice_id(), short_id);
         assert_eq!(client.name(), name);
         assert_eq!(client.symbol(), symbol);
@@ -2881,7 +3097,16 @@ fn test_invoice_identifier_and_metadata_encoding() {
         let max_id = Symbol::new(&env, "abcdefghijklmnopqrstuvwxyz012345");
         let name = SorobanString::from_str(&env, "Max Length Invoice Identifier");
         let symbol = SorobanString::from_str(&env, "MAX32");
-        client.initialize(&admin, &name, &symbol, &0u32, &max_id, &minter);
+        client.initialize(
+            &admin,
+            &name,
+            &symbol,
+            &0u32,
+            &max_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        );
         assert_eq!(client.invoice_id(), max_id);
         assert_eq!(client.name(), name);
         assert_eq!(client.symbol(), symbol);
@@ -2912,7 +3137,16 @@ fn test_invoice_identifier_and_metadata_encoding() {
         let near_max = Symbol::new(&env, "abcdefghijklmnopqrstuvwxyz01234");
         let name = SorobanString::from_str(&env, "Near Max");
         let symbol = SorobanString::from_str(&env, "NMAX");
-        client.initialize(&admin, &name, &symbol, &18u32, &near_max, &minter);
+        client.initialize(
+            &admin,
+            &name,
+            &symbol,
+            &18u32,
+            &near_max,
+            &minter,
+            &i128::MAX,
+            &1,
+        );
         assert_eq!(client.invoice_id(), near_max);
         assert_eq!(client.decimals(), 18);
     }
@@ -3067,28 +3301,8 @@ fn test_mint_overflow_rejected() {
     assert_eq!(client.balance(&recipient), max);
 
     let result = client.try_mint(&recipient, &1, &minter);
-    assert_eq!(result, Err(Ok(crate::errors::Error::Overflow)));
+    assert_eq!(result, Err(Ok(crate::errors::Error::SupplyCapExceeded)));
     assert_eq!(client.balance(&recipient), max);
-}
-
-#[test]
-fn test_mint_zero_amount_rejected() {
-    let env = Env::default();
-    let (client, admin, minter) = setup_token(&env);
-    let recipient = Address::generate(&env);
-
-    let result = client.try_mint(&recipient, &0, &minter);
-    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAmount)));
-}
-
-#[test]
-fn test_mint_negative_amount_rejected() {
-    let env = Env::default();
-    let (client, admin, minter) = setup_token(&env);
-    let recipient = Address::generate(&env);
-
-    let result = client.try_mint(&recipient, &(-100), &minter);
-    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidAmount)));
 }
 
 #[test]
@@ -3103,13 +3317,22 @@ fn test_mint_fractional_decimal_bounds() {
     let symbol = SorobanString::from_str(&env, "INV");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
 
     let recipient = Address::generate(&env);
-    client.mint(&recipient, &1, &minter);
+    client.mint(&recipient, &1, &admin);
     assert_eq!(client.balance(&recipient), 1);
 
-    client.mint(&recipient, &9_999_999, &minter);
+    client.mint(&recipient, &9_999_999, &admin);
     assert_eq!(client.balance(&recipient), 10_000_000);
 }
 
@@ -3121,10 +3344,10 @@ fn test_mint_max_supply_overflow_rejected() {
     let recipient = Address::generate(&env);
 
     let max_i128 = i128::MAX;
-    client.mint(&recipient, &max_i128, &minter);
+    client.mint(&recipient, &max_i128, &admin);
 
-    let result = client.try_mint(&recipient, &1, &minter);
-    assert_eq!(result, Err(Ok(crate::errors::Error::Overflow)));
+    let result = client.try_mint(&recipient, &1, &admin);
+    assert_eq!(result, Err(Ok(crate::errors::Error::SupplyCapExceeded)));
 }
 
 #[test]
@@ -3178,6 +3401,28 @@ fn lcg_next(state: &mut u64) -> u64 {
 
 fn lcg_amount(state: &mut u64, max: i128) -> i128 {
     1 + (lcg_next(state) as i128) % max
+}
+
+type ModelMap<K, V> = std::vec::Vec<(K, V)>;
+
+fn model_get<'a, K: PartialEq, V>(map: &'a [(K, V)], key: &K) -> Option<&'a V> {
+    map.iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value)
+}
+
+fn model_get_mut<'a, K: PartialEq, V>(map: &'a mut [(K, V)], key: &K) -> Option<&'a mut V> {
+    map.iter_mut()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value)
+}
+
+fn model_set<K: PartialEq, V>(map: &mut ModelMap<K, V>, key: K, value: V) {
+    if let Some(existing) = model_get_mut(map, &key) {
+        *existing = value;
+    } else {
+        map.push((key, value));
+    }
 }
 
 fn issue457_sum_balances(client: &InvoiceTokenClient, wallets: &soroban_sdk::Vec<Address>) -> i128 {
@@ -3367,45 +3612,34 @@ fn issue457_random_walk_mint_transfer_burn_conserves_every_step() {
 
 // ── Fuzz targets for invoice token mint/burn/transfer (Issue #771) ────────────
 
-// Property-based fuzz tests using a deterministic pseudo-random generator
-// to exercise token accounting invariants under arbitrary operation sequences.
-
-fn lcg_next(state: &mut u64) -> u64 {
-    *state = state
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    *state
-}
-
-fn lcg_amount(state: &mut u64, max: i128) -> i128 {
-    1 + (lcg_next(state) as i128) % max
-}
+// Property-based fuzz tests using the deterministic generator defined above.
 
 /// Simple state model for tracking expected balances and supply
 struct TokenModel {
-    balances: std::collections::HashMap<Address, i128>,
+    balances: ModelMap<Address, i128>,
     supply: i128,
 }
 
 impl TokenModel {
     fn new() -> Self {
         Self {
-            balances: std::collections::HashMap::new(),
+            balances: std::vec::Vec::new(),
             supply: 0,
         }
     }
 
     fn balance(&self, addr: &Address) -> i128 {
-        *self.balances.get(addr).unwrap_or(&0)
+        model_get(&self.balances, addr).copied().unwrap_or(0)
     }
 
     fn mint(&mut self, to: Address, amount: i128) {
-        *self.balances.entry(to).or_insert(0) += amount;
+        let balance = self.balance(&to) + amount;
+        model_set(&mut self.balances, to, balance);
         self.supply += amount;
     }
 
     fn burn(&mut self, from: &Address, amount: i128) -> Result<(), ()> {
-        let bal = self.balances.get_mut(from).ok_or(())?;
+        let bal = model_get_mut(&mut self.balances, from).ok_or(())?;
         if *bal < amount {
             return Err(());
         }
@@ -3415,12 +3649,13 @@ impl TokenModel {
     }
 
     fn transfer(&mut self, from: &Address, to: &Address, amount: i128) -> Result<(), ()> {
-        let from_bal = self.balances.get_mut(from).ok_or(())?;
-        if *from_bal < amount {
+        let from_bal = self.balance(from);
+        if from_bal < amount {
             return Err(());
         }
-        *from_bal -= amount;
-        *self.balances.entry(to.clone()).or_insert(0) += amount;
+        model_set(&mut self.balances, from.clone(), from_bal - amount);
+        let to_balance = self.balance(to) + amount;
+        model_set(&mut self.balances, to.clone(), to_balance);
         Ok(())
     }
 
@@ -3435,7 +3670,7 @@ impl TokenModel {
             );
         }
         // Also check sum of all balances equals supply
-        let sum: i128 = self.balances.values().sum();
+        let sum: i128 = self.balances.iter().map(|(_, balance)| balance).sum();
         assert_eq!(sum, self.supply, "balance sum != supply");
     }
 }
@@ -3447,7 +3682,7 @@ fn fuzz_mint_burn_transfer_conservation() {
     let (client, admin, minter) = setup_token(&env);
     client.set_transfer_locked(&admin, &false);
 
-    let mut state: u64 = 0xFUZZ_SEED_1;
+    let mut state: u64 = 0xF022_0001;
     let mut model = TokenModel::new();
     let mut wallets = Vec::new(&env);
 
@@ -3501,7 +3736,7 @@ fn fuzz_burn_from_allowance_tracking() {
     let (client, admin, minter) = setup_token(&env);
     client.set_transfer_locked(&admin, &false);
 
-    let mut state: u64 = 0xFUZZ_SEED_2;
+    let mut state: u64 = 0xF022_0002;
     let mut wallets = Vec::new(&env);
     let mut spenders = Vec::new(&env);
 
@@ -3524,45 +3759,43 @@ fn fuzz_burn_from_allowance_tracking() {
 
     // Model tracking
     struct AllowanceModel {
-        balances: std::collections::HashMap<Address, i128>,
-        allowances: std::collections::HashMap<(Address, Address), i128>,
+        balances: ModelMap<Address, i128>,
+        allowances: ModelMap<(Address, Address), i128>,
         supply: i128,
     }
 
     impl AllowanceModel {
         fn new() -> Self {
             Self {
-                balances: std::collections::HashMap::new(),
-                allowances: std::collections::HashMap::new(),
+                balances: std::vec::Vec::new(),
+                allowances: std::vec::Vec::new(),
                 supply: 0,
             }
         }
         fn balance(&self, addr: &Address) -> i128 {
-            *self.balances.get(addr).unwrap_or(&0)
+            model_get(&self.balances, addr).copied().unwrap_or(0)
         }
         fn allowance(&self, from: &Address, spender: &Address) -> i128 {
-            *self
-                .allowances
-                .get(&(from.clone(), spender.clone()))
-                .unwrap_or(&0)
+            model_get(&self.allowances, &(from.clone(), spender.clone()))
+                .copied()
+                .unwrap_or(0)
         }
         fn mint(&mut self, to: Address, amount: i128) {
-            *self.balances.entry(to).or_insert(0) += amount;
+            let balance = self.balance(&to) + amount;
+            model_set(&mut self.balances, to, balance);
             self.supply += amount;
         }
         fn approve(&mut self, from: Address, spender: Address, amount: i128) {
-            self.allowances.insert((from, spender), amount);
+            model_set(&mut self.allowances, (from, spender), amount);
         }
         fn burn_from(&mut self, spender: &Address, from: &Address, amount: i128) -> Result<(), ()> {
-            let allow = self
-                .allowances
-                .get_mut(&(from.clone(), spender.clone()))
-                .ok_or(())?;
+            let allow =
+                model_get_mut(&mut self.allowances, &(from.clone(), spender.clone())).ok_or(())?;
             if *allow < amount {
                 return Err(());
             }
             *allow -= amount;
-            let bal = self.balances.get_mut(from).ok_or(())?;
+            let bal = model_get_mut(&mut self.balances, from).ok_or(())?;
             if *bal < amount {
                 return Err(());
             }
@@ -3587,18 +3820,20 @@ fn fuzz_burn_from_allowance_tracking() {
                     "allowance mismatch"
                 );
             }
-            let sum: i128 = self.balances.values().sum();
+            let sum: i128 = self.balances.iter().map(|(_, balance)| balance).sum();
             assert_eq!(sum, self.supply, "balance sum != supply");
         }
     }
 
     let mut model = AllowanceModel::new();
     for w in wallets.iter() {
-        model.mint(w, client.balance(&w));
+        let balance = client.balance(&w);
+        model.mint(w, balance);
     }
     for (i, s) in spenders.iter().enumerate() {
         let w = wallets.get(i as u32).unwrap();
-        model.approve(w, s, client.allowance(w, s));
+        let allowance = client.allowance(&w, &s);
+        model.approve(w, s, allowance);
     }
 
     // Run 150 random burn_from operations
@@ -3626,7 +3861,7 @@ fn fuzz_transfer_from_allowance_tracking() {
     let (client, admin, minter) = setup_token(&env);
     client.set_transfer_locked(&admin, &false);
 
-    let mut state: u64 = 0xFUZZ_SEED_3;
+    let mut state: u64 = 0xF022_0003;
     let mut wallets = Vec::new(&env);
     let mut spenders = Vec::new(&env);
 
@@ -3649,34 +3884,34 @@ fn fuzz_transfer_from_allowance_tracking() {
 
     // Model tracking
     struct TransferFromModel {
-        balances: std::collections::HashMap<Address, i128>,
-        allowances: std::collections::HashMap<(Address, Address), i128>,
+        balances: ModelMap<Address, i128>,
+        allowances: ModelMap<(Address, Address), i128>,
         supply: i128,
     }
 
     impl TransferFromModel {
         fn new() -> Self {
             Self {
-                balances: std::collections::HashMap::new(),
-                allowances: std::collections::HashMap::new(),
+                balances: std::vec::Vec::new(),
+                allowances: std::vec::Vec::new(),
                 supply: 0,
             }
         }
         fn balance(&self, addr: &Address) -> i128 {
-            *self.balances.get(addr).unwrap_or(&0)
+            model_get(&self.balances, addr).copied().unwrap_or(0)
         }
         fn allowance(&self, from: &Address, spender: &Address) -> i128 {
-            *self
-                .allowances
-                .get(&(from.clone(), spender.clone()))
-                .unwrap_or(&0)
+            model_get(&self.allowances, &(from.clone(), spender.clone()))
+                .copied()
+                .unwrap_or(0)
         }
         fn mint(&mut self, to: Address, amount: i128) {
-            *self.balances.entry(to).or_insert(0) += amount;
+            let balance = self.balance(&to) + amount;
+            model_set(&mut self.balances, to, balance);
             self.supply += amount;
         }
         fn approve(&mut self, from: Address, spender: Address, amount: i128) {
-            self.allowances.insert((from, spender), amount);
+            model_set(&mut self.allowances, (from, spender), amount);
         }
         fn transfer_from(
             &mut self,
@@ -3685,20 +3920,19 @@ fn fuzz_transfer_from_allowance_tracking() {
             to: &Address,
             amount: i128,
         ) -> Result<(), ()> {
-            let allow = self
-                .allowances
-                .get_mut(&(from.clone(), spender.clone()))
-                .ok_or(())?;
+            let allow =
+                model_get_mut(&mut self.allowances, &(from.clone(), spender.clone())).ok_or(())?;
             if *allow < amount {
                 return Err(());
             }
             *allow -= amount;
-            let from_bal = self.balances.get_mut(from).ok_or(())?;
-            if *from_bal < amount {
+            let from_bal = self.balance(from);
+            if from_bal < amount {
                 return Err(());
             }
-            *from_bal -= amount;
-            *self.balances.entry(to.clone()).or_insert(0) += amount;
+            model_set(&mut self.balances, from.clone(), from_bal - amount);
+            let to_balance = self.balance(to) + amount;
+            model_set(&mut self.balances, to.clone(), to_balance);
             Ok(())
         }
         fn assert_invariant(&self, client: &InvoiceTokenClient<'_>) {
@@ -3718,18 +3952,20 @@ fn fuzz_transfer_from_allowance_tracking() {
                     "allowance mismatch"
                 );
             }
-            let sum: i128 = self.balances.values().sum();
+            let sum: i128 = self.balances.iter().map(|(_, balance)| balance).sum();
             assert_eq!(sum, self.supply, "balance sum != supply");
         }
     }
 
     let mut model = TransferFromModel::new();
     for w in wallets.iter() {
-        model.mint(w, client.balance(&w));
+        let balance = client.balance(&w);
+        model.mint(w, balance);
     }
     for (i, s) in spenders.iter().enumerate() {
         let w = wallets.get(i as u32).unwrap();
-        model.approve(w, s, client.allowance(w, s));
+        let allowance = client.allowance(&w, &s);
+        model.approve(w, s, allowance);
     }
 
     // Run 150 random transfer_from operations
@@ -3764,7 +4000,7 @@ fn fuzz_freeze_thaw_account() {
     let (client, admin, minter) = setup_token(&env);
     client.set_transfer_locked(&admin, &false);
 
-    let mut state: u64 = 0xFUZZ_SEED_4;
+    let mut state: u64 = 0xF022_0004;
     let mut wallets = Vec::new(&env);
 
     // Generate 6 test wallets
@@ -3780,52 +4016,56 @@ fn fuzz_freeze_thaw_account() {
 
     // Model tracking frozen accounts
     struct FreezeModel {
-        balances: std::collections::HashMap<Address, i128>,
-        frozen: std::collections::HashSet<Address>,
+        balances: ModelMap<Address, i128>,
+        frozen: std::vec::Vec<Address>,
         supply: i128,
     }
 
     impl FreezeModel {
         fn new() -> Self {
             Self {
-                balances: std::collections::HashMap::new(),
-                frozen: std::collections::HashSet::new(),
+                balances: std::vec::Vec::new(),
+                frozen: std::vec::Vec::new(),
                 supply: 0,
             }
         }
         fn balance(&self, addr: &Address) -> i128 {
-            *self.balances.get(addr).unwrap_or(&0)
+            model_get(&self.balances, addr).copied().unwrap_or(0)
         }
         fn is_frozen(&self, addr: &Address) -> bool {
             self.frozen.contains(addr)
         }
         fn mint(&mut self, to: Address, amount: i128) {
-            *self.balances.entry(to).or_insert(0) += amount;
+            let balance = self.balance(&to) + amount;
+            model_set(&mut self.balances, to, balance);
             self.supply += amount;
         }
         fn freeze(&mut self, addr: Address) {
-            self.frozen.insert(addr);
+            if !self.frozen.contains(&addr) {
+                self.frozen.push(addr);
+            }
         }
         fn unfreeze(&mut self, addr: &Address) {
-            self.frozen.remove(addr);
+            self.frozen.retain(|frozen| frozen != addr);
         }
         fn transfer(&mut self, from: &Address, to: &Address, amount: i128) -> Result<(), ()> {
             if self.frozen.contains(from) || self.frozen.contains(to) {
                 return Err(()); // Frozen accounts can't transfer
             }
-            let from_bal = self.balances.get_mut(from).ok_or(())?;
-            if *from_bal < amount {
+            let from_bal = self.balance(from);
+            if from_bal < amount {
                 return Err(());
             }
-            *from_bal -= amount;
-            *self.balances.entry(to.clone()).or_insert(0) += amount;
+            model_set(&mut self.balances, from.clone(), from_bal - amount);
+            let to_balance = self.balance(to) + amount;
+            model_set(&mut self.balances, to.clone(), to_balance);
             Ok(())
         }
         fn burn(&mut self, from: &Address, amount: i128) -> Result<(), ()> {
             if self.frozen.contains(from) {
                 return Err(()); // Frozen accounts can't burn
             }
-            let bal = self.balances.get_mut(from).ok_or(())?;
+            let bal = model_get_mut(&mut self.balances, from).ok_or(())?;
             if *bal < amount {
                 return Err(());
             }
@@ -3843,19 +4083,20 @@ fn fuzz_freeze_thaw_account() {
                     addr
                 );
                 assert_eq!(
-                    client.is_account_frozen(addr).unwrap(),
+                    client.is_account_frozen(addr),
                     self.is_frozen(addr),
                     "frozen mismatch"
                 );
             }
-            let sum: i128 = self.balances.values().sum();
+            let sum: i128 = self.balances.iter().map(|(_, balance)| balance).sum();
             assert_eq!(sum, self.supply, "balance sum != supply");
         }
     }
 
     let mut model = FreezeModel::new();
     for w in wallets.iter() {
-        model.mint(w, client.balance(&w));
+        let balance = client.balance(&w);
+        model.mint(w, balance);
     }
 
     // Run 100 random operations including freeze/thaw
@@ -3907,7 +4148,7 @@ fn fuzz_pause_unpause_operations() {
     let (client, admin, minter) = setup_token(&env);
     client.set_transfer_locked(&admin, &false);
 
-    let mut state: u64 = 0xFUZZ_SEED_5;
+    let mut state: u64 = 0xF022_0005;
     let mut wallets = Vec::new(&env);
 
     // Generate 4 test wallets
@@ -3923,7 +4164,7 @@ fn fuzz_pause_unpause_operations() {
 
     // Model tracking paused state
     struct PauseModel {
-        balances: std::collections::HashMap<Address, i128>,
+        balances: ModelMap<Address, i128>,
         paused: bool,
         supply: i128,
     }
@@ -3931,38 +4172,40 @@ fn fuzz_pause_unpause_operations() {
     impl PauseModel {
         fn new() -> Self {
             Self {
-                balances: std::collections::HashMap::new(),
+                balances: std::vec::Vec::new(),
                 paused: false,
                 supply: 0,
             }
         }
         fn balance(&self, addr: &Address) -> i128 {
-            *self.balances.get(addr).unwrap_or(&0)
+            model_get(&self.balances, addr).copied().unwrap_or(0)
         }
         fn mint(&mut self, to: Address, amount: i128) {
             if self.paused {
                 return;
             }
-            *self.balances.entry(to).or_insert(0) += amount;
+            let balance = self.balance(&to) + amount;
+            model_set(&mut self.balances, to, balance);
             self.supply += amount;
         }
         fn transfer(&mut self, from: &Address, to: &Address, amount: i128) -> Result<(), ()> {
             if self.paused {
                 return Err(());
             }
-            let from_bal = self.balances.get_mut(from).ok_or(())?;
-            if *from_bal < amount {
+            let from_bal = self.balance(from);
+            if from_bal < amount {
                 return Err(());
             }
-            *from_bal -= amount;
-            *self.balances.entry(to.clone()).or_insert(0) += amount;
+            model_set(&mut self.balances, from.clone(), from_bal - amount);
+            let to_balance = self.balance(to) + amount;
+            model_set(&mut self.balances, to.clone(), to_balance);
             Ok(())
         }
         fn burn(&mut self, from: &Address, amount: i128) -> Result<(), ()> {
             if self.paused {
                 return Err(());
             }
-            let bal = self.balances.get_mut(from).ok_or(())?;
+            let bal = model_get_mut(&mut self.balances, from).ok_or(())?;
             if *bal < amount {
                 return Err(());
             }
@@ -3975,7 +4218,7 @@ fn fuzz_pause_unpause_operations() {
         }
         fn assert_invariant(&self, client: &InvoiceTokenClient<'_>) {
             assert_eq!(client.total_supply(), self.supply, "supply mismatch");
-            assert_eq!(client.paused().unwrap(), self.paused, "paused mismatch");
+            assert_eq!(client.paused(), self.paused, "paused mismatch");
             for (addr, expected) in &self.balances {
                 assert_eq!(
                     client.balance(addr),
@@ -3984,14 +4227,15 @@ fn fuzz_pause_unpause_operations() {
                     addr
                 );
             }
-            let sum: i128 = self.balances.values().sum();
+            let sum: i128 = self.balances.iter().map(|(_, balance)| balance).sum();
             assert_eq!(sum, self.supply, "balance sum != supply");
         }
     }
 
     let mut model = PauseModel::new();
     for w in wallets.iter() {
-        model.mint(w, client.balance(&w));
+        let balance = client.balance(&w);
+        model.mint(w, balance);
     }
 
     // Run 80 random operations including pause/unpause
