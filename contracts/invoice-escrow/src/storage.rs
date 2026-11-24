@@ -338,6 +338,21 @@ pub fn set_dispute(env: &Env, inv_id: &Symbol, data: &DisputeData) {
     bump_persistent(env, &key);
 }
 
+pub fn get_manifest(env: &Env, invoice_id: &BytesN<32>) -> Option<crate::types::DocumentManifest> {
+    let key = StorageKey::Manifest(invoice_id.clone());
+    let value = env.storage().persistent().get(&key);
+    if value.is_some() {
+        bump_persistent(env, &key);
+    }
+    value
+}
+
+pub fn set_manifest(env: &Env, invoice_id: &BytesN<32>, manifest: &crate::types::DocumentManifest) {
+    let key = StorageKey::Manifest(invoice_id.clone());
+    env.storage().persistent().set(&key, manifest);
+    bump_persistent(env, &key);
+}
+
 /// Load the installment repayment milestone schedule for an invoice, if one
 /// has been configured. Extends the entry's TTL on every access.
 pub fn get_installment_schedule(

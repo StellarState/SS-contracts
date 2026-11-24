@@ -24,9 +24,10 @@ pub use types::FundingStatus;
 pub use types::InstallmentMilestone;
 pub use types::InvoiceCategory;
 use types::{
-    CategoryFeeSchedule, Config, DisputeData, EscrowData, FundingInvoice, InstallmentInput,
-    InvoiceData, InvoiceStatus,
+    CategoryFeeSchedule, Config, EscrowData, FundingInvoice, InstallmentInput, InvoiceData,
+    InvoiceStatus,
 };
+pub use types::{DisputeData, DisputeStage, DocumentManifest, ManifestStatus};
 
 pub use errors::Error;
 
@@ -1381,12 +1382,88 @@ impl InvoiceEscrow {
                 reason,
                 raised_at,
                 resolved: false,
+                stage: DisputeStage::Raised,
+                proposed_favour: None,
+                appeal_deadline: 0,
+                appellant: None,
+                appeal_deposit: 0,
             },
         );
 
         events::dispute_raised(&env, invoice_id.clone(), &caller, raised_at);
         events::escrow_status_changed(&env, invoice_id, EscrowStatus::Disputed, raised_at);
         Ok(())
+    }
+
+    /// Propose a resolution without moving funds and open an appeal window.
+    pub fn propose_dispute_resolution(
+        env: Env,
+        admin: Address,
+        invoice_id: Symbol,
+        favour: Symbol,
+        appeal_window_secs: u64,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+        if favour != Symbol::new(&env, "seller") && favour != Symbol::new(&env, "buyer") {
+            return Err(Error::InvalidDisputeOutcome);
+        }
+        let data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if data.status != EscrowStatus::Disputed {
+            return Err(Error::NotDisputed);
+        }
+        let mut dispute = storage::get_dispute(&env, &invoice_id).ok_or(Error::NotDisputed)?;
+        if dispute.stage != DisputeStage::Raised || appeal_window_secs == 0 {
+            return Err(Error::InvalidDisputeStage);
+        }
+        dispute.stage = DisputeStage::Proposed;
+        dispute.proposed_favour = Some(favour.clone());
+        dispute.appeal_deadline = env.ledger().timestamp().saturating_add(appeal_window_secs);
+        storage::set_dispute(&env, &invoice_id, &dispute);
+        events::dispute_proposed(&env, invoice_id, favour, dispute.appeal_deadline);
+        Ok(())
+    }
+
+    /// Appeal a proposed resolution by posting a deposit during the window.
+    pub fn appeal_dispute(
+        env: Env,
+        caller: Address,
+        invoice_id: Symbol,
+        deposit: i128,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        if deposit <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        let data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if caller != data.seller && caller != data.debtor {
+            return Err(Error::Unauthorized);
+        }
+        let mut dispute = storage::get_dispute(&env, &invoice_id).ok_or(Error::NotDisputed)?;
+        if dispute.stage != DisputeStage::Proposed {
+            return Err(Error::InvalidDisputeStage);
+        }
+        if env.ledger().timestamp() > dispute.appeal_deadline {
+            return Err(Error::AppealWindowClosed);
+        }
+        token::Client::new(&env, &data.token).transfer(
+            &caller,
+            &env.current_contract_address(),
+            &deposit,
+        );
+        dispute.stage = DisputeStage::Appealed;
+        dispute.appellant = Some(caller.clone());
+        dispute.appeal_deposit = deposit;
+        storage::set_dispute(&env, &invoice_id, &dispute);
+        events::dispute_escalated(&env, invoice_id, &caller, deposit);
+        Ok(())
+    }
+
+    pub fn get_dispute(env: Env, invoice_id: Symbol) -> Result<DisputeData, Error> {
+        storage::get_dispute(&env, &invoice_id).ok_or(Error::NotDisputed)
     }
 
     /// Admin-only: resolve a `Disputed` escrow in favour of `'seller'` (settles
@@ -1415,6 +1492,11 @@ impl InvoiceEscrow {
         let mut dispute = storage::get_dispute(&env, &invoice_id).ok_or(Error::NotDisputed)?;
         if dispute.resolved {
             return Err(Error::AlreadyResolved);
+        }
+        if dispute.stage == DisputeStage::Proposed
+            && env.ledger().timestamp() <= dispute.appeal_deadline
+        {
+            return Err(Error::AppealWindowOpen);
         }
 
         let now = env.ledger().timestamp();
@@ -1457,9 +1539,24 @@ impl InvoiceEscrow {
             }
             data.status = EscrowStatus::Refunded;
         }
+        if let Some(appellant) = dispute.appellant.clone() {
+            if dispute.appeal_deposit > 0 {
+                let appellant_won = (appellant == data.seller && settle_to_seller)
+                    || (appellant == data.debtor && !settle_to_seller);
+                let recipient = if appellant_won {
+                    appellant
+                } else if appellant == data.seller {
+                    data.debtor.clone()
+                } else {
+                    data.seller.clone()
+                };
+                token.transfer(&contract, &recipient, &dispute.appeal_deposit);
+            }
+        }
         storage::set_escrow(&env, invoice_id.clone(), &data);
 
         dispute.resolved = true;
+        dispute.stage = DisputeStage::Finalized;
         storage::set_dispute(&env, &invoice_id, &dispute);
         if settle_to_seller {
             advance_installment_schedule(&env, &invoice_id, data.paid_amt, true);
@@ -1478,6 +1575,7 @@ impl InvoiceEscrow {
             Symbol::new(&env, "buyer")
         };
         events::dispute_resolved(&env, invoice_id.clone(), resolved_favour, timed_out);
+        events::dispute_finalized(&env, invoice_id.clone(), settle_to_seller);
         events::escrow_status_changed(&env, invoice_id, data.status, now);
         Ok(())
     }
@@ -2482,6 +2580,95 @@ impl InvoiceEscrow {
     /// View: return registered invoice data.
     pub fn get_invoice_record(env: Env, invoice_id: BytesN<32>) -> Result<InvoiceData, Error> {
         storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)
+    }
+
+    /// Register the issuer-owned manifest that anchors an invoice's CID collection.
+    pub fn register_manifest(
+        env: Env,
+        invoice_id: BytesN<32>,
+        issuer: Address,
+        manifest_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        issuer.require_auth();
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        if issuer != config.admin {
+            return Err(Error::Unauthorized);
+        }
+        storage::get_invoice_record(&env, &invoice_id).ok_or(Error::EscrowNotFound)?;
+        if storage::get_manifest(&env, &invoice_id).is_some() {
+            return Err(Error::ManifestExists);
+        }
+        let manifest = DocumentManifest {
+            issuer,
+            manifest_hash: manifest_hash.clone(),
+            documents: Vec::new(&env),
+            version: 1,
+        };
+        storage::set_manifest(&env, &invoice_id, &manifest);
+        events::manifest_registered(&env, invoice_id, manifest_hash);
+        Ok(())
+    }
+
+    /// Add a unique document hash covered by the current manifest policy.
+    pub fn add_manifest_document(
+        env: Env,
+        invoice_id: BytesN<32>,
+        issuer: Address,
+        document_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        issuer.require_auth();
+        let mut manifest =
+            storage::get_manifest(&env, &invoice_id).ok_or(Error::ManifestNotFound)?;
+        if manifest.issuer != issuer {
+            return Err(Error::Unauthorized);
+        }
+        if manifest.documents.iter().any(|hash| hash == document_hash) {
+            return Err(Error::DuplicateDocument);
+        }
+        manifest.documents.push_back(document_hash);
+        storage::set_manifest(&env, &invoice_id, &manifest);
+        Ok(())
+    }
+
+    /// Authorize a new manifest hash without discarding registered documents.
+    pub fn amend_manifest(
+        env: Env,
+        invoice_id: BytesN<32>,
+        issuer: Address,
+        manifest_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        issuer.require_auth();
+        let mut manifest =
+            storage::get_manifest(&env, &invoice_id).ok_or(Error::ManifestNotFound)?;
+        if manifest.issuer != issuer {
+            return Err(Error::Unauthorized);
+        }
+        if manifest.manifest_hash == manifest_hash {
+            return Err(Error::ManifestExists);
+        }
+        manifest.manifest_hash = manifest_hash.clone();
+        manifest.version = manifest.version.checked_add(1).ok_or(Error::Overflow)?;
+        storage::set_manifest(&env, &invoice_id, &manifest);
+        events::manifest_amended(&env, invoice_id, manifest_hash, manifest.version);
+        Ok(())
+    }
+
+    pub fn get_manifest_status(env: Env, invoice_id: BytesN<32>) -> Result<ManifestStatus, Error> {
+        let manifest = storage::get_manifest(&env, &invoice_id).ok_or(Error::ManifestNotFound)?;
+        Ok(ManifestStatus {
+            manifest_hash: manifest.manifest_hash,
+            document_count: manifest.documents.len(),
+            version: manifest.version,
+        })
+    }
+
+    pub fn verify_manifest_document(
+        env: Env,
+        invoice_id: BytesN<32>,
+        document_hash: BytesN<32>,
+    ) -> Result<bool, Error> {
+        let manifest = storage::get_manifest(&env, &invoice_id).ok_or(Error::ManifestNotFound)?;
+        Ok(manifest.documents.iter().any(|hash| hash == document_hash))
     }
 
     /// View: number of unique investors admitted to the registered invoice.

@@ -410,6 +410,41 @@ pub fn dispute_resolved(env: &Env, inv_id: Symbol, favour: Symbol, timed_out: bo
     );
 }
 
+pub fn dispute_proposed(env: &Env, inv_id: Symbol, favour: Symbol, deadline: u64) {
+    env.events().publish(
+        (Symbol::new(env, "DisputeProposed"),),
+        (inv_id, favour, deadline),
+    );
+}
+
+pub fn dispute_escalated(env: &Env, inv_id: Symbol, appellant: &Address, deposit: i128) {
+    env.events().publish(
+        (Symbol::new(env, "DisputeEscalated"),),
+        (inv_id, appellant.clone(), deposit),
+    );
+}
+
+pub fn dispute_finalized(env: &Env, inv_id: Symbol, seller_won: bool) {
+    env.events().publish(
+        (Symbol::new(env, "DisputeFinalized"),),
+        (inv_id, seller_won),
+    );
+}
+
+pub fn manifest_registered(env: &Env, invoice_id: BytesN<32>, hash: BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, "ManifestRegistered"),),
+        (invoice_id, hash),
+    );
+}
+
+pub fn manifest_amended(env: &Env, invoice_id: BytesN<32>, hash: BytesN<32>, version: u32) {
+    env.events().publish(
+        (Symbol::new(env, "ManifestAmended"),),
+        (invoice_id, hash, version),
+    );
+}
+
 /// Publish `installment_schedule_set` when a seller configures (or replaces)
 /// the installment repayment milestone schedule for an invoice.
 pub fn installment_schedule_set(
