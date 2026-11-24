@@ -58,6 +58,7 @@ pub struct InvoiceToken;
 #[contractimpl]
 impl InvoiceToken {
     /// Initialize the token with admin, metadata, and minter (escrow) address.
+    /// The immutable supply cap is `face_value_usd / min_fraction_size`.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -66,10 +67,19 @@ impl InvoiceToken {
         decimals: u32,
         invoice_id: Symbol,
         minter: Address,
+        face_value_usd: i128,
+        min_fraction_size: i128,
     ) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&admin, &minter])?;
         if storage::get_metadata(&env).is_some() {
             return Err(Error::AlreadyInit);
+        }
+        if face_value_usd <= 0 || min_fraction_size <= 0 {
+            return Err(Error::InvalidSupplyTerms);
+        }
+        let max_supply = face_value_usd / min_fraction_size;
+        if max_supply <= 0 {
+            return Err(Error::InvalidSupplyTerms);
         }
         if decimals > MAX_DECIMALS {
             return Err(Error::InvalidDecimals);
@@ -85,12 +95,16 @@ impl InvoiceToken {
             symbol,
             decimals,
             invoice_id,
+            max_supply,
             transfer_locked: true, // default locked until settlement
             paused: false,
             transfer_restriction: None,
         };
         storage::set_metadata(&env, &meta);
         storage::set_total_supply(&env, 0);
+        env.storage()
+            .instance()
+            .set(&StorageKey::MaxSupply, &max_supply);
 
         // Seed default roles: admin gets all roles, minter gets minter role.
         let admin_role_sym = Symbol::new(&env, ADMIN_ROLE);
@@ -135,6 +149,18 @@ impl InvoiceToken {
     pub fn total_supply(env: Env) -> Result<i128, Error> {
         storage::get_metadata(&env).ok_or(Error::NotInit)?;
         Ok(storage::get_total_supply(&env))
+    }
+
+    /// Return the current and immutable maximum supply for this invoice token.
+    pub fn get_supply(env: Env) -> Result<(i128, i128), Error> {
+        storage::get_metadata(&env).ok_or(Error::NotInit)?;
+        Ok((
+            storage::get_total_supply(&env),
+            env.storage()
+                .instance()
+                .get(&StorageKey::MaxSupply)
+                .ok_or(Error::NotInit)?,
+        ))
     }
 
     pub fn balance(env: Env, id: Address) -> Result<i128, Error> {
@@ -465,12 +491,15 @@ impl InvoiceToken {
         if balance < amount {
             return Err(Error::InsufficientBalance);
         }
+        let current_supply = storage::get_total_supply(&env);
+        if amount > current_supply {
+            return Err(Error::InsufficientBalance);
+        }
         storage::set_balance(&env, &from, balance - amount);
-        let new_supply = storage::get_total_supply(&env)
-            .checked_sub(amount)
-            .ok_or(Error::Overflow)?;
+        let new_supply = current_supply.checked_sub(amount).ok_or(Error::Overflow)?;
         storage::set_total_supply(&env, new_supply);
         events::burn_event(&env, &from, amount);
+        events::tokens_burned_event(&env, &meta.invoice_id, &from, amount);
         Ok(())
     }
 
@@ -500,6 +529,10 @@ impl InvoiceToken {
         if balance < amount {
             return Err(Error::InsufficientBalance);
         }
+        let current_supply = storage::get_total_supply(&env);
+        if amount > current_supply {
+            return Err(Error::InsufficientBalance);
+        }
         storage::set_allowance(
             &env,
             &from,
@@ -508,18 +541,16 @@ impl InvoiceToken {
             allow.expiration_ledger,
         );
         storage::set_balance(&env, &from, balance - amount);
-        let new_supply = storage::get_total_supply(&env)
-            .checked_sub(amount)
-            .ok_or(Error::Overflow)?;
+        let new_supply = current_supply.checked_sub(amount).ok_or(Error::Overflow)?;
         storage::set_total_supply(&env, new_supply);
         events::burn_event(&env, &from, amount);
+        events::tokens_burned_event(&env, &meta.invoice_id, &from, amount);
         Ok(())
     }
 
     // ---------- Admin / minter ----------
 
-    /// Mint tokens to `to`. Callable only by admin or minter (escrow).
-    /// `by` must be admin or minter and must authorize the call.
+    /// Mint tokens to `to`. Callable only by the platform admin.
     pub fn mint(env: Env, to: Address, amount: i128, by: Address) -> Result<(), Error> {
         ensure_non_zero_addresses(&env, [&to, &by])?;
         by.require_auth();
@@ -527,7 +558,7 @@ impl InvoiceToken {
         if meta.paused {
             return Err(Error::Paused);
         }
-        if by != meta.admin && by != meta.minter {
+        if by != meta.admin {
             return Err(Error::Unauthorized);
         }
         ensure_account_not_frozen(&env, &by)?;
@@ -540,14 +571,18 @@ impl InvoiceToken {
             .ok_or(Error::Overflow)?;
         let new_supply = storage::get_total_supply(&env)
             .checked_add(amount)
-            .ok_or(Error::Overflow)?;
+            .ok_or(Error::SupplyCapExceeded)?;
+        if new_supply > meta.max_supply {
+            return Err(Error::SupplyCapExceeded);
+        }
         storage::set_balance(&env, &to, new_balance);
         storage::set_total_supply(&env, new_supply);
         events::mint_event(&env, &to, amount);
+        events::tokens_minted_event(&env, &meta.invoice_id, &to, amount);
         Ok(())
     }
 
-    /// Mint tokens to multiple addresses in a batch. Callable only by admin or minter.
+    /// Mint tokens to multiple addresses in a batch. Callable only by the platform admin.
     /// `to` and `amounts` vectors must be of equal length. Each amount must be > 0.
     pub fn mint_batch(
         env: Env,
@@ -565,11 +600,11 @@ impl InvoiceToken {
         if meta.paused {
             return Err(Error::Paused);
         }
-        if by != meta.admin && by != meta.minter {
+        if by != meta.admin {
             return Err(Error::Unauthorized);
         }
         ensure_account_not_frozen(&env, &by)?;
-        // Validate amounts and compute total
+        // Validate amounts and compute total before modifying balances.
         let mut total_amount: i128 = 0;
         for i in 0..amounts.len() {
             let amount = amounts.get(i).unwrap();
@@ -581,17 +616,30 @@ impl InvoiceToken {
             }
             let recipient = to.get(i).unwrap();
             ensure_account_not_frozen(&env, &recipient)?;
-            total_amount = total_amount.checked_add(amount).ok_or(Error::Overflow)?;
+            total_amount = total_amount
+                .checked_add(amount)
+                .ok_or(Error::SupplyCapExceeded)?;
+        }
+        let new_total_supply = storage::get_total_supply(&env)
+            .checked_add(total_amount)
+            .ok_or(Error::SupplyCapExceeded)?;
+        if new_total_supply > meta.max_supply {
+            return Err(Error::SupplyCapExceeded);
+        }
+
+        for i in 0..amounts.len() {
+            let amount = amounts.get(i).unwrap();
+            if amount == 0 {
+                continue;
+            }
+            let recipient = to.get(i).unwrap();
             let new_bal = storage::get_balance(&env, &recipient)
                 .checked_add(amount)
                 .ok_or(Error::Overflow)?;
             storage::set_balance(&env, &recipient, new_bal);
             events::mint_event(&env, &recipient, amount);
+            events::tokens_minted_event(&env, &meta.invoice_id, &recipient, amount);
         }
-        // Update total supply once
-        let new_total_supply = storage::get_total_supply(&env)
-            .checked_add(total_amount)
-            .ok_or(Error::Overflow)?;
         storage::set_total_supply(&env, new_total_supply);
         Ok(())
     }
@@ -768,6 +816,7 @@ impl InvoiceToken {
 
         // Emit event for regulatory audit trail
         events::clawback_event(&env, &from, amount);
+        events::tokens_burned_event(&env, &meta.invoice_id, &from, amount);
         Ok(())
     }
 
@@ -1089,10 +1138,12 @@ mod consent_test {
             &7u32,
             &Symbol::new(&env, "INV1"),
             &minter,
+            &i128::MAX,
+            &1,
         );
         client.set_transfer_locked(&admin, &false);
         client.set_direct_transfer_policy(&admin, &false);
-        client.mint(&minter, &alice, &1000i128);
+        client.mint(&alice, &1000i128, &admin);
 
         // Direct transfer_from is blocked when consent policy is enforced
         client.approve(&alice, &bob, &100i128, &100u32);

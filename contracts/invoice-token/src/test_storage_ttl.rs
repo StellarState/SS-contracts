@@ -21,9 +21,11 @@ fn setup(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address, Address) {
         &7u32,
         &Symbol::new(env, "ttl_inv"),
         &minter,
+        &i128::MAX,
+        &1,
     );
     let holder = Address::generate(env);
-    client.mint(&holder, &1_000, &minter);
+    client.mint(&holder, &1_000, &admin);
     (client, id, minter, holder)
 }
 

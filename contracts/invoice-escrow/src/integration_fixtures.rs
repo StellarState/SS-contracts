@@ -153,6 +153,8 @@ impl IntegrationTestEnv {
             &7,
             &invoice_id,
             &escrow_id,
+            &face_value,
+            &1,
         );
 
         // Initialize escrow with platform fee

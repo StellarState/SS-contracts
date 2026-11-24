@@ -36,7 +36,16 @@ fn setup_token(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address) {
     let name = SorobanString::from_str(env, "Invoice INV-001");
     let symbol = SorobanString::from_str(env, "INV001");
     let invoice_id = Symbol::new(env, "inv_001");
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     (client, admin, minter)
 }
 
@@ -104,6 +113,8 @@ fn test_initialize_rejects_zero_admin_and_minter() {
         &7,
         &invoice_id,
         &minter,
+        &i128::MAX,
+        &1,
     ));
     assert_invalid_address!(client.try_initialize(
         &admin,
@@ -112,6 +123,8 @@ fn test_initialize_rejects_zero_admin_and_minter() {
         &7,
         &invoice_id,
         &zero_contract_address(&env),
+        &i128::MAX,
+        &1,
     ));
 }
 
@@ -234,9 +247,9 @@ fn test_transfer_locked_non_admin_fails() {
 fn test_transfer_locked_admin_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
     assert_eq!(client.balance(&admin), 1000);
     assert!(client.transfer_locked());
 
@@ -272,7 +285,7 @@ fn test_transfer_from_locked_admin_succeeds() {
     env.mock_all_auths();
     let (client, admin, minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     let expiration = env.ledger().sequence() + 100;
@@ -553,25 +566,25 @@ fn test_frozen_accounts_cannot_approve_burn_or_use_allowance() {
 fn test_mint_rejects_frozen_recipient() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
     let frozen = Address::generate(&env);
     let active = Address::generate(&env);
 
     client.freeze_account(&frozen);
     assert_eq!(
-        client.try_mint(&frozen, &10, &minter),
+        client.try_mint(&frozen, &10, &admin),
         Err(Ok(crate::errors::Error::AccountFrozen))
     );
-    client.freeze_account(&minter);
+    client.freeze_account(&admin);
     assert_eq!(
-        client.try_mint(&active, &10, &minter),
+        client.try_mint(&active, &10, &admin),
         Err(Ok(crate::errors::Error::AccountFrozen))
     );
 
     let recipients = soroban_sdk::vec![&env, active.clone(), frozen.clone()];
     let amounts = soroban_sdk::vec![&env, 10i128, 20i128];
     assert_eq!(
-        client.try_mint_batch(&recipients, &amounts, &minter),
+        client.try_mint_batch(&recipients, &amounts, &admin),
         Err(Ok(crate::errors::Error::AccountFrozen))
     );
     assert_eq!(client.balance(&active), 0);
@@ -891,12 +904,12 @@ fn test_approve_event_emission() {
 fn test_mint_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
     let recipient = Address::generate(&env);
     let amount = 5000;
 
-    client.mint(&recipient, &amount, &minter);
+    client.mint(&recipient, &amount, &admin);
 
     let events = env.events().all();
     let event = events.events().last().unwrap();
@@ -905,7 +918,12 @@ fn test_mint_event_emission() {
 
     assert_eq!(
         topics,
-        (Symbol::new(&env, "mint"), recipient.clone()).into_val(&env)
+        (
+            Symbol::new(&env, "TokensMinted"),
+            Symbol::new(&env, "inv_001"),
+            recipient.clone()
+        )
+            .into_val(&env)
     );
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
@@ -925,26 +943,117 @@ fn test_mint_authorization_and_invalid_amount() {
     assert_eq!(client.balance(&recipient), 100);
     assert_eq!(client.total_supply(), 100);
 
-    client.mint(&recipient, &50, &minter);
-    assert_eq!(client.balance(&recipient), 150);
-    assert_eq!(client.total_supply(), 150);
+    let minter_unauthorized = client.try_mint(&recipient, &50, &minter);
+    assert_eq!(
+        minter_unauthorized,
+        Err(Ok(crate::errors::Error::Unauthorized))
+    );
+    assert_eq!(client.balance(&recipient), 100);
+    assert_eq!(client.total_supply(), 100);
 
     let unauthorized = client.try_mint(&recipient, &25, &stranger);
     assert_eq!(unauthorized, Err(Ok(crate::errors::Error::Unauthorized)));
 
-    let invalid_amount = client.try_mint(&recipient, &0, &minter);
+    let invalid_amount = client.try_mint(&recipient, &0, &admin);
     assert_eq!(invalid_amount, Err(Ok(crate::errors::Error::InvalidAmount)));
-    assert_eq!(client.balance(&recipient), 150);
-    assert_eq!(client.total_supply(), 150);
+    assert_eq!(client.balance(&recipient), 100);
+    assert_eq!(client.total_supply(), 100);
+}
+
+#[test]
+fn test_fractional_supply_cap_and_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let invoice_id = Symbol::new(&env, "cap_inv");
+    client.initialize(
+        &admin,
+        &SorobanString::from_str(&env, "Capped invoice"),
+        &SorobanString::from_str(&env, "CAP"),
+        &7,
+        &invoice_id,
+        &minter,
+        &1000,
+        &10,
+    );
+
+    assert_eq!(client.get_supply(), (0, 100));
+    client.mint(&recipient, &100, &admin);
+    assert_eq!(client.get_supply(), (100, 100));
+    assert_eq!(
+        client.try_mint(&recipient, &1, &admin),
+        Err(Ok(crate::errors::Error::SupplyCapExceeded))
+    );
+    assert_eq!(
+        client.try_mint(&recipient, &1, &minter),
+        Err(Ok(crate::errors::Error::Unauthorized))
+    );
+    assert_eq!(client.get_supply(), (100, 100));
+
+    let minted_event = env.events().all().events().last().unwrap().clone();
+    let (_, topics, data) = parse_event(&env, &minted_event);
+    assert_eq!(
+        topics,
+        (
+            Symbol::new(&env, "TokensMinted"),
+            invoice_id.clone(),
+            recipient.clone()
+        )
+            .into_val(&env)
+    );
+    assert_eq!(i128::try_from_val(&env, &data).unwrap(), 100);
+
+    client.burn(&recipient, &40);
+    assert_eq!(client.get_supply(), (60, 100));
+    let burned_event = env.events().all().events().last().unwrap().clone();
+    let (_, topics, data) = parse_event(&env, &burned_event);
+    assert_eq!(
+        topics,
+        (
+            Symbol::new(&env, "TokensBurned"),
+            invoice_id,
+            recipient.clone()
+        )
+            .into_val(&env)
+    );
+    assert_eq!(i128::try_from_val(&env, &data).unwrap(), 40);
+
+    client.mint(&recipient, &40, &admin);
+    assert_eq!(client.get_supply(), (100, 100));
+}
+
+#[test]
+fn test_initialize_rejects_invalid_fraction_terms() {
+    let env = Env::default();
+    let contract_id = env.register(InvoiceToken, ());
+    let client = InvoiceTokenClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let name = SorobanString::from_str(&env, "Invoice");
+    let symbol = SorobanString::from_str(&env, "INV");
+    let invoice_id = Symbol::new(&env, "bad_terms");
+
+    assert_eq!(
+        client.try_initialize(&admin, &name, &symbol, &7, &invoice_id, &minter, &100, &0),
+        Err(Ok(crate::errors::Error::InvalidSupplyTerms))
+    );
+    assert_eq!(
+        client.try_initialize(&admin, &name, &symbol, &7, &invoice_id, &minter, &5, &10),
+        Err(Ok(crate::errors::Error::InvalidSupplyTerms))
+    );
 }
 
 #[test]
 fn test_burn_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let burn_amount = 300;
     client.burn(&admin, &burn_amount);
@@ -956,7 +1065,12 @@ fn test_burn_event_emission() {
 
     assert_eq!(
         topics,
-        (Symbol::new(&env, "burn"), admin.clone()).into_val(&env)
+        (
+            Symbol::new(&env, "TokensBurned"),
+            Symbol::new(&env, "inv_001"),
+            admin.clone()
+        )
+            .into_val(&env)
     );
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
@@ -967,9 +1081,9 @@ fn test_burn_event_emission() {
 fn test_burn_insufficient_balance_fails() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &100, &minter);
+    client.mint(&admin, &100, &admin);
 
     let result = client.try_burn(&admin, &200);
     assert_eq!(result, Err(Ok(crate::errors::Error::InsufficientBalance)));
@@ -981,9 +1095,9 @@ fn test_burn_insufficient_balance_fails() {
 fn test_transfer_from_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
     client.set_transfer_locked(&admin, &false);
 
     let spender = Address::generate(&env);
@@ -1016,9 +1130,9 @@ fn test_transfer_from_event_emission() {
 fn test_burn_from_event_emission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     let expiration = env.ledger().sequence() + 100;
@@ -1034,7 +1148,12 @@ fn test_burn_from_event_emission() {
 
     assert_eq!(
         topics,
-        (Symbol::new(&env, "burn"), admin.clone()).into_val(&env)
+        (
+            Symbol::new(&env, "TokensBurned"),
+            Symbol::new(&env, "inv_001"),
+            admin.clone()
+        )
+            .into_val(&env)
     );
 
     let emitted_amount: i128 = data.try_into_val(&env).unwrap();
@@ -1045,9 +1164,9 @@ fn test_burn_from_event_emission() {
 fn test_burn_updates_balance_and_total_supply() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, minter) = setup_token(&env);
+    let (client, admin, _minter) = setup_token(&env);
 
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     client.burn(&admin, &300);
     assert_eq!(client.balance(&admin), 700);
@@ -1750,7 +1869,16 @@ fn test_initialize_rejects_unsupported_precision() {
     let symbol = SorobanString::from_str(&env, "INV001");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    let result = client.try_initialize(&admin, &name, &symbol, &19, &invoice_id, &minter);
+    let result = client.try_initialize(
+        &admin,
+        &name,
+        &symbol,
+        &19,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidDecimals)));
 }
 
@@ -1855,7 +1983,16 @@ fn test_initialize_rejects_empty_name() {
     let symbol = SorobanString::from_str(&env, "INV001");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    let result = client.try_initialize(&admin, &empty_name, &symbol, &7u32, &invoice_id, &minter);
+    let result = client.try_initialize(
+        &admin,
+        &empty_name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidMetadata)));
 }
 
@@ -1870,7 +2007,16 @@ fn test_initialize_rejects_empty_symbol() {
     let empty_symbol = SorobanString::from_str(&env, "");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    let result = client.try_initialize(&admin, &name, &empty_symbol, &7u32, &invoice_id, &minter);
+    let result = client.try_initialize(
+        &admin,
+        &name,
+        &empty_symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(result, Err(Ok(crate::errors::Error::InvalidMetadata)));
 }
 
@@ -2294,7 +2440,16 @@ fn test_storage_key_total_supply_storage_lifecycle() {
     let name = SorobanString::from_str(&env, "Test");
     let symbol = SorobanString::from_str(&env, "TST");
     let invoice_id = Symbol::new(&env, "inv");
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
 
     // Initial total supply should be 0
     assert_eq!(client.total_supply(), 0);
@@ -2759,7 +2914,16 @@ fn test_duplicate_mint_series_rejected_for_same_invoice() {
     let symbol = SorobanString::from_str(&env, "INVDUP");
     let invoice_id = Symbol::new(&env, "inv_dup");
 
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
 
     let mint_amount: i128 = 1_000;
     client.mint(&recipient, &mint_amount, &minter);
@@ -2786,7 +2950,16 @@ fn test_duplicate_mint_series_rejected_for_same_invoice() {
     assert_eq!(client.invoice_id(), invoice_id);
 
     // Repeated initialize with the same invoice id cannot create another series.
-    let dup_init = client.try_initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    let dup_init = client.try_initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert_eq!(dup_init, Err(Ok(crate::errors::Error::AlreadyInit)));
 
     assert_eq!(client.balance(&recipient), mint_amount);
@@ -2814,19 +2987,46 @@ fn test_authorized_mint_and_invalid_invoice_metadata() {
     // Empty name rejected before any token record exists.
     let empty_name = SorobanString::from_str(&env, "");
     assert_eq!(
-        client.try_initialize(&admin, &empty_name, &symbol, &7u32, &invoice_id, &minter),
+        client.try_initialize(
+            &admin,
+            &empty_name,
+            &symbol,
+            &7u32,
+            &invoice_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        ),
         Err(Ok(crate::errors::Error::InvalidMetadata))
     );
 
     // Empty symbol rejected.
     let empty_symbol = SorobanString::from_str(&env, "");
     assert_eq!(
-        client.try_initialize(&admin, &name, &empty_symbol, &7u32, &invoice_id, &minter),
+        client.try_initialize(
+            &admin,
+            &name,
+            &empty_symbol,
+            &7u32,
+            &invoice_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        ),
         Err(Ok(crate::errors::Error::InvalidMetadata))
     );
 
     // Valid initialize + authorized mint.
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     client.mint(&recipient, &250, &minter);
     assert_eq!(client.balance(&recipient), 250);
     assert_eq!(client.total_supply(), 250);
@@ -2842,7 +3042,16 @@ fn test_authorized_mint_and_invalid_invoice_metadata() {
 
     // Duplicate initialize (same invoice id on same contract) rejected.
     assert_eq!(
-        client.try_initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter),
+        client.try_initialize(
+            &admin,
+            &name,
+            &symbol,
+            &7u32,
+            &invoice_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        ),
         Err(Ok(crate::errors::Error::AlreadyInit))
     );
     assert_eq!(client.invoice_id(), invoice_id);
@@ -2865,7 +3074,16 @@ fn test_invoice_identifier_and_metadata_encoding() {
         let short_id = Symbol::new(&env, "a");
         let name = SorobanString::from_str(&env, "Short Inv");
         let symbol = SorobanString::from_str(&env, "S");
-        client.initialize(&admin, &name, &symbol, &7u32, &short_id, &minter);
+        client.initialize(
+            &admin,
+            &name,
+            &symbol,
+            &7u32,
+            &short_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        );
         assert_eq!(client.invoice_id(), short_id);
         assert_eq!(client.name(), name);
         assert_eq!(client.symbol(), symbol);
@@ -2881,7 +3099,16 @@ fn test_invoice_identifier_and_metadata_encoding() {
         let max_id = Symbol::new(&env, "abcdefghijklmnopqrstuvwxyz012345");
         let name = SorobanString::from_str(&env, "Max Length Invoice Identifier");
         let symbol = SorobanString::from_str(&env, "MAX32");
-        client.initialize(&admin, &name, &symbol, &0u32, &max_id, &minter);
+        client.initialize(
+            &admin,
+            &name,
+            &symbol,
+            &0u32,
+            &max_id,
+            &minter,
+            &i128::MAX,
+            &1,
+        );
         assert_eq!(client.invoice_id(), max_id);
         assert_eq!(client.name(), name);
         assert_eq!(client.symbol(), symbol);
@@ -2912,7 +3139,16 @@ fn test_invoice_identifier_and_metadata_encoding() {
         let near_max = Symbol::new(&env, "abcdefghijklmnopqrstuvwxyz01234");
         let name = SorobanString::from_str(&env, "Near Max");
         let symbol = SorobanString::from_str(&env, "NMAX");
-        client.initialize(&admin, &name, &symbol, &18u32, &near_max, &minter);
+        client.initialize(
+            &admin,
+            &name,
+            &symbol,
+            &18u32,
+            &near_max,
+            &minter,
+            &i128::MAX,
+            &1,
+        );
         assert_eq!(client.invoice_id(), near_max);
         assert_eq!(client.decimals(), 18);
     }
@@ -3103,7 +3339,16 @@ fn test_mint_fractional_decimal_bounds() {
     let symbol = SorobanString::from_str(&env, "INV");
     let invoice_id = Symbol::new(&env, "inv_001");
 
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
 
     let recipient = Address::generate(&env);
     client.mint(&recipient, &1, &minter);
@@ -3121,10 +3366,10 @@ fn test_mint_max_supply_overflow_rejected() {
     let recipient = Address::generate(&env);
 
     let max_i128 = i128::MAX;
-    client.mint(&recipient, &max_i128, &minter);
+    client.mint(&recipient, &max_i128, &admin);
 
-    let result = client.try_mint(&recipient, &1, &minter);
-    assert_eq!(result, Err(Ok(crate::errors::Error::Overflow)));
+    let result = client.try_mint(&recipient, &1, &admin);
+    assert_eq!(result, Err(Ok(crate::errors::Error::SupplyCapExceeded)));
 }
 
 #[test]

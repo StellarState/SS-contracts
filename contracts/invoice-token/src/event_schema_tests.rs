@@ -45,6 +45,8 @@ fn event_schema_snapshot_transfer() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV001"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     // Mint some tokens to from
@@ -99,6 +101,8 @@ fn event_schema_snapshot_approve() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV002"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let _ = env.events().all();
@@ -157,6 +161,8 @@ fn event_schema_snapshot_mint() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV003"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let _ = env.events().all();
@@ -206,6 +212,8 @@ fn event_schema_snapshot_burn() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV004"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     token.mint(&from, &1000, &minter);
@@ -256,6 +264,8 @@ fn event_schema_snapshot_transfer_locked_updated() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV005"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let _ = env.events().all();
@@ -321,6 +331,8 @@ fn event_schema_snapshot_minter_updated() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV006"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let _ = env.events().all();
@@ -385,6 +397,8 @@ fn event_schema_snapshot_paused_updated() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV007"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let _ = env.events().all();
@@ -450,6 +464,8 @@ fn event_schema_snapshot_account_frozen() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV008"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let _ = env.events().all();
@@ -502,6 +518,8 @@ fn event_schema_snapshot_clawback() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV009"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     token.mint(&from, &1000, &minter);
@@ -553,6 +571,8 @@ fn event_schema_snapshot_fee_updated() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV010"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let _ = env.events().all();
@@ -614,6 +634,8 @@ fn event_schema_snapshot_role_admin_updated() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV011"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let role = soroban_sdk::Symbol::new(&env, "minter");
@@ -681,6 +703,8 @@ fn event_schema_snapshot_role_granted() {
         &7,
         &soroban_sdk::Symbol::new(&env, "INV012"),
         &minter,
+        &i128::MAX,
+        &1,
     );
 
     let role = soroban_sdk::Symbol::new(&env, "minter");

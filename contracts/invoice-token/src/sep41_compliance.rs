@@ -20,7 +20,16 @@ fn setup_sep41_token(env: &Env) -> (InvoiceTokenClient<'_>, Address, Address) {
     let name = SorobanString::from_str(env, "SEP41 Test Token");
     let symbol = SorobanString::from_str(env, "SEP41T");
     let invoice_id = Symbol::new(env, "test_inv");
-    client.initialize(&admin, &name, &symbol, &7u32, &invoice_id, &minter);
+    client.initialize(
+        &admin,
+        &name,
+        &symbol,
+        &7u32,
+        &invoice_id,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     (client, admin, minter)
 }
 
@@ -82,7 +91,7 @@ fn transfer_requires_from_auth() {
 
     // Mint tokens to admin
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let recipient = Address::generate(&env);
 
@@ -98,7 +107,7 @@ fn transfer_from_requires_from_auth() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     client.approve(&admin, &spender, &500, &1000);
@@ -117,7 +126,7 @@ fn approve_requires_from_auth() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
 
@@ -133,7 +142,7 @@ fn burn_requires_from_auth() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     // Without auth for admin, burn should fail
     env.mock_auths(&[]);
@@ -147,7 +156,7 @@ fn burn_from_requires_from_auth() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     client.approve(&admin, &spender, &500, &1000);
@@ -166,7 +175,7 @@ fn transfer_to_self_is_rejected() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let result = client.try_transfer(&admin, &admin, &100);
     assert!(result.is_err(), "self-transfer should be rejected");
@@ -180,7 +189,7 @@ fn transfer_zero_amount_is_rejected() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let recipient = Address::generate(&env);
     let result = client.try_transfer(&admin, &recipient, &0);
@@ -193,7 +202,7 @@ fn transfer_negative_amount_is_rejected() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let recipient = Address::generate(&env);
     let result = client.try_transfer(&admin, &recipient, &-1);
@@ -211,7 +220,7 @@ fn transfer_exceeding_balance_is_rejected() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &100, &minter);
+    client.mint(&admin, &100, &admin);
 
     let recipient = Address::generate(&env);
     let result = client.try_transfer(&admin, &recipient, &200);
@@ -229,7 +238,7 @@ fn transfer_from_with_expired_allowance_is_rejected() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -260,7 +269,7 @@ fn transfer_from_exceeding_allowance_is_rejected() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -282,7 +291,7 @@ fn transfer_to_zero_address_is_rejected() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
 
     let zero = soroban_sdk::Address::try_from_val(
         &env,
@@ -312,23 +321,31 @@ fn double_initialization_is_rejected() {
     let symbol2 = SorobanString::from_str(&env, "DUP");
     let invoice_id2 = Symbol::new(&env, "dup_inv");
 
-    let result = client.try_initialize(&admin, &name2, &symbol2, &7u32, &invoice_id2, &minter);
+    let result = client.try_initialize(
+        &admin,
+        &name2,
+        &symbol2,
+        &7u32,
+        &invoice_id2,
+        &minter,
+        &i128::MAX,
+        &1,
+    );
     assert!(result.is_err(), "double initialization should be rejected");
 }
 
 // ── Mint authorization boundary ───────────────────────────────────────────────
 
 #[test]
-fn mint_requires_minter_auth() {
+fn mint_is_admin_only() {
     let env = Env::default();
     let (client, admin, minter) = setup_sep41_token(&env);
 
     let recipient = Address::generate(&env);
-
-    // Without minter auth, mint should fail
-    env.mock_auths(&[]);
     let result = client.try_mint(&recipient, &100, &minter);
-    assert!(result.is_err(), "mint must fail without minter auth");
+    assert_eq!(result, Err(Ok(crate::errors::Error::Unauthorized)));
+    client.mint(&recipient, &100, &admin);
+    assert_eq!(client.total_supply(), 100);
 }
 
 // ── Pause enforcement ─────────────────────────────────────────────────────────
@@ -339,7 +356,7 @@ fn transfer_rejected_when_paused() {
     let (client, admin, minter) = setup_sep41_token(&env);
 
     env.mock_all_auths();
-    client.mint(&admin, &1000, &minter);
+    client.mint(&admin, &1000, &admin);
     client.pause(&admin);
 
     let recipient = Address::generate(&env);

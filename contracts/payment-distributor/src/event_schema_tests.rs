@@ -69,6 +69,8 @@ fn event_schema_snapshot_payment_distributed() {
         &7,
         &invoice_id,
         &escrow_id,
+        &i128::MAX,
+        &1,
     );
 
     escrow.initialize(&admin, &0);
@@ -184,6 +186,8 @@ fn event_schema_snapshot_refund_distributed() {
         &7,
         &invoice_id,
         &escrow_id,
+        &i128::MAX,
+        &1,
     );
 
     escrow.initialize(&admin, &0);
@@ -508,6 +512,8 @@ fn event_schema_snapshot_excess_refunded() {
         &7,
         &invoice_id,
         &escrow_id,
+        &i128::MAX,
+        &1,
     );
 
     escrow.initialize(&admin, &0);

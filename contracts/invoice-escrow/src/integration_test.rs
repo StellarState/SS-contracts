@@ -77,6 +77,8 @@ fn setup<'a>(
         &7,
         &invoice_id,
         &escrow_id,
+        &i128::MAX,
+        &1,
     );
     escrow.initialize(&admin, &fee_bps);
 
@@ -1018,6 +1020,8 @@ fn test_integration_two_independent_escrows() {
         &7,
         &inv_b_id,
         &ctx_a.escrow_id,
+        &500,
+        &1,
     );
 
     let buyer_b = Address::generate(&env);
