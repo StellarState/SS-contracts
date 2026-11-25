@@ -12,12 +12,25 @@ pub struct InvoiceInfo {
     pub settled: bool,
 }
 
-/// Running totals kept per invoice and per issuer.
+/// Legacy running totals kept under the original invoice and issuer storage keys.
+///
+/// New aggregates are stored as `RatingStatsV2`; legacy values are read and
+/// converted when no v2 value exists.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RatingStats {
     pub total_ratings: u32,
     pub score_sum: u32,
+    /// Count of ratings per score; index 0 holds score 1.
+    pub distribution: Vec<u32>,
+}
+
+/// Running totals stored under versioned keys so legacy u32 sums remain decodable.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RatingStatsV2 {
+    pub total_ratings: u32,
+    pub score_sum: u64,
     /// Count of ratings per score; index 0 holds score 1.
     pub distribution: Vec<u32>,
 }
@@ -43,4 +56,6 @@ pub enum StorageKey {
     Rating(BytesN<32>, Address),
     InvoiceStats(BytesN<32>),
     IssuerStats(Address),
+    InvoiceStatsV2(BytesN<32>),
+    IssuerStatsV2(Address),
 }

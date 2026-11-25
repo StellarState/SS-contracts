@@ -13,4 +13,5 @@ pub enum Error {
     InvalidScore = 7,
     AlreadyRated = 8,
     InvoiceAlreadyRegistered = 9,
+    CounterOverflow = 10,
 }
