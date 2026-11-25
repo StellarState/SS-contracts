@@ -12,7 +12,10 @@ pub enum TrancheType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrancheConfig {
     pub issuer: Address,
+    pub target_amount: i128,
     pub senior_pct: u32,
+    pub senior_capacity: i128,
+    pub junior_capacity: i128,
     pub junior_yield_premium_bps: u32,
     pub senior_filled: i128,
     pub junior_filled: i128,
@@ -24,8 +27,11 @@ pub struct TrancheConfig {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrancheStatus {
+    pub target_amount: i128,
     pub senior_pct: u32,
     pub junior_pct: u32,
+    pub senior_capacity: i128,
+    pub junior_capacity: i128,
     pub senior_filled: i128,
     pub junior_filled: i128,
     pub junior_yield_premium_bps: u32,

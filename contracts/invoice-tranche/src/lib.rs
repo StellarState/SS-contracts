@@ -4,6 +4,9 @@ mod errors;
 mod events;
 mod types;
 
+#[cfg(test)]
+mod test;
+
 pub use errors::Error;
 pub use types::{DataKey, TrancheConfig, TrancheStatus, TrancheType};
 
@@ -28,14 +31,27 @@ impl InvoiceTrancheContract {
         env: Env,
         issuer: Address,
         invoice_id: BytesN<32>,
+        target_amount: i128,
         senior_pct: u32,
         junior_yield_premium_bps: u32,
     ) -> Result<(), Error> {
         issuer.require_auth();
 
-        if senior_pct == 0 || senior_pct >= 100 {
+        if target_amount <= 0 || senior_pct == 0 || senior_pct >= 100 {
             return Err(Error::InvalidTrancheConfig);
         }
+
+        let senior_capacity = target_amount
+            .checked_div(100)
+            .and_then(|whole| whole.checked_mul(senior_pct as i128))
+            .and_then(|whole| {
+                let remainder = (target_amount % 100).checked_mul(senior_pct as i128)?;
+                whole.checked_add(remainder / 100)
+            })
+            .ok_or(Error::InvalidTrancheConfig)?;
+        let junior_capacity = target_amount
+            .checked_sub(senior_capacity)
+            .ok_or(Error::InvalidTrancheConfig)?;
 
         let tranche_key = DataKey::Tranche(invoice_id.clone());
         if env.storage().persistent().has(&tranche_key) {
@@ -44,7 +60,10 @@ impl InvoiceTrancheContract {
 
         let config = TrancheConfig {
             issuer,
+            target_amount,
             senior_pct,
+            senior_capacity,
+            junior_capacity,
             junior_yield_premium_bps,
             senior_filled: 0,
             junior_filled: 0,
@@ -87,24 +106,31 @@ impl InvoiceTrancheContract {
         }
 
         if tranche_type == TrancheType::Senior as u32 {
-            config.senior_filled = config
+            let new_filled = config
                 .senior_filled
                 .checked_add(amount)
                 .ok_or(Error::InvalidAmount)?;
+            if new_filled > config.senior_capacity {
+                return Err(Error::QuotaExceeded);
+            }
+            config.senior_filled = new_filled;
         } else {
-            config.junior_filled = config
+            let new_filled = config
                 .junior_filled
                 .checked_add(amount)
                 .ok_or(Error::InvalidAmount)?;
+            if new_filled > config.junior_capacity {
+                return Err(Error::QuotaExceeded);
+            }
+            config.junior_filled = new_filled;
         }
-
-        env.storage().persistent().set(&tranche_key, &config);
 
         let inv_key = DataKey::Investment(invoice_id.clone(), investor.clone(), tranche_type);
         let previous: i128 = env.storage().persistent().get(&inv_key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&inv_key, &(previous + amount));
+        let new_position = previous.checked_add(amount).ok_or(Error::InvalidAmount)?;
+
+        env.storage().persistent().set(&tranche_key, &config);
+        env.storage().persistent().set(&inv_key, &new_position);
 
         events::tranche_investment_recorded(&env, &invoice_id, &investor, tranche_type, amount);
 
@@ -177,8 +203,11 @@ impl InvoiceTrancheContract {
         let junior_pct = 100 - config.senior_pct;
 
         Ok(TrancheStatus {
+            target_amount: config.target_amount,
             senior_pct: config.senior_pct,
             junior_pct,
+            senior_capacity: config.senior_capacity,
+            junior_capacity: config.junior_capacity,
             senior_filled: config.senior_filled,
             junior_filled: config.junior_filled,
             junior_yield_premium_bps: config.junior_yield_premium_bps,
