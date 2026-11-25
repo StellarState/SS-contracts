@@ -10,7 +10,7 @@ mod test;
 pub use errors::Error;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
 pub use types::{AggregateRating, InvoiceInfo, RatingStats, StorageKey};
-use types::{MAX_SCORE, MIN_RATINGS, MIN_SCORE};
+use types::{RatingStatsV2, MAX_SCORE, MIN_RATINGS, MIN_SCORE};
 
 #[contract]
 pub struct InvoiceRating;
@@ -40,42 +40,63 @@ fn get_invoice_info(env: &Env, invoice_id: &BytesN<32>) -> Result<InvoiceInfo, E
         .ok_or(Error::InvoiceNotFound)
 }
 
-fn empty_stats(env: &Env) -> RatingStats {
+fn empty_stats(env: &Env) -> RatingStatsV2 {
     let mut distribution = Vec::new(env);
     for _ in 0..MAX_SCORE {
         distribution.push_back(0u32);
     }
-    RatingStats {
+    RatingStatsV2 {
         total_ratings: 0,
         score_sum: 0,
         distribution,
     }
 }
 
-fn add_score(env: &Env, key: &StorageKey, score: u32) {
-    let mut stats: RatingStats = env
-        .storage()
-        .persistent()
-        .get(key)
-        .unwrap_or_else(|| empty_stats(env));
-    stats.total_ratings += 1;
-    stats.score_sum += score;
-    let idx = score - MIN_SCORE;
-    let count = stats.distribution.get(idx).unwrap();
-    stats.distribution.set(idx, count + 1);
-    env.storage().persistent().set(key, &stats);
+fn load_stats(env: &Env, v2_key: &StorageKey, legacy_key: &StorageKey) -> RatingStatsV2 {
+    if let Some(stats) = env.storage().persistent().get(v2_key) {
+        return stats;
+    }
+
+    if let Some(legacy) = env.storage().persistent().get::<_, RatingStats>(legacy_key) {
+        return RatingStatsV2 {
+            total_ratings: legacy.total_ratings,
+            score_sum: u64::from(legacy.score_sum),
+            distribution: legacy.distribution,
+        };
+    }
+
+    empty_stats(env)
 }
 
-fn to_aggregate(env: &Env, key: &StorageKey) -> AggregateRating {
-    let stats: RatingStats = env
-        .storage()
-        .persistent()
-        .get(key)
-        .unwrap_or_else(|| empty_stats(env));
+fn add_score(
+    env: &Env,
+    v2_key: &StorageKey,
+    legacy_key: &StorageKey,
+    score: u32,
+) -> Result<RatingStatsV2, Error> {
+    let mut stats = load_stats(env, v2_key, legacy_key);
+    stats.total_ratings = stats
+        .total_ratings
+        .checked_add(1)
+        .ok_or(Error::CounterOverflow)?;
+    stats.score_sum = stats
+        .score_sum
+        .checked_add(u64::from(score))
+        .ok_or(Error::CounterOverflow)?;
+    let idx = score - MIN_SCORE;
+    let count = stats.distribution.get(idx).unwrap();
+    stats
+        .distribution
+        .set(idx, count.checked_add(1).ok_or(Error::CounterOverflow)?);
+    Ok(stats)
+}
+
+fn to_aggregate(env: &Env, v2_key: &StorageKey, legacy_key: &StorageKey) -> AggregateRating {
+    let stats = load_stats(env, v2_key, legacy_key);
     let average_x100 = if stats.total_ratings == 0 {
         0
     } else {
-        stats.score_sum * 100 / stats.total_ratings
+        ((u128::from(stats.score_sum) * 100) / u128::from(stats.total_ratings)) as u32
     };
     AggregateRating {
         average_x100,
@@ -177,9 +198,27 @@ impl InvoiceRating {
             return Err(Error::AlreadyRated);
         }
 
+        let invoice_stats = add_score(
+            &env,
+            &StorageKey::InvoiceStatsV2(invoice_id.clone()),
+            &StorageKey::InvoiceStats(invoice_id.clone()),
+            score,
+        )?;
+        let issuer_stats = add_score(
+            &env,
+            &StorageKey::IssuerStatsV2(info.issuer.clone()),
+            &StorageKey::IssuerStats(info.issuer.clone()),
+            score,
+        )?;
+
         env.storage().persistent().set(&rating_key, &score);
-        add_score(&env, &StorageKey::InvoiceStats(invoice_id.clone()), score);
-        add_score(&env, &StorageKey::IssuerStats(info.issuer), score);
+        env.storage().persistent().set(
+            &StorageKey::InvoiceStatsV2(invoice_id.clone()),
+            &invoice_stats,
+        );
+        env.storage()
+            .persistent()
+            .set(&StorageKey::IssuerStatsV2(info.issuer), &issuer_stats);
 
         events::rating_submitted(&env, &invoice_id, &wallet, score);
         Ok(())
@@ -187,11 +226,19 @@ impl InvoiceRating {
 
     /// View: aggregate rating for an invoice (`valid` once 3 ratings exist).
     pub fn get_aggregate_rating(env: Env, invoice_id: BytesN<32>) -> AggregateRating {
-        to_aggregate(&env, &StorageKey::InvoiceStats(invoice_id))
+        to_aggregate(
+            &env,
+            &StorageKey::InvoiceStatsV2(invoice_id.clone()),
+            &StorageKey::InvoiceStats(invoice_id),
+        )
     }
 
     /// View: aggregate rating across all of an issuer's invoices.
     pub fn get_issuer_rating(env: Env, issuer_wallet: Address) -> AggregateRating {
-        to_aggregate(&env, &StorageKey::IssuerStats(issuer_wallet))
+        to_aggregate(
+            &env,
+            &StorageKey::IssuerStatsV2(issuer_wallet.clone()),
+            &StorageKey::IssuerStats(issuer_wallet),
+        )
     }
 }
