@@ -43,6 +43,9 @@ pub enum StorageKey {
     Dispute(soroban_sdk::Symbol),
     /// Persistent: installment repayment milestone schedule by invoice id.
     InstallmentSchedule(soroban_sdk::Symbol),
+    /// Persistent: missed-installment penalty accrual checkpoint by
+    /// (invoice id, installment index) — Issue #822.
+    PenaltyAccrual(soroban_sdk::Symbol, u32),
     /// Instance: pending admin parameter change awaiting timelock expiry.
     PendingParamChange,
     /// Persistent: secondary-market buy limit by invoice id.
@@ -411,6 +414,25 @@ pub struct InstallmentMilestone {
     pub due_ts: u64,
     /// Whether this milestone has already been reached by recorded payments.
     pub settled: bool,
+}
+
+/// Accrual checkpoint for one installment's missed-payment penalty (#822).
+///
+/// Penalties accrue once per complete missed interval: an installment that
+/// remains unsettled past its `due_ts` earns one penalty unit for every
+/// full `interval_len` (the gap between consecutive installment due dates)
+/// that elapses afterwards. `accrue_installment_penalties` only ever moves
+/// these counters forward, so repeated calls at the same ledger are
+/// idempotent and `preview_installment_penalty` agrees with execution.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PenaltyAccrual {
+    /// Ledger timestamp of the last accrual checkpoint.
+    pub last_accrual_ts: u64,
+    /// Number of complete missed intervals accrued so far.
+    pub accrued_intervals: u32,
+    /// Total penalty accrued so far, capped at the installment amount.
+    pub accrued_amount: i128,
 }
 
 /// Seller-supplied entry used to configure an installment schedule.

@@ -31,4 +31,12 @@ pub enum Error {
     InvalidCap = 11,
     /// A previous allocation is still within the configured cooldown.
     AllocationCooldownActive = 12,
+    /// `expected_revision` does not match the current treasury balance
+    /// revision, so the allocation was computed against a stale balance.
+    StaleRevision = 13,
+    /// The allocation would push the ledger day's cumulative total above
+    /// the configured daily allocation limit.
+    DailyLimitExceeded = 14,
+    /// Daily allocation limit must be strictly positive when set.
+    InvalidDailyLimit = 15,
 }

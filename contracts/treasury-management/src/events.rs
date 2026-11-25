@@ -37,6 +37,50 @@ pub fn allocation_cooldown_started(
     );
 }
 
+/// Emitted for every allocation alongside `FundsAllocated` (#825).
+/// Topics: (treasury_allocation_receipt,); Data: the full receipt fields.
+pub fn treasury_allocation_receipt(
+    env: &Env,
+    receipt_id: u64,
+    allocator: &Address,
+    destination: &Address,
+    amount: i128,
+    purpose: &String,
+    ledger: u32,
+    ledger_timestamp: u64,
+    treasury_revision: u64,
+) {
+    let topics = (Symbol::new(env, "treasury_allocation_receipt"),);
+    env.events().publish(
+        topics,
+        (
+            receipt_id,
+            allocator.clone(),
+            destination.clone(),
+            amount,
+            purpose.clone(),
+            ledger,
+            ledger_timestamp,
+            treasury_revision,
+        ),
+    );
+}
+
+/// Emitted once per ledger day when cumulative allocations first reach the
+/// configured daily limit (#824). Fired from the committed allocation path —
+/// a rejected call rolls back its events — so it marks the start of the
+/// day's breach window rather than every rejected attempt.
+pub fn daily_treasury_limit_reached(
+    env: &Env,
+    ledger_day: u64,
+    limit: i128,
+    attempted_total: i128,
+) {
+    let topics = (Symbol::new(env, "daily_treasury_limit_reached"),);
+    env.events()
+        .publish(topics, (ledger_day, limit, attempted_total));
+}
+
 /// Emitted when a fee receipt is rejected due to allowlist or cap controls.
 pub fn source_rejected(env: &Env, source: &Address, amount: i128, reason: &Symbol) {
     let topics = (Symbol::new(env, "source_rejected"), source.clone());

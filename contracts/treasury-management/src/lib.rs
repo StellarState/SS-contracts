@@ -11,7 +11,7 @@ mod events;
 mod storage;
 mod types;
 
-pub use types::{AllocationRecord, TreasuryBalance};
+pub use types::{AllocationReceipt, AllocationRecord, DailyAllocation, ReceiptPage, TreasuryBalance};
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 
@@ -83,6 +83,7 @@ impl TreasuryManagement {
         storage::set_source_daily_total(&env, &source, ledger_day, new_daily);
         let total = storage::get_total_balance(&env);
         storage::set_total_balance(&env, total.checked_add(amount).ok_or(Error::Overflow)?);
+        storage::bump_treasury_revision(&env);
 
         events::source_fee_received(&env, &source, amount, new_daily, new_cum);
         events::fee_received(&env, &source, amount);
@@ -148,7 +149,18 @@ impl TreasuryManagement {
 
     /// Admin-only: route `amount` of treasury funds to `destination` for
     /// `purpose` (e.g. "operations", "grant:Q3-community-fund",
-    /// "reserve"). Records the allocation in the paginated history log.
+    /// `reserve`). Records the allocation in the paginated history log and
+    /// writes an immutable audit receipt (#825).
+    ///
+    /// `expected_revision` must equal the current treasury balance revision
+    /// (see `get_treasury_revision`): it binds the allocation to the balance
+    /// the caller observed, so a concurrent `receive_fee`/`allocate` that
+    /// lands first rejects this call with `StaleRevision` instead of
+    /// applying it against a stale balance.
+    ///
+    /// When a daily allocation limit is configured (#824), the allocation
+    /// also fails with `DailyLimitExceeded` if it would push the current
+    /// ledger day's cumulative total above the limit.
     ///
     /// Like `receive_fee`, this contract tracks the allocation as
     /// bookkeeping; the admin (or a caller the admin authorizes) is
@@ -159,6 +171,7 @@ impl TreasuryManagement {
         destination: Address,
         amount: i128,
         purpose: String,
+        expected_revision: u64,
     ) -> Result<u32, Error> {
         let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
         if admin != stored_admin {
@@ -173,9 +186,35 @@ impl TreasuryManagement {
             return Err(Error::InvalidPurpose);
         }
 
+        // Reject allocations computed against a stale treasury balance.
+        if expected_revision != storage::get_treasury_revision(&env) {
+            return Err(Error::StaleRevision);
+        }
+
         let total = storage::get_total_balance(&env);
         if amount > total {
             return Err(Error::InsufficientBalance);
+        }
+
+        // Per-ledger-day allocation ceiling (#824). The day's bucket is
+        // keyed by `timestamp / 86_400`, so capacity resets each new day.
+        // `daily_treasury_limit_reached` is emitted from the committed
+        // success path (a rejected call rolls back its events), once per
+        // ledger day when cumulative allocations first reach the limit.
+        let ledger_day = env.ledger().timestamp() / 86_400;
+        let daily_limit = storage::get_daily_allocation_limit(&env);
+        let mut day = storage::get_daily_allocation(&env, ledger_day);
+        if let Some(limit) = daily_limit {
+            let attempted = day.total.checked_add(amount).ok_or(Error::Overflow)?;
+            if attempted > limit {
+                return Err(Error::DailyLimitExceeded);
+            }
+            day.total = attempted;
+            if day.total == limit && !day.limit_notified {
+                day.limit_notified = true;
+                events::daily_treasury_limit_reached(&env, ledger_day, limit, day.total);
+            }
+            storage::set_daily_allocation(&env, ledger_day, &day);
         }
 
         let current_ledger = env.ledger().sequence();
@@ -190,14 +229,42 @@ impl TreasuryManagement {
 
         storage::set_total_balance(&env, total - amount);
         storage::set_last_allocation_ledger(&env, current_ledger);
+        let new_revision = storage::bump_treasury_revision(&env);
+        let ledger_timestamp = env.ledger().timestamp();
 
         let record = AllocationRecord {
             destination: destination.clone(),
             amount,
             purpose: purpose.clone(),
-            timestamp: env.ledger().timestamp(),
+            timestamp: ledger_timestamp,
         };
         let index = storage::push_allocation(&env, &record);
+
+        // Immutable audit receipt bound to the post-allocation treasury
+        // revision (#825). Receipt ids advance in lock-step with the
+        // allocation log, so `receipt_id` also indexes the history.
+        let receipt = AllocationReceipt {
+            receipt_id: storage::get_receipt_count(&env),
+            allocator: admin.clone(),
+            destination: destination.clone(),
+            amount,
+            purpose: purpose.clone(),
+            ledger: current_ledger,
+            ledger_timestamp,
+            treasury_revision: new_revision,
+        };
+        let receipt_id = storage::push_receipt(&env, &receipt);
+        events::treasury_allocation_receipt(
+            &env,
+            receipt_id,
+            &admin,
+            &destination,
+            amount,
+            &purpose,
+            current_ledger,
+            ledger_timestamp,
+            new_revision,
+        );
 
         if cooldown > 0 {
             events::allocation_cooldown_started(
@@ -243,6 +310,93 @@ impl TreasuryManagement {
                 .saturating_add(cooldown)
                 .saturating_sub(env.ledger().sequence()),
             None => 0,
+        }
+    }
+
+    /// Admin-only: set or clear the per-ledger-day allocation ceiling (#824).
+    /// `None` disables the limit; `Some(limit)` requires `limit > 0`.
+    pub fn set_daily_allocation_limit(
+        env: Env,
+        admin: Address,
+        limit: Option<i128>,
+    ) -> Result<(), Error> {
+        let stored_admin = storage::get_admin(&env).ok_or(Error::NotInit)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+        if let Some(l) = limit {
+            if l <= 0 {
+                return Err(Error::InvalidDailyLimit);
+            }
+        }
+        storage::set_daily_allocation_limit(&env, limit);
+        Ok(())
+    }
+
+    /// View: the configured per-ledger-day allocation limit, or `None` when
+    /// no limit is set.
+    pub fn get_daily_allocation_limit(env: Env) -> Option<i128> {
+        storage::get_daily_allocation_limit(&env)
+    }
+
+    /// View: remaining allocation capacity for the current ledger day.
+    /// Returns `None` when no daily limit is configured.
+    pub fn get_daily_allocation_remaining(env: Env) -> Option<i128> {
+        let limit = storage::get_daily_allocation_limit(&env)?;
+        let ledger_day = env.ledger().timestamp() / 86_400;
+        let used = storage::get_daily_allocation(&env, ledger_day).total;
+        Some(limit.saturating_sub(used).max(0))
+    }
+
+    /// View: total allocated so far on the current ledger day.
+    pub fn get_daily_allocation_total(env: Env) -> i128 {
+        let ledger_day = env.ledger().timestamp() / 86_400;
+        storage::get_daily_allocation(&env, ledger_day).total
+    }
+
+    /// View: current treasury balance revision. Pass this as
+    /// `expected_revision` to `allocate` to reject stale applications.
+    pub fn get_treasury_revision(env: Env) -> u64 {
+        storage::get_treasury_revision(&env)
+    }
+
+    /// View: fetch one allocation receipt by id.
+    pub fn get_receipt(env: Env, receipt_id: u64) -> Option<AllocationReceipt> {
+        storage::get_receipt(&env, receipt_id)
+    }
+
+    /// View: total number of allocation receipts ever written.
+    pub fn get_receipt_count(env: Env) -> u64 {
+        storage::get_receipt_count(&env)
+    }
+
+    /// View: cursor-paginated allocation receipt history (#825), oldest
+    /// first. `cursor` is the receipt id to start from (`0` for the first
+    /// page, or the `next_cursor` of the previous page); `limit` caps the
+    /// page size. The history is append-only: receipts are never updated
+    /// or removed.
+    pub fn get_receipt_history(env: Env, cursor: u64, limit: u32) -> ReceiptPage {
+        let count = storage::get_receipt_count(&env);
+        let mut receipts = Vec::new(&env);
+        if cursor >= count || limit == 0 {
+            return ReceiptPage {
+                receipts,
+                next_cursor: None,
+            };
+        }
+        let end = core::cmp::min(cursor.saturating_add(u64::from(limit)), count);
+        let mut id = cursor;
+        while id < end {
+            if let Some(receipt) = storage::get_receipt(&env, id) {
+                receipts.push_back(receipt);
+            }
+            id += 1;
+        }
+        let next_cursor = if end < count { Some(end) } else { None };
+        ReceiptPage {
+            receipts,
+            next_cursor,
         }
     }
 

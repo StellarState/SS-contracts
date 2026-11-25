@@ -4,7 +4,8 @@ use soroban_sdk::{Address, BytesN, Env, Symbol, Vec};
 
 use crate::types::{
     CategoryFeeSchedule, Config, DisputeData, EmergencyApprovals, EscrowData, InstallmentMilestone,
-    InvestmentRecord, InvoiceCategory, InvoiceData, MultiSigConfig, SettlementProposal, StorageKey,
+    InvestmentRecord, InvoiceCategory, InvoiceData, MultiSigConfig, PenaltyAccrual,
+    SettlementProposal, StorageKey,
 };
 
 /// Ledgers below which a persistent entry's TTL is extended (~7 days at 5s/ledger).
@@ -411,6 +412,41 @@ pub fn remove_installment_schedule(env: &Env, inv_id: &Symbol) {
         .remove(&StorageKey::InstallmentSchedule(inv_id.clone()));
 }
 
+/// Load the penalty accrual checkpoint for one installment (#822).
+pub fn get_penalty_accrual(
+    env: &Env,
+    inv_id: &Symbol,
+    installment_index: u32,
+) -> Option<PenaltyAccrual> {
+    let key = StorageKey::PenaltyAccrual(inv_id.clone(), installment_index);
+    let data = env.storage().persistent().get(&key);
+    if data.is_some() {
+        bump_persistent(env, &key);
+    }
+    data
+}
+
+/// Save the penalty accrual checkpoint for one installment.
+pub fn set_penalty_accrual(
+    env: &Env,
+    inv_id: &Symbol,
+    installment_index: u32,
+    accrual: &PenaltyAccrual,
+) {
+    let key = StorageKey::PenaltyAccrual(inv_id.clone(), installment_index);
+    env.storage().persistent().set(&key, accrual);
+    bump_persistent(env, &key);
+}
+
+/// Remove penalty accrual checkpoints for installments `0..count`.
+pub fn remove_installment_accruals(env: &Env, inv_id: &Symbol, count: u32) {
+    for index in 0..count {
+        env.storage()
+            .persistent()
+            .remove(&StorageKey::PenaltyAccrual(inv_id.clone(), index));
+    }
+}
+
 /// Count unique investors recorded for a registered invoice.
 pub fn get_investor_count(env: &Env, inv_id: &BytesN<32>) -> u32 {
     let key = StorageKey::InvestorCount(inv_id.clone());
@@ -588,10 +624,17 @@ pub fn compact_invoice_storage(
         removed += 1;
     }
 
-    // Remove installment schedule if any
+    // Remove installment schedule and penalty accrual checkpoints if any
     let installment_key = StorageKey::InstallmentSchedule(inv_id.clone());
     if env.storage().persistent().has(&installment_key) {
+        let schedule_len: u32 = env
+            .storage()
+            .persistent()
+            .get::<_, soroban_sdk::Vec<InstallmentMilestone>>(&installment_key)
+            .map(|s| s.len())
+            .unwrap_or(0);
         env.storage().persistent().remove(&installment_key);
+        remove_installment_accruals(env, inv_id, schedule_len);
         removed += 1;
     }
 

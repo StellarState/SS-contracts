@@ -81,6 +81,23 @@ pub fn escrow_funded(
     );
 }
 
+/// Publish `penalty_accrued` when missed-installment penalty checkpoints
+/// advance for an invoice (#822). `installment_index` identifies the
+/// milestone, `intervals` the number of newly completed missed intervals
+/// and `amount` the penalty accrued for them.
+pub fn penalty_accrued(
+    env: &Env,
+    inv_id: Symbol,
+    installment_index: u32,
+    intervals: u32,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "penalty_accrued"),),
+        (inv_id, installment_index, intervals, amount),
+    );
+}
+
 /// Publish penalty_interest_charged event when late payment incurs additional interest.
 pub fn penalty_interest_charged(env: &Env, inv_id: Symbol, penalty_amount: i128, total_fee: i128) {
     env.events().publish(

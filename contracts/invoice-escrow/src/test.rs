@@ -11238,3 +11238,219 @@ fn is_method_deprecated_returns_true_for_legacy() {
     assert!(!client.is_method_deprecated(&Symbol::new(&env, "record_payment")));
     assert!(!client.is_method_deprecated(&Symbol::new(&env, "refund_escrow")));
 }
+
+// ── Issue #822: missed installment penalty accrual checkpoints ──────────────
+//
+// Schedule used below: face_value 1000 split into 500 @ 200_000 and
+// 500 @ 400_000, funded at ledger timestamp 100_000. Interval lengths are
+// therefore 100_000 (first) and 200_000 (second). With penalty_interest_bps
+// = 1000 (10%), each complete missed interval accrues 50 per installment,
+// capped at the 500 principal.
+
+fn penalty_test_env(env: &Env) -> MockTokenEnvironment {
+    env.ledger().set_timestamp(100_000);
+    let mut test_env = MockTokenEnvironment::new(env, 300, 1000, 1000);
+    test_env.fund(1000);
+    test_env
+        .escrow_client
+        .set_penalty_interest_bps(&test_env.admin, &1000);
+    let schedule = soroban_sdk::vec![
+        env,
+        installment(env, 200_000, 500),
+        installment(env, 400_000, 500),
+    ];
+    test_env.escrow_client.set_installment_schedule(
+        &test_env.invoice_id,
+        &test_env.seller,
+        &schedule,
+    );
+    test_env
+}
+
+#[test]
+fn test_penalty_accrual_once_per_interval_and_idempotent() {
+    let env = Env::default();
+    let test_env = penalty_test_env(&env);
+
+    // One complete interval past the first due date: 50 accrued.
+    env.ledger().set_timestamp(300_000);
+    let accrued = test_env
+        .escrow_client
+        .accrue_installment_penalties(&test_env.invoice_id);
+    assert_eq!(accrued, 50);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_total_installment_penalty(&test_env.invoice_id),
+        50
+    );
+
+    let checkpoint = test_env
+        .escrow_client
+        .get_installment_penalty_accrual(&test_env.invoice_id, &0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.accrued_intervals, 1);
+    assert_eq!(checkpoint.accrued_amount, 50);
+    assert_eq!(checkpoint.last_accrual_ts, 300_000);
+
+    // Repeated call at the same ledger accrues nothing.
+    let again = test_env
+        .escrow_client
+        .accrue_installment_penalties(&test_env.invoice_id);
+    assert_eq!(again, 0);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_total_installment_penalty(&test_env.invoice_id),
+        50
+    );
+}
+
+#[test]
+fn test_penalty_accrual_no_penalty_before_missed_deadline() {
+    let env = Env::default();
+    let test_env = penalty_test_env(&env);
+
+    // Exactly at the due timestamp: no complete missed interval yet.
+    env.ledger().set_timestamp(200_000);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .accrue_installment_penalties(&test_env.invoice_id),
+        0
+    );
+    assert_eq!(
+        test_env
+            .escrow_client
+            .preview_installment_penalty(&test_env.invoice_id, &200_000),
+        0
+    );
+
+    // Partially through the first interval: still nothing.
+    env.ledger().set_timestamp(299_999);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .accrue_installment_penalties(&test_env.invoice_id),
+        0
+    );
+}
+
+#[test]
+fn test_penalty_accrual_multiple_intervals_and_principal_cap() {
+    let env = Env::default();
+    let test_env = penalty_test_env(&env);
+
+    // Far past both deadlines: installment 0 has 8 missed intervals
+    // (400 accrued, under the 500 cap); installment 1 has 3 (150).
+    env.ledger().set_timestamp(1_000_000);
+    let accrued = test_env
+        .escrow_client
+        .accrue_installment_penalties(&test_env.invoice_id);
+    assert_eq!(accrued, 550);
+
+    // Extreme lateness: both installments cap at their 500 principal.
+    env.ledger().set_timestamp(3_000_000);
+    let accrued2 = test_env
+        .escrow_client
+        .accrue_installment_penalties(&test_env.invoice_id);
+    // inst0: capped at 500 (was 400 -> +100); inst1: capped at 500 (was 150 -> +350)
+    assert_eq!(accrued2, 450);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_total_installment_penalty(&test_env.invoice_id),
+        1000
+    );
+}
+
+#[test]
+fn test_penalty_preview_agrees_with_execution() {
+    let env = Env::default();
+    let test_env = penalty_test_env(&env);
+
+    env.ledger().set_timestamp(300_000);
+    let preview1 = test_env
+        .escrow_client
+        .preview_installment_penalty(&test_env.invoice_id, &300_000);
+    assert_eq!(preview1, 50);
+    let accrued1 = test_env
+        .escrow_client
+        .accrue_installment_penalties(&test_env.invoice_id);
+    assert_eq!(accrued1, 50);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_total_installment_penalty(&test_env.invoice_id),
+        preview1
+    );
+
+    env.ledger().set_timestamp(500_000);
+    let preview2 = test_env
+        .escrow_client
+        .preview_installment_penalty(&test_env.invoice_id, &500_000);
+    // inst0: 3 missed intervals -> 150; inst1 not yet due.
+    assert_eq!(preview2, 150);
+    let accrued2 = test_env
+        .escrow_client
+        .accrue_installment_penalties(&test_env.invoice_id);
+    assert_eq!(accrued2, preview2 - preview1);
+    assert_eq!(
+        test_env
+            .escrow_client
+            .get_total_installment_penalty(&test_env.invoice_id),
+        preview2
+    );
+}
+
+#[test]
+fn test_penalty_accrued_event_emitted() {
+    let env = Env::default();
+    let test_env = penalty_test_env(&env);
+
+    env.ledger().set_timestamp(300_000);
+    test_env
+        .escrow_client
+        .accrue_installment_penalties(&test_env.invoice_id);
+
+    let mut saw = false;
+    for e in env.events().all().events().iter() {
+        let soroban_sdk::xdr::ContractEventBody::V0(v0) = &e.body;
+        let topics = Vec::<Val>::try_from_val(
+            &env,
+            &soroban_sdk::xdr::ScVal::Vec(Some(v0.topics.clone().into())),
+        )
+        .unwrap();
+        let name: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        if name == Symbol::new(&env, "penalty_accrued") {
+            saw = true;
+            let data = Val::try_from_val(&env, &v0.data).unwrap();
+            let (_inv, index, intervals, amount): (Symbol, u32, u32, i128) =
+                data.try_into_val(&env).unwrap();
+            assert_eq!(index, 0);
+            assert_eq!(intervals, 1);
+            assert_eq!(amount, 50);
+        }
+    }
+    assert!(saw);
+}
+
+#[test]
+fn test_penalty_accrual_rejects_unknown_invoice() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow_id = env.register_contract(None, InvoiceEscrow);
+    let client = InvoiceEscrowClient::new(&env, &escrow_id);
+    client.initialize(&Address::generate(&env), &300);
+
+    let missing = Symbol::new(&env, "NOPE");
+    assert_eq!(
+        client.try_accrue_installment_penalties(&missing),
+        Err(Ok(Error::EscrowNotFound))
+    );
+    assert_eq!(
+        client.try_preview_installment_penalty(&missing, &1_000),
+        Err(Ok(Error::EscrowNotFound))
+    );
+}

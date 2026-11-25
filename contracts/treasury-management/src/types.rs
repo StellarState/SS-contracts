@@ -37,6 +37,19 @@ pub enum StorageKey {
     SourceCumulativeTotal(Address),
     /// Persistent: fees received from a source on a specific ledger day.
     SourceDailyTotal(Address, u64),
+    /// Instance: monotonic treasury balance revision, bumped on every
+    /// balance mutation (`receive_fee` credit or `allocate` debit). Used to
+    /// bind allocation receipts and reject stale allocation attempts.
+    TreasuryRevision,
+    /// Instance: number of allocation receipts ever written.
+    ReceiptCount,
+    /// Persistent: one signed-style audit receipt by its id.
+    Receipt(u64),
+    /// Instance: optional per-ledger-day cap on total allocations.
+    DailyAllocationLimit,
+    /// Persistent: cumulative allocations and breach-notification flag for
+    /// one ledger day (`timestamp / 86_400`).
+    DailyAllocation(u64),
 }
 
 /// One historical allocation of treasury funds to a destination.
@@ -47,6 +60,55 @@ pub struct AllocationRecord {
     pub amount: i128,
     pub purpose: String,
     pub timestamp: u64,
+}
+
+/// Immutable audit receipt written for every treasury allocation (#825).
+///
+/// Binds the allocator, destination, amount, purpose and ledger to the
+/// treasury balance revision observed after the allocation was applied, so
+/// reconciliation can detect any intervening balance change.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AllocationReceipt {
+    /// Monotonic receipt id (0-based, matches allocation log order).
+    pub receipt_id: u64,
+    /// Admin address that authorised the allocation.
+    pub allocator: Address,
+    /// Destination the funds were routed to.
+    pub destination: Address,
+    /// Amount allocated, in stroops. Always equals the allocation's
+    /// recorded `AllocationRecord::amount`.
+    pub amount: i128,
+    /// Free-form purpose string supplied by the allocator.
+    pub purpose: String,
+    /// Ledger sequence the allocation was applied at.
+    pub ledger: u32,
+    /// Ledger timestamp the allocation was applied at.
+    pub ledger_timestamp: u64,
+    /// Treasury balance revision after this allocation was applied.
+    pub treasury_revision: u64,
+}
+
+/// One page of the cursor-paginated receipt history (#825).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReceiptPage {
+    /// Receipts in ascending id order.
+    pub receipts: soroban_sdk::Vec<AllocationReceipt>,
+    /// Cursor to pass to the next call, or `None` when the history is
+    /// exhausted.
+    pub next_cursor: Option<u64>,
+}
+
+/// Per-ledger-day cumulative allocation state (#824).
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DailyAllocation {
+    /// Total allocated so far on this ledger day.
+    pub total: i128,
+    /// Whether `daily_treasury_limit_reached` was already emitted for this
+    /// day, so the event fires once per breach window.
+    pub limit_notified: bool,
 }
 
 /// Result of `get_treasury_balance`: the total balance and a per-source

@@ -32,6 +32,7 @@ pub use types::FeeSnapshot;
 pub use types::FundingStatus;
 pub use types::InstallmentMilestone;
 pub use types::InvoiceCategory;
+pub use types::PenaltyAccrual;
 pub use types::SettlementProposalStatus;
 use types::{
     CategoryFeeSchedule, Config, DisputeData, EscrowData, FundingInvoice, InstallmentInput,
@@ -176,6 +177,65 @@ fn advance_installment_schedule(
     if changed {
         storage::set_installment_schedule(env, invoice_id, &schedule);
     }
+}
+
+/// Project the missed-installment penalty for every unsettled milestone at
+/// ledger timestamp `now` (#822).
+///
+/// For each unsettled milestone the interval length is the gap between its
+/// `due_ts` and the previous boundary (the escrow's `funded_dt` for the
+/// first installment, the previous milestone's `due_ts` afterwards). One
+/// penalty unit — `installment_amount * penalty_bps / MAX_BPS` — accrues
+/// for every *complete* interval that has fully elapsed since `due_ts`, so
+/// nothing accrues before the missed deadline and repeated checkpoints at
+/// the same ledger are idempotent. The projected amount is capped at the
+/// installment's principal (policy limit).
+///
+/// Returns `(milestone_index, missed_intervals, projected_amount)` triples.
+fn projected_installment_penalties(
+    env: &Env,
+    data: &EscrowData,
+    schedule: &soroban_sdk::Vec<InstallmentMilestone>,
+    penalty_bps: u32,
+    now: u64,
+) -> soroban_sdk::Vec<(u32, u32, i128)> {
+    let mut out = soroban_sdk::Vec::new(env);
+    let mut prev_cumulative: i128 = 0;
+    let mut prev_due: u64 = data.funded_dt;
+    for i in 0..schedule.len() {
+        let Some(milestone) = schedule.get(i) else {
+            break;
+        };
+        let installment_amount = milestone
+            .cumulative_amount
+            .saturating_sub(prev_cumulative)
+            .max(0);
+        let interval_len = if prev_due == 0 || milestone.due_ts <= prev_due {
+            0
+        } else {
+            milestone.due_ts - prev_due
+        };
+        let missed_intervals = if interval_len == 0 || now <= milestone.due_ts {
+            0u32
+        } else {
+            u32::try_from((now - milestone.due_ts) / interval_len).unwrap_or(u32::MAX)
+        };
+        prev_cumulative = milestone.cumulative_amount;
+        prev_due = milestone.due_ts;
+        if milestone.settled {
+            continue;
+        }
+        let per_interval = installment_amount
+            .checked_mul(i128::from(penalty_bps))
+            .and_then(|v| v.checked_div(i128::from(MAX_BPS)))
+            .unwrap_or(0);
+        let uncapped = per_interval
+            .checked_mul(i128::from(missed_intervals))
+            .unwrap_or(i128::MAX);
+        let target_amount = core::cmp::min(uncapped, installment_amount);
+        out.push_back((milestone.index, missed_intervals, target_amount));
+    }
+    out
 }
 
 #[contractimpl]
@@ -1643,6 +1703,149 @@ impl InvoiceEscrow {
         Ok(None)
     }
 
+    /// Checkpoint missed-installment penalty accrual for an invoice (#822).
+    ///
+    /// Permissionless: this only advances on-chain accounting checkpoints —
+    /// no funds move. For every unsettled installment milestone whose
+    /// `due_ts` has passed, one penalty unit
+    /// (`installment_amount * penalty_interest_bps / 10000`) accrues per
+    /// *complete* missed interval (the gap between consecutive due dates).
+    /// Accruals are capped at each installment's principal and each
+    /// (invoice, installment) checkpoint only moves forward, so repeated
+    /// calls at the same ledger are idempotent.
+    ///
+    /// Only applies while the escrow is `Funded` with a configured schedule
+    /// and `penalty_interest_bps > 0`; otherwise returns `Ok(0)`.
+    ///
+    /// Returns the newly accrued penalty amount and emits `penalty_accrued`
+    /// per installment that advanced.
+    pub fn accrue_installment_penalties(
+        env: Env,
+        invoice_id: Symbol,
+    ) -> Result<i128, Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if data.status != EscrowStatus::Funded {
+            return Ok(0);
+        }
+        let Some(schedule) = storage::get_installment_schedule(&env, &invoice_id) else {
+            return Ok(0);
+        };
+        if config.penalty_interest_bps == 0 {
+            return Ok(0);
+        }
+
+        let now = env.ledger().timestamp();
+        let projections = projected_installment_penalties(
+            &env,
+            &data,
+            &schedule,
+            config.penalty_interest_bps,
+            now,
+        );
+
+        let mut total_new: i128 = 0;
+        for (index, intervals, target_amount) in projections.iter() {
+            let mut accrual =
+                storage::get_penalty_accrual(&env, &invoice_id, index).unwrap_or(PenaltyAccrual {
+                    last_accrual_ts: 0,
+                    accrued_intervals: 0,
+                    accrued_amount: 0,
+                });
+            if intervals <= accrual.accrued_intervals
+                && target_amount <= accrual.accrued_amount
+            {
+                continue;
+            }
+            let delta_amount = target_amount.saturating_sub(accrual.accrued_amount);
+            let delta_intervals = intervals.saturating_sub(accrual.accrued_intervals);
+            accrual.last_accrual_ts = now;
+            accrual.accrued_intervals = core::cmp::max(accrual.accrued_intervals, intervals);
+            accrual.accrued_amount = core::cmp::max(accrual.accrued_amount, target_amount);
+            storage::set_penalty_accrual(&env, &invoice_id, index, &accrual);
+            if delta_amount > 0 {
+                events::penalty_accrued(
+                    &env,
+                    invoice_id.clone(),
+                    index,
+                    delta_intervals,
+                    delta_amount,
+                );
+                total_new = total_new.checked_add(delta_amount).ok_or(Error::Overflow)?;
+            }
+        }
+        Ok(total_new)
+    }
+
+    /// Preview the total accrued penalty for an invoice's installments
+    /// through `target_ts` (#822). Returns the same cumulative figure that
+    /// `accrue_installment_penalties` would leave stored if executed at
+    /// `target_ts`, so preview and execution agree at the same ledger.
+    pub fn preview_installment_penalty(
+        env: Env,
+        invoice_id: Symbol,
+        target_ts: u64,
+    ) -> Result<i128, Error> {
+        let config = storage::get_config(&env).ok_or(Error::NotInit)?;
+        let data = storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        if data.status != EscrowStatus::Funded {
+            return Ok(0);
+        }
+        let Some(schedule) = storage::get_installment_schedule(&env, &invoice_id) else {
+            return Ok(0);
+        };
+        if config.penalty_interest_bps == 0 {
+            return Ok(0);
+        }
+        let projections = projected_installment_penalties(
+            &env,
+            &data,
+            &schedule,
+            config.penalty_interest_bps,
+            target_ts,
+        );
+        let mut total: i128 = 0;
+        for (_index, _intervals, amount) in projections.iter() {
+            total = total.checked_add(amount).ok_or(Error::Overflow)?;
+        }
+        Ok(total)
+    }
+
+    /// View: penalty accrual checkpoint for one installment of an invoice.
+    pub fn get_installment_penalty_accrual(
+        env: Env,
+        invoice_id: Symbol,
+        installment_index: u32,
+    ) -> Result<Option<PenaltyAccrual>, Error> {
+        storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        Ok(storage::get_penalty_accrual(
+            &env,
+            &invoice_id,
+            installment_index,
+        ))
+    }
+
+    /// View: total penalty accrued across all installments of an invoice.
+    pub fn get_total_installment_penalty(
+        env: Env,
+        invoice_id: Symbol,
+    ) -> Result<i128, Error> {
+        storage::get_escrow(&env, invoice_id.clone()).ok_or(Error::EscrowNotFound)?;
+        let schedule = storage::get_installment_schedule(&env, &invoice_id)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        let mut total: i128 = 0;
+        for milestone in schedule.iter() {
+            if let Some(accrual) =
+                storage::get_penalty_accrual(&env, &invoice_id, milestone.index)
+            {
+                total = total
+                    .checked_add(accrual.accrued_amount)
+                    .ok_or(Error::Overflow)?;
+            }
+        }
+        Ok(total)
+    }
+
     /// Admin-only: configure the emergency multi-sig admin set and threshold.
     pub fn set_emergency_config(
         env: Env,
@@ -1763,6 +1966,9 @@ impl InvoiceEscrow {
             _ => return Err(Error::EscrowNotSettled),
         }
         storage::remove_escrow_state(&env, invoice_id.clone(), &data.funders);
+        if let Some(schedule) = storage::get_installment_schedule(&env, &invoice_id) {
+            storage::remove_installment_accruals(&env, &invoice_id, schedule.len());
+        }
         storage::remove_installment_schedule(&env, &invoice_id);
         events::escrow_cleaned_up(&env, invoice_id);
         Ok(())
