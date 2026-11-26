@@ -1,4 +1,4 @@
-#![cfg(test)]
+﻿#![cfg(test)]
 #![allow(deprecated, unused_variables, dead_code, unused_mut, clippy::all)]
 //! Unit tests for the invoice token contract.
 
@@ -2529,9 +2529,9 @@ fn test_storage_key_role_grant_cross_role_distinct() {
     );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Issue #147: Comprehensive Unit Tests for Invoice Token Pause/Unpause State Switch
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Verify the full lifecycle of pausing and unpausing the invoice token contract.
 /// All state-mutating operations (mint, mint_batch, transfer, transfer_from, approve,
@@ -2741,7 +2741,7 @@ fn test_pause_unpause_event_emission() {
     assert_eq!(new_val, false);
 }
 
-// ── Invoice mint uniqueness, authorization, and identifier encoding ──────────
+// â”€â”€ Invoice mint uniqueness, authorization, and identifier encoding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// First mint for an invoice token succeeds; re-initialize (second series) is
 /// rejected with no further mint events or supply growth.
@@ -2872,7 +2872,7 @@ fn test_invoice_identifier_and_metadata_encoding() {
         assert_eq!(client.decimals(), 7);
     }
 
-    // Maximum-length Symbol (32 chars) — boundary for Soroban Symbol encoding
+    // Maximum-length Symbol (32 chars) â€” boundary for Soroban Symbol encoding
     {
         let contract_id = env.register(InvoiceToken, ());
         let client = InvoiceTokenClient::new(&env, &contract_id);
@@ -3162,11 +3162,11 @@ fn test_storage_key_ttl_after_multiple_operations() {
     assert_eq!(allowance, 500);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Issue #457: property-based tests for fractional balance conservation.
 // Invariant: for any sequence of splits/moves/burns, the sum of fractional
 // balances plus burned supply equals minted supply at every step.
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Small deterministic LCG so failures are reproducible (no rand dep).
 fn lcg_next(state: &mut u64) -> u64 {
@@ -3365,7 +3365,7 @@ fn issue457_random_walk_mint_transfer_burn_conserves_every_step() {
     }
 }
 
-// ── Fuzz targets for invoice token mint/burn/transfer (Issue #771) ────────────
+// â”€â”€ Fuzz targets for invoice token mint/burn/transfer (Issue #771) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Property-based fuzz tests using a deterministic pseudo-random generator
 // to exercise token accounting invariants under arbitrary operation sequences.
@@ -4035,3 +4035,229 @@ fn fuzz_pause_unpause_operations() {
         model.assert_invariant(&client);
     }
 }
+
+
+// ========== Issue #361: Allowance Expiration Edge Cases ==========
+
+#[test]
+fn test_expired_allowance_precedes_insufficient_amount_transfer_from() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    client.approve(&admin, &spender, &50, &initial_ledger);
+    env.ledger().with_mut(|li| li.sequence_number = initial_ledger + 1);
+    let events_before = env.events().all().events().len();
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)), "expiry must be reported before insufficient allowance");
+    assert_eq!(client.balance(&admin), 1000);
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(client.total_supply(), 1000);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+    assert_eq!(env.events().all().events().len(), events_before);
+}
+
+#[test]
+fn test_expired_allowance_precedes_insufficient_balance_transfer_from() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &100, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    client.approve(&admin, &spender, &500, &initial_ledger);
+    env.ledger().with_mut(|li| li.sequence_number = initial_ledger + 1);
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)), "expiry must be reported before insufficient balance");
+    assert_eq!(client.balance(&admin), 100);
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(client.total_supply(), 100);
+}
+
+#[test]
+fn test_expired_allowance_precedes_amount_and_balance_burn_from() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &100, &minter);
+    let spender = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    client.approve(&admin, &spender, &50, &initial_ledger);
+    env.ledger().with_mut(|li| li.sequence_number = initial_ledger + 1);
+    let events_before = env.events().all().events().len();
+    let result = client.try_burn_from(&spender, &admin, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)), "expiry must be reported before amount/balance checks on burn_from");
+    assert_eq!(client.balance(&admin), 100);
+    assert_eq!(client.total_supply(), 100);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+    assert_eq!(env.events().all().events().len(), events_before);
+}
+
+#[test]
+fn test_partial_transfer_then_expiry_blocks_remaining_allowance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    let expiration = initial_ledger + 5;
+    client.approve(&admin, &spender, &500, &expiration);
+    env.ledger().with_mut(|li| li.sequence_number = expiration);
+    client.transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+    env.ledger().with_mut(|li| li.sequence_number = expiration + 1);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.balance(&recipient), 200);
+}
+
+#[test]
+fn test_partial_burn_then_expiry_blocks_remaining_allowance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    let spender = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    let expiration = initial_ledger + 5;
+    client.approve(&admin, &spender, &500, &expiration);
+    env.ledger().with_mut(|li| li.sequence_number = expiration);
+    client.burn_from(&spender, &admin, &200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+    assert_eq!(client.total_supply(), 800);
+    env.ledger().with_mut(|li| li.sequence_number = expiration + 1);
+    let result = client.try_burn_from(&spender, &admin, &100);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+    assert_eq!(client.balance(&admin), 800);
+    assert_eq!(client.total_supply(), 800);
+}
+
+#[test]
+fn test_reapproval_after_expiry_restores_authorization() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    client.approve(&admin, &spender, &100, &initial_ledger);
+    env.ledger().with_mut(|li| li.sequence_number = initial_ledger + 1);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+    assert_eq!(client.try_transfer_from(&spender, &admin, &recipient, &50), Err(Ok(crate::errors::Error::AllowanceExpired)));
+    let new_expiration = initial_ledger + 10;
+    client.approve(&admin, &spender, &250, &new_expiration);
+    assert_eq!(client.allowance(&admin, &spender), 250);
+    env.ledger().with_mut(|li| li.sequence_number = new_expiration);
+    client.transfer_from(&spender, &admin, &recipient, &250);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+    assert_eq!(client.balance(&recipient), 250);
+}
+
+#[test]
+fn test_zero_amount_approval_removes_entry_and_reports_insufficient_allowance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    let current_ledger = env.ledger().sequence();
+    client.approve(&admin, &spender, &500, &(current_ledger + 100));
+    assert_eq!(client.allowance(&admin, &spender), 500);
+    client.approve(&admin, &spender, &0, &(current_ledger - 5));
+    assert_eq!(client.allowance(&admin, &spender), 0);
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &1);
+    assert_eq!(result, Err(Ok(crate::errors::Error::InsufficientAllowance)), "a removed entry must not be reported as an expired allowance");
+}
+
+#[test]
+fn test_multiple_spenders_have_independent_expiration_ledgers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender_early = Address::generate(&env);
+    let spender_late = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    let early_expiration = initial_ledger + 2;
+    let late_expiration = initial_ledger + 20;
+    client.approve(&admin, &spender_early, &100, &early_expiration);
+    client.approve(&admin, &spender_late, &200, &late_expiration);
+    env.ledger().with_mut(|li| li.sequence_number = early_expiration + 1);
+    assert_eq!(client.allowance(&admin, &spender_early), 0);
+    assert_eq!(client.allowance(&admin, &spender_late), 200);
+    assert_eq!(client.try_transfer_from(&spender_early, &admin, &recipient, &1), Err(Ok(crate::errors::Error::AllowanceExpired)));
+    client.transfer_from(&spender_late, &admin, &recipient, &50);
+    assert_eq!(client.allowance(&admin, &spender_late), 150);
+    assert_eq!(client.balance(&recipient), 50);
+}
+
+#[test]
+fn test_expired_transfer_from_is_atomic_no_state_or_event_mutation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let initial_ledger = env.ledger().sequence();
+    client.approve(&admin, &spender, &500, &initial_ledger);
+    env.ledger().with_mut(|li| li.sequence_number = initial_ledger + 1);
+    let events_before = env.events().all().events().len();
+    let result = client.try_transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(result, Err(Ok(crate::errors::Error::AllowanceExpired)));
+    assert_eq!(client.balance(&admin), 1000);
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(client.total_supply(), 1000);
+    assert_eq!(client.allowance(&admin, &spender), 0);
+    assert_eq!(env.events().all().events().len(), events_before, "a failed transfer must not emit events");
+}
+
+#[test]
+fn test_allowance_with_max_u32_expiration_remains_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, minter) = setup_token(&env);
+    client.mint(&admin, &1000, &minter);
+    client.set_transfer_locked(&admin, &false);
+    let spender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let max_expiration = u32::MAX;
+    client.approve(&admin, &spender, &500, &max_expiration);
+    assert_eq!(client.allowance(&admin, &spender), 500);
+    client.transfer_from(&spender, &admin, &recipient, &200);
+    assert_eq!(client.allowance(&admin, &spender), 300);
+    assert_eq!(client.balance(&recipient), 200);
+}
+
+#[test]
+fn test_approve_past_expiration_returns_invalid_expiration_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _minter) = setup_token(&env);
+    let spender = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    let current_ledger = env.ledger().sequence();
+    let result = client.try_approve(&admin, &spender, &500, &(current_ledger - 1));
+    assert_eq!(result, Err(Ok(crate::errors::Error::InvalidExpiration)));
+    assert_eq!(client.allowance(&admin, &spender), 0);
+}
+
