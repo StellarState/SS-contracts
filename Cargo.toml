@@ -4,6 +4,7 @@ members = [
     "contracts/categorisation-registry",
     "contracts/fee-treasury",
     "contracts/invoice-escrow",
+    "contracts/invoice-insurance",
     "contracts/invoice-token",
     "contracts/nonce-registry",
     "contracts/order-book",
@@ -15,6 +16,7 @@ members = [
     "contracts/invoice-maturity-reminder",
     "contracts/interest-rate-oracle",
     "contracts/fraction-transfer-restriction",
+    "contracts/treasury-management",
 ]
 
 [workspace.dependencies]
