@@ -49,6 +49,73 @@ fn test_initialize_and_create_vest() {
     assert_eq!(schedule.claimed_amount, 0);
     assert_eq!(schedule.tranches.len(), 2);
     assert_eq!(schedule.tranches.get(0).unwrap().claimed, false);
+    assert_eq!(schedule.tranches.get(1).unwrap().claimed, false);
+    assert_eq!(
+        schedule.tranches.get(0).unwrap().amount + schedule.tranches.get(1).unwrap().amount,
+        schedule.total_amount
+    );
+}
+
+#[test]
+fn test_create_vest_rejects_preclaimed_tranches_atomically() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(YieldVesting, ());
+    let client = YieldVestingClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let (token, _asset) = setup_token(&env);
+    let invoice_id = BytesN::from_array(&env, &[1u8; 32]);
+
+    client.initialize(&admin);
+
+    let mut all_preclaimed = Vec::new(&env);
+    all_preclaimed.push_back(Tranche {
+        amount: 400,
+        release_timestamp: 1000,
+        claimed: true,
+    });
+    all_preclaimed.push_back(Tranche {
+        amount: 600,
+        release_timestamp: 2000,
+        claimed: true,
+    });
+    assert!(client
+        .try_create_yield_vest(&invoice_id, &beneficiary, &token, &all_preclaimed)
+        .is_err());
+
+    let mut mixed = Vec::new(&env);
+    mixed.push_back(Tranche {
+        amount: 400,
+        release_timestamp: 1000,
+        claimed: false,
+    });
+    mixed.push_back(Tranche {
+        amount: 600,
+        release_timestamp: 2000,
+        claimed: true,
+    });
+    assert!(client
+        .try_create_yield_vest(&invoice_id, &beneficiary, &token, &mixed)
+        .is_err());
+    assert_eq!(env.events().all().events().len(), 0);
+
+    let mut pending = Vec::new(&env);
+    pending.push_back(Tranche {
+        amount: 400,
+        release_timestamp: 1000,
+        claimed: false,
+    });
+    let vest_id = client.create_yield_vest(&invoice_id, &beneficiary, &token, &pending);
+    assert_eq!(vest_id, 1);
+    assert_eq!(env.events().all().events().len(), 1);
+
+    let schedule = client.get_vest_schedule(&vest_id);
+    assert_eq!(schedule.total_amount, 400);
+    assert_eq!(schedule.claimed_amount, 0);
+    assert!(!schedule.tranches.get(0).unwrap().claimed);
 }
 
 #[test]

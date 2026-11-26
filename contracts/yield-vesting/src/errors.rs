@@ -15,4 +15,5 @@ pub enum Error {
     InvalidAmount = 9,
     NoEligibleTranches = 10,
     InvalidTimestamp = 11,
+    InvalidTrancheState = 12,
 }

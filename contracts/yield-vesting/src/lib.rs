@@ -38,6 +38,7 @@ impl YieldVesting {
         Ok(())
     }
 
+    /// Creates a schedule from pending tranches; preclaimed input is rejected.
     pub fn create_yield_vest(
         env: Env,
         invoice_id: BytesN<32>,
@@ -60,6 +61,9 @@ impl YieldVesting {
         let mut total_amount: i128 = 0;
         for i in 0..tranches.len() {
             let t = tranches.get(i).unwrap();
+            if t.claimed {
+                return Err(Error::InvalidTrancheState);
+            }
             if t.amount <= 0 {
                 return Err(Error::InvalidAmount);
             }
