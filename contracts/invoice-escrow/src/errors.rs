@@ -140,4 +140,11 @@ pub enum Error {
     MaxFundingThresholdExceeded = 63,
     /// Wallet's secondary-market buy limit for the current window was exceeded.
     BuyLimitExceeded = 64,
+    ManifestExists = 65,
+    ManifestNotFound = 66,
+    DuplicateDocument = 67,
+    InvalidDisputeStage = 68,
+    AppealWindowClosed = 69,
+    AppealWindowOpen = 70,
+    InvalidDisputeOutcome = 71,
 }

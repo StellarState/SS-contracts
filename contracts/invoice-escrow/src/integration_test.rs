@@ -2028,3 +2028,98 @@ fn test_integration_lifecycle_transition_matrix() {
         .try_refund_escrow(&cancelled.invoice_id)
         .is_err());
 }
+
+#[test]
+fn dispute_escalation_holds_payout_and_refunds_winning_appeal_deposit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "APPEAL", 1_100, 0);
+    create_and_fund(&ctx, 1_000, 99_999);
+
+    ctx.escrow.raise_dispute(
+        &ctx.payer,
+        &ctx.invoice_id,
+        &soroban_sdk::Bytes::from_slice(&env, b"goods not received"),
+    );
+    ctx.escrow.propose_dispute_resolution(
+        &ctx.admin,
+        &ctx.invoice_id,
+        &Symbol::new(&env, "seller"),
+        &600,
+    );
+    assert_eq!(ctx.payment_token.balance(&ctx.seller), 0);
+    assert!(ctx
+        .escrow
+        .try_resolve_dispute(&ctx.admin, &ctx.invoice_id, &Symbol::new(&env, "seller"))
+        .is_err());
+
+    let proposed_at = env.ledger().timestamp();
+    env.ledger().set_timestamp(proposed_at + 601);
+    assert!(ctx
+        .escrow
+        .try_appeal_dispute(&ctx.buyer, &ctx.invoice_id, &100)
+        .is_err());
+    env.ledger().set_timestamp(proposed_at);
+    ctx.escrow.appeal_dispute(&ctx.buyer, &ctx.invoice_id, &100);
+    assert_eq!(
+        ctx.escrow.get_dispute(&ctx.invoice_id).stage,
+        DisputeStage::Appealed
+    );
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 1_100);
+
+    ctx.escrow.resolve_dispute(
+        &ctx.admin,
+        &ctx.invoice_id,
+        &Symbol::new(&env, "buyer"),
+    );
+    assert_eq!(ctx.payment_token.balance(&ctx.buyer), 1_100);
+    assert_eq!(ctx.payment_token.balance(&ctx.escrow_id), 0);
+    assert_eq!(
+        ctx.escrow.get_dispute(&ctx.invoice_id).stage,
+        DisputeStage::Finalized
+    );
+}
+
+#[test]
+fn document_manifest_requires_issuer_and_rejects_duplicate_documents() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ctx = setup(&env, 300, "MANIFEST", 0, 0);
+    let invoice_id = BytesN::from_array(&env, &[1; 32]);
+    let first_hash = BytesN::from_array(&env, &[2; 32]);
+    let amended_hash = BytesN::from_array(&env, &[3; 32]);
+    let document_hash = BytesN::from_array(&env, &[4; 32]);
+    ctx.escrow.register_invoice(
+        &invoice_id,
+        &1_000,
+        &800,
+        &500,
+        &1_000,
+        &first_hash,
+    );
+    ctx.escrow
+        .register_manifest(&invoice_id, &ctx.admin, &first_hash);
+    ctx.escrow
+        .add_manifest_document(&invoice_id, &ctx.admin, &document_hash);
+
+    assert!(ctx
+        .escrow
+        .try_add_manifest_document(&invoice_id, &ctx.admin, &document_hash)
+        .is_err());
+    assert!(ctx
+        .escrow
+        .try_amend_manifest(&invoice_id, &ctx.seller, &amended_hash)
+        .is_err());
+
+    ctx.escrow
+        .amend_manifest(&invoice_id, &ctx.admin, &amended_hash);
+    let status = ctx.escrow.get_manifest_status(&invoice_id);
+    assert_eq!(status.document_count, 1);
+    assert_eq!(status.version, 2);
+    assert!(ctx
+        .escrow
+        .verify_manifest_document(&invoice_id, &document_hash));
+    assert!(!ctx
+        .escrow
+        .verify_manifest_document(&invoice_id, &BytesN::from_array(&env, &[9; 32])));
+}

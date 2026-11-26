@@ -49,6 +49,7 @@ pub enum StorageKey {
     BuyLimit(soroban_sdk::BytesN<32>),
     /// Persistent: a wallet's current buy-limit window by (invoice_id, wallet).
     BuyWindow(soroban_sdk::BytesN<32>, soroban_sdk::Address),
+    Manifest(soroban_sdk::BytesN<32>),
 }
 
 /// Registered invoice metadata and funding parameters stored in persistent storage.
@@ -174,6 +175,38 @@ pub struct DisputeData {
     pub raised_at: u64,
     /// Whether `resolve_dispute` has already run for this dispute.
     pub resolved: bool,
+    pub stage: DisputeStage,
+    pub proposed_favour: Option<soroban_sdk::Symbol>,
+    pub appeal_deadline: u64,
+    pub appellant: Option<soroban_sdk::Address>,
+    pub appeal_deposit: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum DisputeStage {
+    Raised = 0,
+    Proposed = 1,
+    Appealed = 2,
+    Finalized = 3,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentManifest {
+    pub issuer: soroban_sdk::Address,
+    pub manifest_hash: soroban_sdk::BytesN<32>,
+    pub documents: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+    pub version: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManifestStatus {
+    pub manifest_hash: soroban_sdk::BytesN<32>,
+    pub document_count: u32,
+    pub version: u32,
 }
 
 /// Per-invoice escrow data stored in persistent storage.

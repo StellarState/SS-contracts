@@ -39,6 +39,8 @@ tarpaulin-report.html
 # Debug and logs
 *.log
 debug/
+__pycache__/
+*.pyc
 
 # Maintainer-only GitHub issue tooling (not published)
 imp
