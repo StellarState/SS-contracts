@@ -15,6 +15,8 @@ pub struct CollateralRecord {
 pub struct RewardStatus {
     pub streak_days: u32,
     pub discount_pending: bool,
+    pub discount_consumed: bool,
+    pub discount_eligible: bool,
     pub discount_bps: u32,
 }
 
@@ -23,4 +25,6 @@ pub struct RewardStatus {
 pub enum StorageKey {
     Admin,
     Record(Address),
+    QualificationCycle(Address),
+    RewardedCycle(Address),
 }

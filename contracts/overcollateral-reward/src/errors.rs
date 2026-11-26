@@ -11,4 +11,5 @@ pub enum Error {
     NotOvercollateral = 5,
     StreakTooShort = 6,
     DiscountAlreadyPending = 7,
+    DiscountAlreadyRewarded = 8,
 }

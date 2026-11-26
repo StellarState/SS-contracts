@@ -1,7 +1,9 @@
 //! Invoice over-collateralisation reward contract (issue #658).
 //!
 //! Grants issuers a 10% fee discount on their next invoice when they maintain
-//! collateral above the required minimum for 30 consecutive days.
+//! collateral above the required minimum for 30 consecutive days. Each
+//! uninterrupted qualification streak can earn one discount; a broken streak
+//! starts a new qualification cycle.
 
 #![no_std]
 
@@ -80,6 +82,15 @@ impl OvercollateralReward {
             if !record.is_overcollateral {
                 // Start a new streak.
                 record.streak_start = now;
+                let cycle: u64 = env
+                    .storage()
+                    .persistent()
+                    .get(&StorageKey::QualificationCycle(issuer.clone()))
+                    .unwrap_or(0);
+                env.storage().persistent().set(
+                    &StorageKey::QualificationCycle(issuer.clone()),
+                    &cycle.saturating_add(1),
+                );
             }
             record.is_overcollateral = true;
             record.excess_bps = excess_bps;
@@ -121,6 +132,8 @@ impl OvercollateralReward {
     }
 
     /// Admin-only: grant the fee discount after 30+ days of over-collateralisation.
+    /// A qualification cycle can only be rewarded once, even after its pending
+    /// discount has been consumed.
     pub fn grant_fee_discount(env: Env, issuer: Address) -> Result<(), Error> {
         require_admin(&env)?;
 
@@ -130,6 +143,9 @@ impl OvercollateralReward {
             .get(&StorageKey::Record(issuer.clone()))
             .ok_or(Error::IssuerNotFound)?;
 
+        if record.discount_pending {
+            return Err(Error::DiscountAlreadyPending);
+        }
         if !record.is_overcollateral {
             return Err(Error::NotOvercollateral);
         }
@@ -140,10 +156,27 @@ impl OvercollateralReward {
         if days_elapsed < REQUIRED_STREAK_DAYS {
             return Err(Error::StreakTooShort);
         }
-        if record.discount_pending {
-            return Err(Error::DiscountAlreadyPending);
+
+        // Existing records from before cycle tracking belong to their first cycle.
+        let cycle: u64 = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::QualificationCycle(issuer.clone()))
+            .unwrap_or(1);
+        let rewarded_cycle: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::RewardedCycle(issuer.clone()));
+        if rewarded_cycle == Some(cycle) {
+            return Err(Error::DiscountAlreadyRewarded);
         }
 
+        env.storage()
+            .persistent()
+            .set(&StorageKey::QualificationCycle(issuer.clone()), &cycle);
+        env.storage()
+            .persistent()
+            .set(&StorageKey::RewardedCycle(issuer.clone()), &cycle);
         record.discount_pending = true;
         env.storage()
             .persistent()
@@ -153,7 +186,8 @@ impl OvercollateralReward {
         Ok(())
     }
 
-    /// Returns the issuer's current streak duration and whether a discount is pending.
+    /// Returns the current streak duration and whether its discount is pending,
+    /// consumed, or newly eligible.
     pub fn get_collateral_reward_status(env: Env, issuer: Address) -> Result<RewardStatus, Error> {
         let record: CollateralRecord = env
             .storage()
@@ -172,10 +206,27 @@ impl OvercollateralReward {
         } else {
             0
         };
+        let cycle: u64 = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::QualificationCycle(issuer.clone()))
+            .unwrap_or(if record.is_overcollateral { 1 } else { 0 });
+        let rewarded_cycle: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::RewardedCycle(issuer));
+        let discount_consumed =
+            !record.discount_pending && rewarded_cycle == Some(cycle) && cycle > 0;
+        let discount_eligible = record.is_overcollateral
+            && streak_days as u64 >= REQUIRED_STREAK_DAYS
+            && !record.discount_pending
+            && rewarded_cycle != Some(cycle);
 
         Ok(RewardStatus {
             streak_days,
             discount_pending: record.discount_pending,
+            discount_consumed,
+            discount_eligible,
             discount_bps: if record.discount_pending {
                 DISCOUNT_BPS
             } else {
