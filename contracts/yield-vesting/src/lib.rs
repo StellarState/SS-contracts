@@ -14,6 +14,17 @@ pub use types::{StorageKey, Tranche, VestSchedule};
 #[contract]
 pub struct YieldVesting;
 
+fn transfer_claim(env: &Env, schedule: &VestSchedule, amount: i128) -> Result<(), Error> {
+    let client = token::Client::new(env, &schedule.token);
+    let contract_address = env.current_contract_address();
+    if client.balance(&contract_address) < amount {
+        return Err(Error::InsufficientFunds);
+    }
+
+    client.transfer(&contract_address, &schedule.beneficiary, &amount);
+    Ok(())
+}
+
 #[contractimpl]
 impl YieldVesting {
     pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
@@ -38,6 +49,7 @@ impl YieldVesting {
         Ok(())
     }
 
+    /// Creates a schedule from pending tranches; preclaimed input is rejected.
     pub fn create_yield_vest(
         env: Env,
         invoice_id: BytesN<32>,
@@ -60,6 +72,9 @@ impl YieldVesting {
         let mut total_amount: i128 = 0;
         for i in 0..tranches.len() {
             let t = tranches.get(i).unwrap();
+            if t.claimed {
+                return Err(Error::InvalidTrancheState);
+            }
             if t.amount <= 0 {
                 return Err(Error::InvalidAmount);
             }
@@ -126,12 +141,15 @@ impl YieldVesting {
             return Err(Error::TimeNotReached);
         }
 
-        tranche.claimed = true;
-        schedule.tranches.set(tranche_index, tranche.clone());
-        schedule.claimed_amount = schedule
+        let claimed_amount = schedule
             .claimed_amount
             .checked_add(tranche.amount)
             .ok_or(Error::InvalidAmount)?;
+        transfer_claim(&env, &schedule, tranche.amount)?;
+
+        tranche.claimed = true;
+        schedule.tranches.set(tranche_index, tranche.clone());
+        schedule.claimed_amount = claimed_amount;
 
         env.storage()
             .persistent()
@@ -144,16 +162,6 @@ impl YieldVesting {
             &schedule.beneficiary,
             tranche.amount,
         );
-
-        let client = token::Client::new(&env, &schedule.token);
-        let contract_balance = client.balance(&env.current_contract_address());
-        if contract_balance >= tranche.amount {
-            client.transfer(
-                &env.current_contract_address(),
-                &schedule.beneficiary,
-                &tranche.amount,
-            );
-        }
 
         Ok(tranche.amount)
     }
@@ -187,13 +195,11 @@ impl YieldVesting {
                 return Err(Error::TimeNotReached);
             }
 
-            tranche.claimed = true;
-            schedule.tranches.set(idx, tranche.clone());
             total_claimed = total_claimed
                 .checked_add(tranche.amount)
                 .ok_or(Error::InvalidAmount)?;
-
-            events::tranche_released(&env, vest_id, idx, &schedule.beneficiary, tranche.amount);
+            tranche.claimed = true;
+            schedule.tranches.set(idx, tranche);
         }
 
         schedule.claimed_amount = schedule
@@ -201,18 +207,16 @@ impl YieldVesting {
             .checked_add(total_claimed)
             .ok_or(Error::InvalidAmount)?;
 
+        transfer_claim(&env, &schedule, total_claimed)?;
+
         env.storage()
             .persistent()
             .set(&StorageKey::Vest(vest_id), &schedule);
 
-        let client = token::Client::new(&env, &schedule.token);
-        let contract_balance = client.balance(&env.current_contract_address());
-        if contract_balance >= total_claimed {
-            client.transfer(
-                &env.current_contract_address(),
-                &schedule.beneficiary,
-                &total_claimed,
-            );
+        for i in 0..tranche_indices.len() {
+            let idx = tranche_indices.get(i).unwrap();
+            let tranche = schedule.tranches.get(idx).unwrap();
+            events::tranche_released(&env, vest_id, idx, &schedule.beneficiary, tranche.amount);
         }
 
         Ok(total_claimed)
@@ -229,7 +233,7 @@ impl YieldVesting {
 
         let current_time = env.ledger().timestamp();
         let mut total_claimed: i128 = 0;
-        let mut claimed_any = false;
+        let mut eligible_indices = Vec::new(&env);
 
         for i in 0..schedule.tranches.len() {
             let mut tranche = schedule.tranches.get(i).unwrap();
@@ -239,13 +243,11 @@ impl YieldVesting {
                 total_claimed = total_claimed
                     .checked_add(tranche.amount)
                     .ok_or(Error::InvalidAmount)?;
-                claimed_any = true;
-
-                events::tranche_released(&env, vest_id, i, &schedule.beneficiary, tranche.amount);
+                eligible_indices.push_back(i);
             }
         }
 
-        if !claimed_any {
+        if eligible_indices.is_empty() {
             return Err(Error::NoEligibleTranches);
         }
 
@@ -254,18 +256,15 @@ impl YieldVesting {
             .checked_add(total_claimed)
             .ok_or(Error::InvalidAmount)?;
 
+        transfer_claim(&env, &schedule, total_claimed)?;
+
         env.storage()
             .persistent()
             .set(&StorageKey::Vest(vest_id), &schedule);
 
-        let client = token::Client::new(&env, &schedule.token);
-        let contract_balance = client.balance(&env.current_contract_address());
-        if contract_balance >= total_claimed {
-            client.transfer(
-                &env.current_contract_address(),
-                &schedule.beneficiary,
-                &total_claimed,
-            );
+        for i in eligible_indices.iter() {
+            let tranche = schedule.tranches.get(i).unwrap();
+            events::tranche_released(&env, vest_id, i, &schedule.beneficiary, tranche.amount);
         }
 
         Ok(total_claimed)
