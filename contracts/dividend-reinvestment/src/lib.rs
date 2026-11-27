@@ -1,18 +1,21 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    Env, Vec,
 };
 
 #[derive(Clone)]
 #[contracttype]
-enum DataKey {
+pub(crate) enum DataKey {
     Admin,
     Config(Address),
     Invoice(BytesN<32>),
     Invoices,
+    InitialInvoice(BytesN<32>),
 }
 
+#[cfg_attr(test, derive(Debug, Eq, PartialEq))]
 #[derive(Clone)]
 #[contracttype]
 pub struct ReinvestmentConfig {
@@ -21,12 +24,25 @@ pub struct ReinvestmentConfig {
     pub max_amount: i128,
     pub enabled: bool,
 }
-#[derive(Clone)]
+
+#[cfg_attr(test, derive(Debug))]
+#[derive(Clone, Eq, PartialEq)]
 #[contracttype]
 pub struct TargetInvoice {
     pub token: Address,
     pub yield_bps: u32,
     pub capacity: i128,
+}
+
+#[contractevent(topics = ["ReinvestmentExecuted"])]
+#[cfg_attr(test, derive(Debug, Eq, PartialEq))]
+#[derive(Clone)]
+pub struct ReinvestmentExecuted {
+    #[topic]
+    pub wallet: Address,
+    #[topic]
+    pub invoice_id: BytesN<32>,
+    pub payout_amount: i128,
 }
 
 #[contracterror]
@@ -38,6 +54,7 @@ pub enum Error {
     InvalidAmount = 3,
     NoMatchingInvoice = 4,
     Overflow = 5,
+    InvoiceConflict = 6,
 }
 
 #[contract]
@@ -53,6 +70,7 @@ impl DividendReinvestment {
         env.storage().instance().set(&DataKey::Admin, &admin);
         Ok(())
     }
+
     pub fn set_reinvestment_config(
         env: Env,
         wallet: Address,
@@ -67,9 +85,11 @@ impl DividendReinvestment {
             .set(&DataKey::Config(wallet), &config);
         Ok(())
     }
+
     pub fn get_reinvestment_config(env: Env, wallet: Address) -> Option<ReinvestmentConfig> {
         env.storage().persistent().get(&DataKey::Config(wallet))
     }
+
     pub fn disable_reinvestment(env: Env, wallet: Address) -> Result<(), Error> {
         wallet.require_auth();
         if let Some(mut config) = Self::get_reinvestment_config(env.clone(), wallet.clone()) {
@@ -80,6 +100,7 @@ impl DividendReinvestment {
         }
         Ok(())
     }
+
     pub fn register_invoice(
         env: Env,
         invoice_id: BytesN<32>,
@@ -94,15 +115,34 @@ impl DividendReinvestment {
         if target.capacity <= 0 {
             return Err(Error::InvalidAmount);
         }
+
+        let initial_key = DataKey::InitialInvoice(invoice_id.clone());
+        if let Some(initial) = env
+            .storage()
+            .persistent()
+            .get::<_, TargetInvoice>(&initial_key)
+        {
+            if target != initial {
+                return Err(Error::InvoiceConflict);
+            }
+            return Ok(());
+        }
+
         let key = DataKey::Invoices;
-        let mut ids: Vec<BytesN<32>> = env.storage().instance().get(&key).unwrap_or(Vec::new(&env));
+        let mut ids: Vec<BytesN<32>> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
         ids.push_back(invoice_id.clone());
         env.storage().instance().set(&key, &ids);
         env.storage()
             .persistent()
             .set(&DataKey::Invoice(invoice_id), &target);
+        env.storage().persistent().set(&initial_key, &target);
         Ok(())
     }
+
     pub fn execute_reinvestment(
         env: Env,
         wallet: Address,
@@ -123,7 +163,7 @@ impl DividendReinvestment {
             .storage()
             .instance()
             .get(&DataKey::Invoices)
-            .unwrap_or(Vec::new(&env));
+            .unwrap_or_else(|| Vec::new(&env));
         for id in ids.iter() {
             let key = DataKey::Invoice(id.clone());
             let Some(mut target) = env.storage().persistent().get::<_, TargetInvoice>(&key) else {
@@ -137,21 +177,22 @@ impl DividendReinvestment {
             }
             token::Client::new(&env, &config.token).transfer(
                 &wallet,
-                &env.current_contract_address(),
+                env.current_contract_address(),
                 &payout_amount,
             );
             target.capacity -= payout_amount;
             env.storage().persistent().set(&key, &target);
-            env.events().publish(
-                (
-                    Symbol::new(&env, "ReinvestmentExecuted"),
-                    wallet.clone(),
-                    id.clone(),
-                ),
+            ReinvestmentExecuted {
+                wallet: wallet.clone(),
+                invoice_id: id.clone(),
                 payout_amount,
-            );
+            }
+            .publish(&env);
             return Ok(Some(id));
         }
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod test;
