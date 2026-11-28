@@ -76,6 +76,9 @@ jobs:
       - name: Run Clippy lints
         run: cargo clippy --all -- -D warnings
 
+      - name: Verify canonical contract-state snapshots
+        run: cargo test --locked -p invoice-escrow --test contract_state_snapshots -- --nocapture
+
       - name: Run workspace unit and integration tests
         run: cargo test --all --verbose
 
