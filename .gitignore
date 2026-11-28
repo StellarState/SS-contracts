@@ -40,6 +40,14 @@ tarpaulin-report.html
 *.log
 debug/
 
+# Test snapshots
+**/test_snapshots/
+**/testsnapshot/
+**/testsnapshots/
+testsnapshot/
+testsnapshots/
+*.snap
+
 # Maintainer-only GitHub issue tooling (not published)
 imp
 # NOTE: /scripts/ is intentionally NOT ignored – deployment scripts are public.
