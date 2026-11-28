@@ -65,7 +65,29 @@ cargo test --package payment-distributor
 bash scripts/deploy.sh
 ```
 
-### 3. Git Pre-Commit Hooks
+### 3. Contract-State Snapshot Fixtures
+
+The invoice escrow integration tests compare representative funded and settled
+contract states with canonical JSON fixtures in
+`contracts/invoice-escrow/test_snapshots/contract-state/`. Ledger inputs are
+fixed and addresses are represented by fixture roles, so snapshots never
+contain live StrKeys or secrets. CI runs this check and prints the expected and
+generated JSON to the job log when a fixture differs.
+
+To review a deliberate storage-shape change, regenerate the fixtures, inspect
+the JSON diff, and commit the reviewed files with the contract change:
+
+```bash
+UPDATE_CONTRACT_STATE_SNAPSHOTS=1 cargo test -p invoice-escrow --test contract_state_snapshots -- --nocapture
+cargo test -p invoice-escrow --test contract_state_snapshots -- --nocapture
+```
+
+In PowerShell, set the update flag for the regeneration command with
+`$env:UPDATE_CONTRACT_STATE_SNAPSHOTS = "1"`, then remove it with
+`Remove-Item Env:UPDATE_CONTRACT_STATE_SNAPSHOTS` before rerunning the test
+without the flag. Snapshot updates must be reviewed; do not set the flag in CI.
+
+### 4. Git Pre-Commit Hooks
 
 To automatically enforce formatting and linting before every commit:
 

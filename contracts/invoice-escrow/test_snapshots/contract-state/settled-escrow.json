@@ -1,0 +1,55 @@
+{
+  "config": {
+    "accreditation_callback": null,
+    "admin": "admin",
+    "dispute_timeout_secs": 604800,
+    "fee_bps": 300,
+    "grace_period_seconds": 0,
+    "min_investment": 0,
+    "paused": false,
+    "penalty_interest_bps": 0,
+    "payment_distributor": "distributor",
+    "referral_contract": null,
+    "whitelist_enabled": false
+  },
+  "contract_storage_debug": "Config {\n    admin: admin,\n    fee_bps: 300,\n    payment_distributor: Some(\n        distributor,\n    ),\n    referral_contract: None,\n    paused: false,\n    whitelist_enabled: false,\n    min_investment: 0,\n    grace_period_seconds: 0,\n    dispute_timeout_secs: 604800,\n    accreditation_callback: None,\n    penalty_interest_bps: 0,\n}\nEscrowData {\n    inv_id: Symbol(INV_INTEGRATION),\n    seller: seller,\n    debtor: debtor,\n    face_value: 10000,\n    purchase_price: 9000,\n    funded_amt: 9000,\n    funder: Some(\n        buyer,\n    ),\n    funders: Vec(Ok(buyer)),\n    due_dt: 1000000,\n    token: payment_token,\n    accepted_tokens: Vec(Ok(payment_token)),\n    inv_token: invoice_token,\n    paid_amt: 10000,\n    status: Settled,\n    funding_milestone: None,\n    commitment: BytesN<32>(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),\n    early_settlement_discount_bps: 0,\n    early_settlement_cutoff: 0,\n    category: Standard,\n    funded_dt: 1000,\n}",
+  "escrow": {
+    "accepted_tokens": ["payment_token"],
+    "category": "standard",
+    "commitment": "fixture:zero",
+    "debtor": "debtor",
+    "due_dt": 1000000,
+    "early_settlement_cutoff": 0,
+    "early_settlement_discount_bps": 0,
+    "face_value": 10000,
+    "funded_amt": 9000,
+    "funded_dt": 1000,
+    "funding_milestone": null,
+    "funder": "buyer",
+    "funders": ["buyer"],
+    "inv_id": "INV_INTEGRATION",
+    "inv_token": "invoice_token",
+    "paid_amt": 10000,
+    "purchase_price": 9000,
+    "seller": "seller",
+    "status": "settled",
+    "token": "payment_token"
+  },
+  "invoice_token": {
+    "buyer_balance": 9000,
+    "transfer_locked": false
+  },
+  "ledger": {
+    "sequence": 4242,
+    "timestamp": 1000
+  },
+  "payment_token_balances": {
+    "admin": 0,
+    "buyer": 8700,
+    "debtor": 0,
+    "distributor": 0,
+    "escrow": 0,
+    "fee_recipient": 300,
+    "seller": 10000
+  }
+}
