@@ -28,6 +28,7 @@ members = [
     "contracts/invoice-metadata-registry",
     "contracts/invoice-pool",
     "contracts/invoice-refund",
+    "contracts/invoice-registration",
     "contracts/invoice-settlement",
     "contracts/invoice-snapshot",
     "contracts/invoice-token",

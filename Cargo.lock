@@ -1243,6 +1243,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "invoice-registration"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 27.0.6",
+]
+
+[[package]]
 name = "invoice-settlement"
 version = "0.1.0"
 dependencies = [
